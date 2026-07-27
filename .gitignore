@@ -1,0 +1,26 @@
+.venv/
+.uv-python/
+.uv-cache*/
+.env
+AGENTS.md
+docs/JULY_MVP_PLAN.md
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.db
+*.sqlite
+*.sqlite3
+dist/
+build/
+
+# 本地收集的真实招聘数据可能包含转载内容或个人筛选备注，不上传。
+data/raw_jds/*
+!data/raw_jds/.gitkeep
+data/golden/jd_extractions/*
+!data/golden/jd_extractions/.gitkeep
+data/private/
+
+# 本地生成的分析报告不默认上传。
+reports/

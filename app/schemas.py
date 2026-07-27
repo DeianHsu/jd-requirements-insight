@@ -1,0 +1,171 @@
+"""该模块使用Pydantic定义JD文件进入数据库前的输入校验规则。"""
+
+from __future__ import annotations
+
+from datetime import date
+from enum import StrEnum
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+class JobDocument(BaseModel):
+    """表示一份已解析但尚未持久化的Markdown JD，并统一校验字段类型。"""
+
+    # 允许暂未纳入稳定字段的元数据进入系统，避免早期迭代丢失信息。
+    model_config = ConfigDict(extra="allow")
+
+    source_url: str | None = None
+    source_type: str = "unknown"
+    source_image: str | None = None
+    collected_at: date
+    company: str
+    title: str
+    title_truncated: bool = False
+    city: str | None = None
+    salary: str | None = None
+    experience: str | None = None
+    education: str | None = None
+    company_type: str = "unknown"
+    company_size: str | None = None
+    industry: str | None = None
+    financing_status: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    raw_text: str
+    source_file: str
+
+    @field_validator("company", "title", "raw_text")
+    @classmethod
+    def must_not_be_blank(cls, value: str) -> str:
+        """拒绝只包含空白字符的公司、岗位和正文，防止无效记录进入数据库。"""
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("不能为空")
+        return cleaned
+
+    def unknown_metadata(self) -> dict[str, Any]:
+        """返回尚未进入稳定Schema的额外元数据，以便原样保存和后续扩展。"""
+        return dict(self.model_extra or {})
+
+
+class RoleFamily(StrEnum):
+    """限定岗位所属方向，避免模型为相同岗位生成不一致的自由文本分类。"""
+
+    AGENT_APPLICATION = "agent_application"
+    LLM_APPLICATION = "llm_application"
+    RAG_APPLICATION = "rag_application"
+    AI_ALGORITHM = "ai_algorithm"
+    AI_PLATFORM = "ai_platform"
+    OTHER = "other"
+    UNKNOWN = "unknown"
+
+
+class Seniority(StrEnum):
+    """限定岗位级别，用于后续区分初级、转型、中级和高级市场要求。"""
+
+    JUNIOR = "junior"
+    TRANSITION = "transition"
+    MID = "mid"
+    SENIOR = "senior"
+    UNKNOWN = "unknown"
+
+
+class RequirementCategory(StrEnum):
+    """限定岗位要求类别，为后续分组统计提供稳定维度。"""
+
+    PROGRAMMING_LANGUAGE = "programming_language"
+    BACKEND_ENGINEERING = "backend_engineering"
+    AGENT_FRAMEWORK = "agent_framework"
+    AGENT_CAPABILITY = "agent_capability"
+    RAG = "rag"
+    LLM_APPLICATION = "llm_application"
+    MODEL_TRAINING = "model_training"
+    ML_FRAMEWORK = "ml_framework"
+    RETRIEVAL = "retrieval"
+    DEPLOYMENT = "deployment"
+    SOFTWARE_ENGINEERING = "software_engineering"
+    DOMAIN_KNOWLEDGE = "domain_knowledge"
+    EDUCATION = "education"
+    EXPERIENCE = "experience"
+    SOFT_SKILL = "soft_skill"
+    OTHER = "other"
+
+
+class RequirementImportance(StrEnum):
+    """限定要求的重要程度，区分硬性要求、加分项和普通提及。"""
+
+    MUST = "must"
+    PREFERRED = "preferred"
+    MENTIONED = "mentioned"
+    UNKNOWN = "unknown"
+
+
+class ProficiencyLevel(StrEnum):
+    """限定JD表达的掌握程度，无法判断时必须使用unknown而不是猜测。"""
+
+    UNDERSTAND = "understand"
+    FAMILIAR = "familiar"
+    PROFICIENT = "proficient"
+    EXPERT = "expert"
+    UNKNOWN = "unknown"
+
+
+class ResponsibilityItem(BaseModel):
+    """表示一项岗位职责及其在原始JD中的连续证据文本。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    evidence: str
+
+    @field_validator("name", "evidence")
+    @classmethod
+    def responsibility_must_not_be_blank(cls, value: str) -> str:
+        """拒绝空白职责名称和证据，确保每项职责都可阅读并可追溯。"""
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("不能为空")
+        return cleaned
+
+
+class RequirementItem(BaseModel):
+    """表示一项岗位要求及其类别、重要程度、熟练度和原文证据。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    raw_name: str
+    category: RequirementCategory
+    importance: RequirementImportance
+    proficiency: ProficiencyLevel = ProficiencyLevel.UNKNOWN
+    years_required: float | None = Field(default=None, ge=0, le=50)
+    evidence: str
+    confidence: float = Field(ge=0, le=1)
+
+    @field_validator("raw_name", "evidence")
+    @classmethod
+    def requirement_must_not_be_blank(cls, value: str) -> str:
+        """拒绝空白要求名称和证据，避免产生无法解释的统计记录。"""
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("不能为空")
+        return cleaned
+
+
+class JobExtractionResult(BaseModel):
+    """定义一份JD完成结构化抽取后必须满足的完整输出合同。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    role_family: RoleFamily
+    seniority: Seniority
+    responsibilities: list[ResponsibilityItem]
+    requirements: list[RequirementItem]
+
+
+class GoldenExtractionRecord(BaseModel):
+    """把人工标准答案与原始JD文件名绑定，供自动评测和证据校验使用。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_file: str
+    extraction: JobExtractionResult
