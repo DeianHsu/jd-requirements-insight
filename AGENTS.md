@@ -40,9 +40,10 @@
 
 ## 阶段交接
 
-1. 独立阶段完成、冻结或明确暂停时，先检查Git状态、最近提交和测试结果。
-2. 按`docs/handoff/README.md`创建handoff，记录架构、数据契约、验证、限制和下一阶段，不写成开发日志。
-3. 确认项目可运行且handoff无敏感数据后，用描述性commit message提交阶段代码、测试、说明和handoff。
+1. `docs/PROJECT_PLAN.md`中的功能点默认作为独立阶段；大型功能可拆分为可独立验收的子阶段，普通缺陷和文档调整不自动形成新阶段，具体边界按`docs/handoff/README.md`执行。
+2. 独立阶段完成、冻结或明确暂停时，先检查Git状态、最近提交和测试结果。
+3. 按`docs/handoff/README.md`创建handoff，记录架构、数据契约、验证、限制和下一阶段，不写成开发日志。
+4. Codex只准备建议提交范围、Summary和Description；本项目当前的commit和push均由用户手动执行，Codex不得代为执行。
 
 ## 技术讲解
 

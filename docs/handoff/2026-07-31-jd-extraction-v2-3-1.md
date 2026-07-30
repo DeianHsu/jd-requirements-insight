@@ -1,35 +1,34 @@
+# JD结构化抽取 V2.3.1 阶段交接
+
+```yaml
+stage_id: "legacy-extraction-v2.3.1"
+plan_item: "P0-1 Schema与人工标注规范；P0-2 JD结构化抽取；P0-3 原子化（部分）；P0-5 Evaluation（部分）"
+status: "frozen"
+created_at: "2026-07-31"
+baseline_commit: "03779e7"
+verified_revision: "89fc9ce"
+next_stage: "P0-4 技能本体与规范化映射"
+related_decisions: ["DEC-007", "DEC-008", "DEC-009", "DEC-010", "DEC-011", "DEC-012", "DEC-014", "DEC-016", "DEC-017"]
+```
+
 # 阶段目标
 
 本阶段建立JD结构化抽取的Schema V2、Prompt V2.3.1、证据校验、版本化持久化和分层Evaluation，并在发现职责回归后冻结当前Prompt，作为进入“技能本体与归一化”前的可复现基线。
 
-对应提交：
+本handoff建立于阶段化流程启用之前，因此兼容记录多个相邻计划项；从下一阶段开始按一个计划功能点建立一份handoff。对应代码提交：
 
 - `d5e27ed`：升级Schema V2并完善Prompt与分层Evaluation；
 - `89fc9ce`：优化JD抽取迭代流程并降低LLM验证成本。
 
 # 已完成内容
 
-## 已实现功能
-
-- Schema V2支持职责、原子要求、重要程度、熟练度、任选逻辑组、经验上下限和连续原文证据。
-- Prompt V2.3.1区分职责与要求，并处理并列原子项、非穷举示例、具体技术名称、`any_of`和经验表达。
-- 抽取结果经过Pydantic结构校验和原文证据存在性校验，失败时可以有限重试。
-- 模型、Prompt和Schema共同组成抽取器版本，同一JD和版本重复执行时幂等跳过。
-- Evaluation支持development、regression和validation分组，并输出原子项、字段、逻辑组、年限和证据指标。
-- CLI默认最多抽取3份JD，支持`--job-id`定向验证和`--all`显式全量回归；评测默认只显示有限错误摘要。
-- 模型输入Schema删除重复标题与说明并压缩JSON，Schema部分字符数由3365降至2241。
-
-## 核心逻辑
-
-抽取流程先由LLM按Schema返回JSON，再由确定性代码负责结构、跨字段关系和证据检查，只有合法结果可以写入SQLite。真实模型负责语义抽取，Pydantic、数据库约束和Evaluation负责可验证性。
-
-## 关键设计决策
-
-- 招聘JD分析属于信息抽取任务，必须保留原始要求和连续证据，不能只生成总结或分数。
-- `raw_name`保留“LangChain使用经验”等完整业务含义，技能标准化留给后续归一层。
-- `group_id + group_logic=any_of`只表达原文明示的任选关系；独立要求使用`standalone`。
-- Prompt V2.3.1暂时冻结。单次重组和职责隔离实验未修复`case_012`，不进入全量回归或正式版本确认。
-- 后续开发统一采用“静态检查→小规模验证→全量回归→版本确认”，付费LLM全量调用只允许出现在全量回归阶段。
+- Schema V2已支持职责、原子要求、重要程度、熟练度、任选逻辑组、经验范围和连续原文证据。
+- Prompt V2.3.1已覆盖职责/要求区分、并列原子项、非穷举示例、具体技术名、`any_of`和年限表达。
+- LLM结果通过Pydantic结构校验、跨字段约束和证据存在性校验后才写入SQLite；失败可有限重试，同一JD与抽取器版本保持幂等。
+- Evaluation已支持development、regression和validation分组；CLI支持少量默认抽取、`--job-id`定向验证、`--all`显式回归和有限错误摘要。
+- 输入Schema已压缩，Schema部分由3365字符降至2241字符。
+- `raw_name`继续保存完整业务含义，技能标准化留给归一层；任选关系、年限和原子化语义以相关DEC与标注规范为准。
+- Prompt V2.3.1因`case_012`职责回归而冻结，单次重组和职责隔离实验均未形成可确认的新版本。
 
 # 修改文件
 
@@ -44,66 +43,21 @@
 
 # 当前架构状态
 
-## 模块结构
-
 ```text
-ingestion.py    Markdown JD解析、校验与去重
-schemas.py      输入与抽取输出的数据合同
-models.py       SQLite ORM持久化结构
-database.py     Engine、Session和兼容迁移
-extraction.py   Prompt、LLM调用、校验与抽取保存
-evaluation.py   Golden与困难样例指标
-cli.py          本地批处理入口和摘要输出
-```
-
-## 数据流
-
-```text
-Markdown JD
-→ Front Matter与正文校验
-→ SHA-256去重并写入SQLite
-→ Prompt规则 + 压缩JSON Schema + JD原文
-→ OpenAI兼容LLM返回JSON
-→ Pydantic结构校验
-→ 连续原文证据校验
-→ 按模型、Prompt、Schema版本幂等保存
+Markdown JD → 导入校验与SHA-256去重 → SQLite
+→ Prompt + 压缩JSON Schema + JD正文 → OpenAI兼容LLM
+→ Pydantic与证据校验 → 按模型/Prompt/Schema版本持久化
 → Golden Dataset分层Evaluation
 ```
 
-## 输入输出与依赖
-
-- 输入是带YAML Front Matter的Markdown JD，真实文件位于本地忽略目录。
-- LLM输出必须符合`JobExtractionResult`，完整JSON只保存在本地数据库，不默认打印。
-- `cli.py`依赖配置、数据库、抽取和评测模块；`extraction.py`依赖Schema与ORM；`evaluation.py`依赖Schema、原文和人工case。
-- 当前正式版本为Prompt `2.3.1`、Schema `2.0`。
+核心模块职责见`app/README.md`。当前正式抽取版本为Prompt `2.3.1`、Schema `2.0`；`cli.py`提供本地入口，`extraction.py`负责模型调用与校验，`evaluation.py`负责Golden评测。真实JD、完整模型JSON和数据库均保留在本地忽略目录。
 
 # 数据契约
 
-## 输入
-
-JD导入至少需要公司、岗位、采集日期、来源文件和正文；正文用于抽取及证据校验，来源文件用于关联Golden记录。
-
-## 输出
-
-`JobExtractionResult`包含：
-
-- `role_family`：岗位方向枚举；
-- `seniority`：岗位级别枚举；
-- `responsibilities`：职责数组，每项包含`name`和连续原文`evidence`；
-- `requirements`：原子要求数组。
-
-每个`RequirementItem`包含：
-
-- `raw_name`：保留原始业务含义的要求名称；
-- `category`：要求类别；
-- `importance`：must、preferred、mentioned或unknown；
-- `proficiency`：unknown、understand、familiar、proficient或expert；
-- `group_id`、`group_logic`：独立或任选逻辑；
-- `min_years`、`max_years`、`years_text`：经验范围及原文表达；
-- `evidence`：JD原文中的连续证据；
-- `confidence`：0到1之间的模型置信度。
-
-主要约束：禁止额外字段；文本不能为空；`standalone`不能带`group_id`；`any_of`必须带组ID且同组至少两个成员；年限为0到50且上限不能小于下限；证据必须存在于JD原文。
+- 输入：带YAML Front Matter的Markdown JD，至少包含公司、岗位、采集日期、来源文件和正文。
+- 输出：`JobExtractionResult`，包含岗位方向、级别、职责和原子要求；定义见`app/schemas.py`。
+- 要求项保留`raw_name`、分类、重要程度、熟练度、逻辑组、经验范围、连续证据和置信度。
+- 关键约束：禁止额外字段；`standalone`不能带组ID；`any_of`必须成组且至少两个成员；年限范围合法；证据必须存在于JD正文。
 
 # 测试与验证
 
