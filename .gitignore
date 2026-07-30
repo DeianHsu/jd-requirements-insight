@@ -2,7 +2,6 @@
 .uv-python/
 .uv-cache*/
 .env
-AGENTS.md
 docs/PROJECT_PLAN.md
 docs/DECISIONS.md
 docs/CONTEXT_ROUTING.md

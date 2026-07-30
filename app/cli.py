@@ -22,7 +22,7 @@ from app.evaluation import (
 from app.extraction import (
     ExtractorMetadata,
     OpenAICompatibleExtractionClient,
-    extract_all_jobs,
+    extract_jobs,
     list_extractions,
 )
 from app.ingestion import import_directory, list_jobs
@@ -42,6 +42,12 @@ def format_item_metrics(metrics: ItemMatchMetrics) -> str:
     if metrics.predicted == 0 and metrics.expected == 0:
         return "N/A"
     return f"{metrics.precision:.2%} / {metrics.recall:.2%} / {metrics.f1:.2%}"
+
+
+def select_visible_issues(issues: list[str], max_issues: int) -> tuple[list[str], int]:
+    """限制终端展示的错误条数，并返回被省略的数量。"""
+    visible = issues[:max_issues]
+    return visible, len(issues) - len(visible)
 
 
 def database_resources():
@@ -130,8 +136,19 @@ def validate_golden(
 
 
 @cli.command("extract-jds")
-def extract_jds(max_attempts: int = typer.Option(2, min=1, max=5)) -> None:
-    """使用已配置的OpenAI兼容LLM批量抽取数据库中的JD结构。"""
+def extract_jds(
+    max_attempts: int = typer.Option(2, min=1, max=5),
+    limit: int = typer.Option(3, min=1, help="开发模式最多抽取的JD数量"),
+    all_jobs: bool = typer.Option(False, "--all", help="显式抽取全部JD"),
+    job_ids: list[int] | None = typer.Option(
+        None, "--job-id", min=1, help="只抽取指定JD，可重复传入"
+    ),
+) -> None:
+    """默认小批量抽取JD，也可显式选择全部或指定ID。"""
+    if all_jobs and job_ids:
+        console.print("[red]--all不能与--job-id同时使用。[/red]")
+        raise typer.Exit(code=2)
+
     settings = load_llm_settings()
     missing = settings.missing_fields()
     if missing:
@@ -144,13 +161,18 @@ def extract_jds(max_attempts: int = typer.Option(2, min=1, max=5)) -> None:
         # 客户端和版本元数据在批次开始时固定，保证整批结果可以复现和比较。
         client = OpenAICompatibleExtractionClient(settings)
         metadata = ExtractorMetadata(model_name=settings.model)
-        summary = extract_all_jobs(
-            session_factory, client, metadata, max_attempts=max_attempts
+        summary = extract_jobs(
+            session_factory,
+            client,
+            metadata,
+            max_attempts=max_attempts,
+            limit=None if all_jobs or job_ids else limit,
+            job_ids=set(job_ids) if job_ids else None,
         )
     finally:
         engine.dispose()
 
-    console.print(f"发现 [bold]{summary.discovered}[/bold] 份JD")
+    console.print(f"本次选择 [bold]{summary.discovered}[/bold] 份JD")
     console.print(f"成功抽取 [green]{summary.extracted}[/green]")
     console.print(f"同版本跳过 [yellow]{summary.skipped}[/yellow]")
     console.print(f"失败 [red]{summary.failed}[/red]")
@@ -246,6 +268,9 @@ def evaluate_cases(
     dataset_split: str | None = typer.Option(
         None, "--split", help="只评测指定数据集分组，如development或validation"
     ),
+    max_issues: int = typer.Option(
+        10, "--max-issues", min=0, help="最多显示的错误摘要条数"
+    ),
 ) -> None:
     """对指定抽取版本运行困难样例的原子项和字段级分层评测。"""
     engine, session_factory = database_resources()
@@ -337,8 +362,11 @@ def evaluate_cases(
         console.print(
             f"[yellow]缺少来源结果：{', '.join(summary.missing_sources)}[/yellow]"
         )
-    for issue in summary.issues:
+    visible_issues, omitted_issues = select_visible_issues(summary.issues, max_issues)
+    for issue in visible_issues:
         console.print(f"  [yellow]- {issue}[/yellow]")
+    if omitted_issues:
+        console.print(f"  [yellow]其余 {omitted_issues} 条错误已省略。[/yellow]")
 
 
 def main() -> None:

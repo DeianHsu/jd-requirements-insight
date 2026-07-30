@@ -9,18 +9,18 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from openai import OpenAI
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker, selectinload
 
 from app.config import LLMSettings
 from app.models import JobDescription, JobExtraction, JobRequirement, JobResponsibility
-from app.schemas import JobExtractionResult
+from app.schemas import JobExtractionResult, ResponsibilityItem
 
-PROMPT_VERSION = "2.3"
+PROMPT_VERSION = "2.3.1"
 SCHEMA_VERSION = "2.0"
 
-# Prompt V2.3先覆盖候选交付再判断合并，平衡职责的过度拆分与过度合并。
+# Prompt V2.3.1补充要求示例边界，并保留V2.3的两阶段职责判断。
 SYSTEM_PROMPT = """你是招聘JD结构化抽取器，只能依据用户提供的JD原文输出JSON。
 
 【任务边界】
@@ -55,15 +55,19 @@ SYSTEM_PROMPT = """你是招聘JD结构化抽取器，只能依据用户提供�
 2. 同一any_of组至少包含两个成员；group_id在当前JD中使用group_1、group_2等简短唯一编号。
 3. 普通独立要求使用group_id=null、group_logic=standalone。
 4. “熟悉Python、Java中至少一种”是两个any_of成员；“熟悉Python和Java”是两个standalone要求。
-5. “如”“例如”“等”只表示举例时，示例本身不能自动成为独立要求，也不能仅凭举例符号创建any_of组。
+5. 完整上位要求后由“如”“例如”或括号引出的非穷举内容只作为示例，不能自动成为独立要求或any_of成员；“等”字本身不能决定是否为示例。
 6. 多个候选项共同受“优先”“加分”或“相关项目经验者优先”修饰，并且具备其中任一项即可形成同类加分时，各候选项使用preferred并共享同一个any_of组。
 7. “Python / Node.js 优先”应拆为Python与Node.js两个preferred成员并共享同一个any_of组。
 8. “大模型微调、RAG架构搭建、Prompt Engineering等实际项目经验者优先”应拆为三个preferred成员并共享同一个any_of组；不能因为句中使用顿号而把它们设为standalone。
 
 【示例与完整概念】
-1. “有Llama、ChatGLM等大模型微调经验”抽取“大模型微调经验”，Llama和ChatGLM只是模型示例。
-2. “有大语言模型（如GPT、GLM等）微调、RAG架构搭建经验”拆成“大语言模型微调”和“RAG架构搭建”。
-3. 只有当JD明确要求掌握某个具体模型、工具或框架时，才把它单独标成要求。
+1. “至少精通一门主流后端开发语言（如Go、Java、C++、Python等）”中的括号列表是非穷举示例，只抽取“主流后端开发语言”，使用proficiency=expert、group_logic=standalone，不能把四种语言建成封闭any_of组。
+2. 具体技术名被“熟悉”“掌握”“使用经验”等候选条件直接修饰时必须逐项保留；后面的“等”只表示名单未穷尽，不能把已点名技术改写成上位概念。
+3. “熟悉LangChain、AutoGen等主流Agent开发框架”分别抽取LangChain和AutoGen，均为standalone；不能只抽取“主流Agent开发框架”。
+4. “有LangChain等Agent框架使用经验”抽取“LangChain框架使用经验”；raw_name保留使用经验，不能退化成泛化的“Agent框架使用经验”。
+5. “有Llama、ChatGLM等大模型微调经验”抽取“大模型微调经验”，Llama和ChatGLM只是模型示例。
+6. “有大语言模型（如GPT、GLM等）微调、RAG架构搭建经验”拆成“大语言模型微调”和“RAG架构搭建”。
+7. 只有当JD明确要求掌握某个具体模型、工具或框架时，才把它单独标成要求。
 
 【重要程度与熟练度】
 1. 任职要求中的普通条件为must；明确出现“优先”“加分”时为preferred。
@@ -82,6 +86,30 @@ SYSTEM_PROMPT = """你是招聘JD结构化抽取器，只能依据用户提供�
 3. requirements的所有字段都必须输出；不适用的group_id、年限字段使用null，不能省略。
 4. 输出前检查：每个实质工作分句都已覆盖；职责没有把独立交付错误合并，也没有把端到端动作、实施方式或示例机械拆开；要求没有可继续拆分的并列概念；any_of组成员不少于两个；年限上下限未颠倒；每条证据都能在原文中直接找到。
 5. 严格按照用户提供的JSON Schema输出一个JSON对象，不要输出Markdown代码块或额外说明。"""
+
+# 该指令只用于架构实验，通过先冻结职责再处理要求来测试单次调用中的跨任务干扰。
+REORDERED_EXPERIMENT_INSTRUCTION = """【实验执行顺序】
+1. 先扫描全部职责原文，建立职责候选清单并完成覆盖、拆分和证据检查。
+2. 冻结responsibilities后再处理requirements，不得因要求侧规则删改已确认职责。
+3. 最后一次性输出完整JSON，不要输出中间分析。"""
+
+# 该Prompt只抽取职责，用于判断移除要求任务后能否恢复遗漏职责，不作为正式版本。
+RESPONSIBILITY_ONLY_SYSTEM_PROMPT = """你是招聘JD职责抽取器，只能依据JD原文输出JSON。
+1. responsibilities只记录入职后需要完成的工作，忽略候选人资格、技能和经验要求。
+2. 先扫描每个实质工作分句，确保所有工作都有对应职责或被明确判定为实施方式、能力属性或示例。
+3. 不同对象、交付物或可独立验收结果必须拆分；只有共同完成不可分割交付时才合并。
+4. 每项使用“动作+对象或结果”表达；协作方式和技术手段不单独成项，但其承载的交付不能遗漏。
+5. “如”“例如”“等”及括号中的上位业务示例不展开为独立职责。
+6. evidence必须是原文连续出现的最小充分文本，不得改写、拼接或翻译。
+7. 严格按照JSON Schema输出一个JSON对象，不要输出Markdown或额外说明。"""
+
+
+class ResponsibilityExperimentResult(BaseModel):
+    """定义职责隔离实验返回的最小结构。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    responsibilities: list[ResponsibilityItem]
 
 
 class ExtractionError(ValueError):
@@ -167,13 +195,57 @@ class ExtractionSummary:
         return len(self.errors)
 
 
+def compact_json_schema(schema: object) -> object:
+    """递归移除不影响输出约束的Schema说明字段，减少每次LLM请求的输入长度。"""
+    if isinstance(schema, dict):
+        return {
+            key: compact_json_schema(value)
+            for key, value in schema.items()
+            if key not in {"title", "description"}
+        }
+    if isinstance(schema, list):
+        return [compact_json_schema(value) for value in schema]
+    return schema
+
+
 def build_user_prompt(job: JobDescription, correction: str | None = None) -> str:
     """把JD原文、输出Schema和上次校验错误组合成一次结构化抽取提示。"""
-    schema_json = json.dumps(JobExtractionResult.model_json_schema(), ensure_ascii=False)
+    # Schema保留类型、枚举、必填项和跨字段结构，删除重复标题及说明以降低调用成本。
+    schema_json = json.dumps(
+        compact_json_schema(JobExtractionResult.model_json_schema()),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
     correction_text = ""
     if correction:
         correction_text = f"\n\n上一次输出未通过校验，请修正以下问题：\n{correction}"
     return f"""请结构化抽取以下招聘JD。
+
+公司：{job.company}
+岗位：{job.title}
+
+JSON Schema：
+{schema_json}
+
+JD原文：
+{job.raw_text}
+{correction_text}
+"""
+
+
+def build_responsibility_experiment_prompt(
+    job: JobDescription, correction: str | None = None
+) -> str:
+    """为职责隔离实验组合压缩Schema、JD原文和可选校验反馈。"""
+    schema_json = json.dumps(
+        compact_json_schema(ResponsibilityExperimentResult.model_json_schema()),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    correction_text = ""
+    if correction:
+        correction_text = f"\n\n上一次输出未通过校验，请修正：\n{correction}"
+    return f"""请只抽取以下招聘JD中的岗位职责。
 
 公司：{job.company}
 岗位：{job.title}
@@ -224,16 +296,19 @@ def validate_evidence(result: JobExtractionResult, raw_text: str) -> None:
         raise ExtractionError("；".join(missing))
 
 
-def extract_job(
-    job: JobDescription, client: ExtractionClient, max_attempts: int = 2
+def extract_job_with_system_prompt(
+    job: JobDescription,
+    client: ExtractionClient,
+    system_prompt: str,
+    max_attempts: int = 2,
 ) -> tuple[JobExtractionResult, dict[str, object]]:
-    """调用LLM抽取单份JD，并在Schema或证据失败时携带错误信息有限重试。"""
+    """使用指定系统Prompt抽取完整JD，并在校验失败时有限重试。"""
     correction = None
     last_error: ExtractionError | None = None
 
     for _ in range(max_attempts):
         prompt = build_user_prompt(job, correction)
-        response_text = client.complete(SYSTEM_PROMPT, prompt)
+        response_text = client.complete(system_prompt, prompt)
         try:
             result = parse_model_response(response_text)
             validate_evidence(result, job.raw_text)
@@ -241,6 +316,43 @@ def extract_job(
         except ExtractionError as exc:
             # 将校验错误反馈给下一次请求，让模型只修正具体结构或证据问题。
             last_error = exc
+            correction = str(exc)
+
+    raise ExtractionError(f"经过{max_attempts}次尝试仍未通过校验：{last_error}")
+
+
+def extract_job(
+    job: JobDescription, client: ExtractionClient, max_attempts: int = 2
+) -> tuple[JobExtractionResult, dict[str, object]]:
+    """使用当前正式Prompt抽取单份JD，并在校验失败时有限重试。"""
+    return extract_job_with_system_prompt(job, client, SYSTEM_PROMPT, max_attempts)
+
+
+def extract_responsibilities_for_experiment(
+    job: JobDescription, client: ExtractionClient, max_attempts: int = 1
+) -> tuple[ResponsibilityExperimentResult, dict[str, object]]:
+    """仅抽取职责供架构实验比较，不写入正式抽取版本。"""
+    correction = None
+    last_error: ExtractionError | None = None
+    normalized_source = normalize_evidence(job.raw_text)
+
+    for _ in range(max_attempts):
+        prompt = build_responsibility_experiment_prompt(job, correction)
+        response_text = client.complete(RESPONSIBILITY_ONLY_SYSTEM_PROMPT, prompt)
+        try:
+            payload = json.loads(response_text)
+            result = ResponsibilityExperimentResult.model_validate(payload)
+            missing = [
+                item.evidence
+                for item in result.responsibilities
+                if normalize_evidence(item.evidence) not in normalized_source
+            ]
+            if missing:
+                raise ExtractionError(f"职责证据不在JD原文中：{'；'.join(missing)}")
+            return result, result.model_dump(mode="json")
+        except (json.JSONDecodeError, ValidationError, ExtractionError) as exc:
+            # 实验默认不重试；显式增加次数时只反馈当前结构或证据错误。
+            last_error = ExtractionError(str(exc))
             correction = str(exc)
 
     raise ExtractionError(f"经过{max_attempts}次尝试仍未通过校验：{last_error}")
@@ -301,15 +413,26 @@ def persist_extraction(
     return extraction, True
 
 
-def extract_all_jobs(
+def extract_jobs(
     session_factory: sessionmaker[Session],
     client: ExtractionClient,
     metadata: ExtractorMetadata,
     max_attempts: int = 2,
+    limit: int | None = None,
+    job_ids: set[int] | None = None,
 ) -> ExtractionSummary:
-    """批量抽取数据库中的全部JD，跳过同版本结果并按JD隔离失败。"""
+    """按数量或ID选择JD进行抽取，跳过同版本结果并按JD隔离失败。"""
+    if limit is not None and limit < 1:
+        raise ValueError("limit必须大于等于1")
+
     with session_factory() as session:
         jobs = list(session.scalars(select(JobDescription).order_by(JobDescription.id)))
+
+    # 指定ID用于针对性样例调试，limit用于控制普通Prompt迭代的调用规模。
+    if job_ids is not None:
+        jobs = [job for job in jobs if job.id in job_ids]
+    if limit is not None:
+        jobs = jobs[:limit]
 
     summary = ExtractionSummary(discovered=len(jobs))
     for job in jobs:

@@ -4,7 +4,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from app.cli import cli, format_accuracy, format_item_metrics
+from app.cli import cli, format_accuracy, format_item_metrics, select_visible_issues
 from app.evaluation import ItemMatchMetrics
 
 runner = CliRunner()
@@ -50,3 +50,16 @@ def test_cli_formats_not_applicable_evaluation_metrics() -> None:
     assert format_accuracy(0.0, 0) == "N/A"
     assert format_item_metrics(ItemMatchMetrics()) == "N/A"
     assert format_accuracy(0.5, 2) == "50.00%"
+
+
+def test_cli_limits_issue_output_and_exposes_safe_extraction_scope() -> None:
+    """验证评测错误只显示摘要，并提供小批量、指定ID和显式全量抽取选项。"""
+    visible, omitted = select_visible_issues(["问题1", "问题2", "问题3"], 2)
+    help_result = runner.invoke(cli, ["extract-jds", "--help"])
+
+    assert visible == ["问题1", "问题2"]
+    assert omitted == 1
+    assert help_result.exit_code == 0
+    assert "--limit" in help_result.stdout
+    assert "--job-id" in help_result.stdout
+    assert "--all" in help_result.stdout

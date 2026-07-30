@@ -10,12 +10,18 @@ from sqlalchemy import func, select
 from app.database import create_database_engine, create_session_factory, initialize_database
 from app.extraction import (
     PROMPT_VERSION,
+    REORDERED_EXPERIMENT_INSTRUCTION,
+    RESPONSIBILITY_ONLY_SYSTEM_PROMPT,
     SCHEMA_VERSION,
     SYSTEM_PROMPT,
     ExtractionError,
     ExtractorMetadata,
     build_user_prompt,
+    compact_json_schema,
     extract_job,
+    extract_job_with_system_prompt,
+    extract_jobs,
+    extract_responsibilities_for_experiment,
     persist_extraction,
     validate_evidence,
 )
@@ -36,11 +42,25 @@ class FakeExtractionClient:
         assert "只能依据" in system_prompt
         assert "每个requirement只能表达一个" in system_prompt
         assert "group_logic=any_of" in system_prompt
-        assert "示例本身不能自动成为独立要求" in system_prompt
+        assert "不能自动成为独立要求" in system_prompt
         assert "JD原文" in user_prompt
         response = self.responses[self.calls]
         self.calls += 1
         return json.dumps(response, ensure_ascii=False)
+
+
+class RecordingExperimentClient:
+    """记录实验Prompt并返回预设JSON，避免静态阶段调用真实LLM。"""
+
+    def __init__(self, response: dict[str, object]) -> None:
+        """保存预设响应并初始化调用记录。"""
+        self.response = response
+        self.calls: list[tuple[str, str]] = []
+
+    def complete(self, system_prompt: str, user_prompt: str) -> str:
+        """记录系统及用户Prompt并返回合法JSON。"""
+        self.calls.append((system_prompt, user_prompt))
+        return json.dumps(self.response, ensure_ascii=False)
 
 
 def valid_payload(evidence: str = "熟悉 Python 和 RAG。") -> dict[str, object]:
@@ -107,14 +127,25 @@ def make_database(tmp_path: Path):
     return engine, create_session_factory(engine)
 
 
-def test_prompt_v2_3_contains_atomic_extraction_boundaries() -> None:
-    """验证Prompt V2.3保留要求原子化、任选关系、示例边界和原始要求规则。"""
-    assert PROMPT_VERSION == "2.3"
+def test_prompt_v2_3_1_contains_atomic_extraction_boundaries() -> None:
+    """验证Prompt V2.3.1保留要求原子化、任选关系、示例边界和原始要求规则。"""
+    assert PROMPT_VERSION == "2.3.1"
     assert SCHEMA_VERSION == "2.0"
     assert "熟悉Python和RAG" in SYSTEM_PROMPT
     assert "LangChain使用经验" in SYSTEM_PROMPT
     assert "Llama和ChatGLM只是模型示例" in SYSTEM_PROMPT
     assert "proficiency使用unknown" in SYSTEM_PROMPT
+
+
+def test_prompt_v2_3_1_distinguishes_examples_from_named_technologies() -> None:
+    """验证Prompt V2.3.1区分括号非穷举示例与被候选条件直接修饰的技术名。"""
+    assert "至少精通一门主流后端开发语言（如Go、Java、C++、Python等）" in SYSTEM_PROMPT
+    assert "只抽取“主流后端开发语言”" in SYSTEM_PROMPT
+    assert "熟悉LangChain、AutoGen等主流Agent开发框架" in SYSTEM_PROMPT
+    assert "分别抽取LangChain和AutoGen" in SYSTEM_PROMPT
+    assert "有LangChain等Agent框架使用经验" in SYSTEM_PROMPT
+    assert "LangChain框架使用经验" in SYSTEM_PROMPT
+    assert "名单未穷尽" in SYSTEM_PROMPT
 
 
 def test_prompt_v2_3_balances_responsibility_atomicity_and_business_boundaries() -> None:
@@ -163,6 +194,20 @@ def test_build_user_prompt_contains_schema_v2_and_retry_feedback() -> None:
     assert '"years_text"' in prompt
     assert "熟悉 Python 和 RAG。" in prompt
     assert "any_of组至少需要两个成员" in prompt
+    assert '"title"' not in prompt
+    assert '"description"' not in prompt
+
+
+def test_compact_json_schema_keeps_constraints_without_explanatory_fields() -> None:
+    """验证模型Schema删除重复说明时仍保留字段、必填项和枚举约束。"""
+    schema = compact_json_schema(JobExtractionResult.model_json_schema())
+    serialized = json.dumps(schema, ensure_ascii=False)
+
+    assert "properties" in serialized
+    assert "required" in serialized
+    assert "enum" in serialized
+    assert '"title"' not in serialized
+    assert '"description"' not in serialized
 
 
 def test_extract_job_returns_validated_result() -> None:
@@ -187,6 +232,40 @@ def test_extract_job_retries_after_invalid_evidence() -> None:
 
     assert result.requirements[0].evidence == "熟悉 Python 和 RAG。"
     assert client.calls == 2
+
+
+def test_reordered_experiment_keeps_single_complete_extraction_call() -> None:
+    """验证单次重组实验仍用一次完整Schema调用并通过既有校验。"""
+    client = FakeExtractionClient([valid_payload()])
+    experimental_prompt = f"{REORDERED_EXPERIMENT_INSTRUCTION}\n\n{SYSTEM_PROMPT}"
+
+    result, _ = extract_job_with_system_prompt(
+        make_job(), client, experimental_prompt, max_attempts=1
+    )
+
+    assert result.requirements
+    assert client.calls == 1
+
+
+def test_responsibility_experiment_uses_smaller_isolated_contract() -> None:
+    """验证职责隔离实验不发送要求字段，并比完整混合Prompt更短。"""
+    response = {
+        "responsibilities": [
+            {"name": "开发RAG应用", "evidence": "负责知识库问答系统开发。"}
+        ]
+    }
+    client = RecordingExperimentClient(response)
+
+    result, _ = extract_responsibilities_for_experiment(make_job(), client)
+    system_prompt, user_prompt = client.calls[0]
+    mixed_length = len(SYSTEM_PROMPT) + len(build_user_prompt(make_job()))
+    isolated_length = len(system_prompt) + len(user_prompt)
+
+    assert result.responsibilities[0].name == "开发RAG应用"
+    assert system_prompt == RESPONSIBILITY_ONLY_SYSTEM_PROMPT
+    assert '"requirements"' not in user_prompt
+    assert isolated_length < mixed_length
+    assert len(client.calls) == 1
 
 
 def test_validate_evidence_rejects_hallucinated_quote() -> None:
@@ -232,4 +311,31 @@ def test_persist_extraction_is_idempotent(tmp_path: Path) -> None:
     assert extraction_count == 1
     assert responsibility_count == 1
     assert requirement_count == 2
+    engine.dispose()
+
+
+def test_extract_jobs_limits_development_batch(tmp_path: Path) -> None:
+    """验证开发批次限制只调用指定数量的JD，避免Prompt调试默认全量请求。"""
+    engine, session_factory = make_database(tmp_path)
+    with session_factory() as session:
+        for index in range(3):
+            job = make_job()
+            job.id = None
+            job.source_hash = f"{index + 1:064x}"
+            job.source_file = f"sample-{index + 1}.md"
+            session.add(job)
+        session.commit()
+
+    client = FakeExtractionClient([valid_payload(), valid_payload()])
+    summary = extract_jobs(
+        session_factory,
+        client,
+        ExtractorMetadata(model_name="fake-model"),
+        limit=2,
+    )
+
+    assert summary.discovered == 2
+    assert summary.extracted == 2
+    assert summary.failed == 0
+    assert client.calls == 2
     engine.dispose()

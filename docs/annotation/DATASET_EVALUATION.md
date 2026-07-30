@@ -79,7 +79,7 @@ RAG       → 有RAG项目经验者优先
 
 ```powershell
 python -m app.cli evaluate-cases <annotation_cases.json> `
-  --prompt-version 2.3 `
+  --prompt-version 2.3.1 `
   --schema-version 2.0 `
   --model <模型名称> `
   --split development
