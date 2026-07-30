@@ -1,10 +1,11 @@
-"""该模块验证JD导入和列表查看命令的端到端用户行为。"""
+"""该模块验证JD导入、列表查看和评测指标格式化的用户行为。"""
 
 from pathlib import Path
 
 from typer.testing import CliRunner
 
-from app.cli import cli
+from app.cli import cli, format_accuracy, format_item_metrics
+from app.evaluation import ItemMatchMetrics
 
 runner = CliRunner()
 
@@ -42,3 +43,10 @@ salary: 15-25K
     assert listed.exit_code == 0
     assert "CLI测试公司" in listed.stdout
     assert "RAG工程师" in listed.stdout
+
+
+def test_cli_formats_not_applicable_evaluation_metrics() -> None:
+    """验证没有适用样本时显示N/A，而不把它误报为真实的0%准确率。"""
+    assert format_accuracy(0.0, 0) == "N/A"
+    assert format_item_metrics(ItemMatchMetrics()) == "N/A"
+    assert format_accuracy(0.5, 2) == "50.00%"

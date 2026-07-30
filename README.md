@@ -6,7 +6,7 @@
 
 ## 当前状态
 
-已实现 Markdown JD 的校验、SQLite 导入、内容哈希去重和列表查看，并完成JD结构化抽取基础设施：已经使用DeepSeek V4 Flash完成5份真实JD抽取，保存岗位方向、级别、职责、要求和原文证据，并可用人工Golden Dataset评测。当前抽取链路已经跑通，下一步重点是解决技能原子化、同义词归一以及模型长表述与Golden短名称的粒度差异。
+已实现 Markdown JD 的校验、SQLite 导入、内容哈希去重和列表查看，并完成JD结构化抽取基础设施：已经使用DeepSeek V4 Flash完成5份真实JD的多版本抽取，保存岗位方向、级别、职责、要求和原文证据，并可用人工Golden Dataset评测。当前Schema V2和原子化Prompt V2.3采用“先覆盖、后分组”的职责判断，并能够表达原子要求、任选逻辑组与经验范围；困难样例分层Evaluation可以按development、regression、validation、模型、Prompt和Schema版本重复报告原子项、字段、逻辑组、年限和证据指标，后续将继续校准要求示例边界并建立新的未见validation。
 
 ## 环境
 
@@ -69,6 +69,15 @@ python -m app.cli validate-golden data\golden\jd_extractions data\raw_jds
 python -m app.cli extract-jds
 python -m app.cli list-extractions
 python -m app.cli evaluate-extractions data\golden\jd_extractions
+
+# 使用自己的困难样例文件比较指定抽取版本的分层指标
+python -m app.cli evaluate-cases <annotation_cases.json> `
+  --prompt-version 2.3 --schema-version 2.0 --model <模型名称> `
+  --split development
 ```
 
 相同JD使用相同模型、Prompt版本和Schema版本重复抽取时会自动跳过，避免重复结果污染数据库。
+
+## 方法文档
+
+- [人工标注规范](docs/annotation/README.md)：按职责、要求和数据集评测三个主题提供规则入口。

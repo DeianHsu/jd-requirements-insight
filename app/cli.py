@@ -11,8 +11,11 @@ from rich.table import Table
 from app.config import load_llm_settings
 from app.database import create_database_engine, create_session_factory, initialize_database
 from app.evaluation import (
+    ItemMatchMetrics,
     combine_metrics,
+    evaluate_annotation_cases,
     evaluate_extraction,
+    load_annotation_cases_file,
     load_golden_file,
     validate_golden_directory,
 )
@@ -27,6 +30,18 @@ from app.schemas import JobExtractionResult
 
 cli = typer.Typer(no_args_is_help=True, help="JD Skill Insight 本地数据工具")
 console = Console()
+
+
+def format_accuracy(value: float, total: int) -> str:
+    """把无适用样本的准确率显示为N/A，避免与真实零准确率混淆。"""
+    return f"{value:.2%}" if total else "N/A"
+
+
+def format_item_metrics(metrics: ItemMatchMetrics) -> str:
+    """格式化原子项P/R/F1，并在预测与期望都为空时显示N/A。"""
+    if metrics.predicted == 0 and metrics.expected == 0:
+        return "N/A"
+    return f"{metrics.precision:.2%} / {metrics.recall:.2%} / {metrics.f1:.2%}"
 
 
 def database_resources():
@@ -220,6 +235,110 @@ def evaluate_extractions(
     console.print(f"重要程度准确率：[cyan]{combined.importance_accuracy:.2%}[/cyan]")
     if missing_sources:
         console.print(f"[yellow]缺少抽取结果：{', '.join(missing_sources)}[/yellow]")
+
+
+@cli.command("evaluate-cases")
+def evaluate_cases(
+    cases_file: Path = typer.Argument(..., help="困难样例annotation_cases.json路径"),
+    prompt_version: str = typer.Option(..., "--prompt-version", help="待评测Prompt版本"),
+    schema_version: str = typer.Option("2.0", "--schema-version"),
+    model_name: str | None = typer.Option(None, "--model", help="待评测模型名称"),
+    dataset_split: str | None = typer.Option(
+        None, "--split", help="只评测指定数据集分组，如development或validation"
+    ),
+) -> None:
+    """对指定抽取版本运行困难样例的原子项和字段级分层评测。"""
+    engine, session_factory = database_resources()
+    try:
+        persisted = list_extractions(session_factory)
+    finally:
+        engine.dispose()
+
+    selected = [
+        extraction
+        for extraction in persisted
+        if extraction.prompt_version == prompt_version
+        and extraction.schema_version == schema_version
+        and (model_name is None or extraction.model_name == model_name)
+    ]
+    if model_name is None:
+        model_names = {extraction.model_name for extraction in selected}
+        if len(model_names) > 1:
+            console.print("[red]同版本存在多个模型，请使用--model明确指定。[/red]")
+            raise typer.Exit(code=1)
+        if model_names:
+            model_name = next(iter(model_names))
+    if not selected:
+        console.print("[yellow]没有找到符合模型、Prompt和Schema版本的结果。[/yellow]")
+        raise typer.Exit(code=1)
+
+    try:
+        payload = load_annotation_cases_file(cases_file)
+        predictions = {
+            extraction.job.source_file: JobExtractionResult.model_validate(
+                extraction.raw_response
+            )
+            for extraction in selected
+        }
+        source_texts = {
+            extraction.job.source_file: extraction.job.raw_text for extraction in selected
+        }
+        summary = evaluate_annotation_cases(
+            payload, predictions, source_texts, dataset_split=dataset_split
+        )
+    except (OSError, ValueError) as exc:
+        console.print(f"[red]分层评测失败：{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    console.print(
+        f"评测版本：[bold]{model_name} / prompt:{prompt_version} / "
+        f"schema:{schema_version}[/bold]"
+    )
+    console.print(f"数据分组：[bold]{dataset_split or 'all'}[/bold]")
+    console.print(
+        f"困难样例：[bold]{summary.evaluated_cases}/{summary.discovered_cases}[/bold]"
+    )
+    console.print(
+        "要求名称代理 P/R/F1："
+        f"[cyan]{format_item_metrics(summary.requirement_metrics)}[/cyan]"
+    )
+    console.print(
+        "职责名称代理 P/R/F1："
+        f"[cyan]{format_item_metrics(summary.responsibility_metrics)}[/cyan]"
+    )
+    console.print(
+        f"原子项数量一致样例：[cyan]{summary.exact_count_cases}/"
+        f"{summary.evaluated_cases}[/cyan]"
+    )
+    console.print(
+        "重要程度准确率："
+        f"[cyan]{format_accuracy(summary.importance_accuracy, summary.importance_total)}[/cyan]"
+    )
+    console.print(
+        "熟练度准确率："
+        f"[cyan]{format_accuracy(summary.proficiency_accuracy, summary.proficiency_total)}[/cyan]"
+    )
+    console.print(
+        "类别准确率："
+        f"[cyan]{format_accuracy(summary.category_accuracy, summary.category_total)}[/cyan]"
+    )
+    console.print(
+        f"年限准确率：[cyan]{format_accuracy(summary.years_accuracy, summary.years_total)}[/cyan]"
+    )
+    console.print(
+        "any_of组准确率："
+        f"[cyan]{format_accuracy(summary.any_of_group_accuracy, summary.any_of_groups_total)}[/cyan]"
+    )
+    console.print(
+        "完整结果证据存在率："
+        f"[cyan]{format_accuracy(summary.evidence_accuracy, summary.evidence_total)}[/cyan]"
+    )
+    if summary.missing_sources:
+        console.print(
+            f"[yellow]缺少来源结果：{', '.join(summary.missing_sources)}[/yellow]"
+        )
+    for issue in summary.issues:
+        console.print(f"  [yellow]- {issue}[/yellow]")
 
 
 def main() -> None:

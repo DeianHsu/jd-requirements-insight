@@ -3,7 +3,9 @@
 .uv-cache*/
 .env
 AGENTS.md
-docs/JULY_MVP_PLAN.md
+docs/PROJECT_PLAN.md
+docs/DECISIONS.md
+docs/CONTEXT_ROUTING.md
 __pycache__/
 *.py[cod]
 .pytest_cache/

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from datetime import date
 from enum import StrEnum
-from typing import Any
+from typing import Any, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class JobDocument(BaseModel):
@@ -110,6 +110,13 @@ class ProficiencyLevel(StrEnum):
     UNKNOWN = "unknown"
 
 
+class RequirementGroupLogic(StrEnum):
+    """限定原子要求的组合逻辑，区分独立条件与满足任意一项的候选组。"""
+
+    STANDALONE = "standalone"
+    ANY_OF = "any_of"
+
+
 class ResponsibilityItem(BaseModel):
     """表示一项岗位职责及其在原始JD中的连续证据文本。"""
 
@@ -129,7 +136,7 @@ class ResponsibilityItem(BaseModel):
 
 
 class RequirementItem(BaseModel):
-    """表示一项岗位要求及其类别、重要程度、熟练度和原文证据。"""
+    """表示一项原子岗位要求及其逻辑组、年限范围和可追溯原文证据。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -137,7 +144,16 @@ class RequirementItem(BaseModel):
     category: RequirementCategory
     importance: RequirementImportance
     proficiency: ProficiencyLevel = ProficiencyLevel.UNKNOWN
-    years_required: float | None = Field(default=None, ge=0, le=50)
+    group_id: str | None = Field(default=None, max_length=100)
+    group_logic: RequirementGroupLogic = RequirementGroupLogic.STANDALONE
+    min_years: float | None = Field(
+        default=None,
+        ge=0,
+        le=50,
+        validation_alias=AliasChoices("min_years", "years_required"),
+    )
+    max_years: float | None = Field(default=None, ge=0, le=50)
+    years_text: str | None = Field(default=None, max_length=100)
     evidence: str
     confidence: float = Field(ge=0, le=1)
 
@@ -150,6 +166,31 @@ class RequirementItem(BaseModel):
             raise ValueError("不能为空")
         return cleaned
 
+    @field_validator("group_id", "years_text")
+    @classmethod
+    def optional_text_must_be_meaningful(cls, value: str | None) -> str | None:
+        """把可选文本的空白值统一为空值，避免创建不可引用的逻辑组或年限描述。"""
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+    @model_validator(mode="after")
+    def validate_group_and_year_range(self) -> Self:
+        """校验逻辑组字段必须配套使用，并拒绝上下限颠倒的经验范围。"""
+        # 独立要求不应携带组ID，any_of要求则必须能通过组ID找到其他候选项。
+        if self.group_logic is RequirementGroupLogic.STANDALONE and self.group_id is not None:
+            raise ValueError("standalone要求不能设置group_id")
+        if self.group_logic is RequirementGroupLogic.ANY_OF and self.group_id is None:
+            raise ValueError("any_of要求必须设置group_id")
+        if (
+            self.min_years is not None
+            and self.max_years is not None
+            and self.max_years < self.min_years
+        ):
+            raise ValueError("max_years不能小于min_years")
+        return self
+
 
 class JobExtractionResult(BaseModel):
     """定义一份JD完成结构化抽取后必须满足的完整输出合同。"""
@@ -160,6 +201,18 @@ class JobExtractionResult(BaseModel):
     seniority: Seniority
     responsibilities: list[ResponsibilityItem]
     requirements: list[RequirementItem]
+
+    @model_validator(mode="after")
+    def any_of_group_must_have_multiple_members(self) -> Self:
+        """拒绝只有一个成员的any_of组，防止逻辑组失去“任选其一”的业务含义。"""
+        group_sizes: dict[str, int] = {}
+        for item in self.requirements:
+            if item.group_logic is RequirementGroupLogic.ANY_OF and item.group_id is not None:
+                group_sizes[item.group_id] = group_sizes.get(item.group_id, 0) + 1
+        invalid_groups = sorted(group_id for group_id, size in group_sizes.items() if size < 2)
+        if invalid_groups:
+            raise ValueError(f"any_of组至少需要两个成员：{', '.join(invalid_groups)}")
+        return self
 
 
 class GoldenExtractionRecord(BaseModel):

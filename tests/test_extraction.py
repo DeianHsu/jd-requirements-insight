@@ -9,8 +9,12 @@ from sqlalchemy import func, select
 
 from app.database import create_database_engine, create_session_factory, initialize_database
 from app.extraction import (
+    PROMPT_VERSION,
+    SCHEMA_VERSION,
+    SYSTEM_PROMPT,
     ExtractionError,
     ExtractorMetadata,
+    build_user_prompt,
     extract_job,
     persist_extraction,
     validate_evidence,
@@ -30,6 +34,9 @@ class FakeExtractionClient:
     def complete(self, system_prompt: str, user_prompt: str) -> str:
         """返回当前预设响应，并记录提示中包含必要约束和JD原文。"""
         assert "只能依据" in system_prompt
+        assert "每个requirement只能表达一个" in system_prompt
+        assert "group_logic=any_of" in system_prompt
+        assert "示例本身不能自动成为独立要求" in system_prompt
         assert "JD原文" in user_prompt
         response = self.responses[self.calls]
         self.calls += 1
@@ -46,11 +53,28 @@ def valid_payload(evidence: str = "熟悉 Python 和 RAG。") -> dict[str, objec
         ],
         "requirements": [
             {
-                "raw_name": "Python 和 RAG",
+                "raw_name": "Python",
+                "category": "programming_language",
+                "importance": "must",
+                "proficiency": "familiar",
+                "group_id": None,
+                "group_logic": "standalone",
+                "min_years": None,
+                "max_years": None,
+                "years_text": None,
+                "evidence": evidence,
+                "confidence": 0.95,
+            },
+            {
+                "raw_name": "RAG",
                 "category": "rag",
                 "importance": "must",
                 "proficiency": "familiar",
-                "years_required": None,
+                "group_id": None,
+                "group_logic": "standalone",
+                "min_years": None,
+                "max_years": None,
+                "years_text": None,
                 "evidence": evidence,
                 "confidence": 0.95,
             }
@@ -83,6 +107,64 @@ def make_database(tmp_path: Path):
     return engine, create_session_factory(engine)
 
 
+def test_prompt_v2_3_contains_atomic_extraction_boundaries() -> None:
+    """验证Prompt V2.3保留要求原子化、任选关系、示例边界和原始要求规则。"""
+    assert PROMPT_VERSION == "2.3"
+    assert SCHEMA_VERSION == "2.0"
+    assert "熟悉Python和RAG" in SYSTEM_PROMPT
+    assert "LangChain使用经验" in SYSTEM_PROMPT
+    assert "Llama和ChatGLM只是模型示例" in SYSTEM_PROMPT
+    assert "proficiency使用unknown" in SYSTEM_PROMPT
+
+
+def test_prompt_v2_3_balances_responsibility_atomicity_and_business_boundaries() -> None:
+    """验证Prompt V2.3先识别交付结果，再平衡职责拆分与合并边界。"""
+    assert "构建智能体工作流" in SYSTEM_PROMPT
+    assert "实现文献检索自动化" in SYSTEM_PROMPT
+    assert "实现实验数据分析自动化" in SYSTEM_PROMPT
+    assert "实现合规报告生成自动化" in SYSTEM_PROMPT
+    assert "不同对象、不同交付物或可独立验收的业务结果" in SYSTEM_PROMPT
+    assert "设计、开发与落地AI Agent管理平台" in SYSTEM_PROMPT
+    assert "实施方式" in SYSTEM_PROMPT
+    assert "Agent和智能助手只是企业内部AI应用示例" in SYSTEM_PROMPT
+    assert "先识别候选动作、对象和结果，再判断职责边界" in SYSTEM_PROMPT
+    assert "不能仅因共享同一技术对象就合并" in SYSTEM_PROMPT
+    assert "每个原文分句" in SYSTEM_PROMPT
+    assert "调研AI模型" in SYSTEM_PROMPT
+    assert "选型AI模型" in SYSTEM_PROMPT
+    assert "微调AI模型" in SYSTEM_PROMPT
+    assert "部署落地AI模型" in SYSTEM_PROMPT
+    assert "优化模型效果与推理性能" in SYSTEM_PROMPT
+
+
+def test_prompt_v2_3_splits_independently_evaluable_conjunctions() -> None:
+    """验证Prompt V2.3继续拆开由连接词并列的可独立评价要求。"""
+    assert "代码风格" in SYSTEM_PROMPT
+    assert "工程素养" in SYSTEM_PROMPT
+    assert "复杂系统实现能力" in SYSTEM_PROMPT
+    assert "不能把整句或整段直接复制成一个name" in SYSTEM_PROMPT
+
+
+def test_prompt_v2_3_groups_preferred_alternatives() -> None:
+    """验证Prompt V2.3继续把任选加分语言和项目经验放入any_of组。"""
+    assert "Python / Node.js 优先" in SYSTEM_PROMPT
+    assert "相关项目经验者优先" in SYSTEM_PROMPT
+    assert "共享同一个any_of组" in SYSTEM_PROMPT
+
+
+def test_build_user_prompt_contains_schema_v2_and_retry_feedback() -> None:
+    """验证用户Prompt携带V2字段、JD原文和上一轮错误以支持定向修正。"""
+    prompt = build_user_prompt(make_job(), "any_of组至少需要两个成员")
+
+    assert '"group_id"' in prompt
+    assert '"group_logic"' in prompt
+    assert '"min_years"' in prompt
+    assert '"max_years"' in prompt
+    assert '"years_text"' in prompt
+    assert "熟悉 Python 和 RAG。" in prompt
+    assert "any_of组至少需要两个成员" in prompt
+
+
 def test_extract_job_returns_validated_result() -> None:
     """验证合法模型JSON能够通过Schema和原文证据检查。"""
     client = FakeExtractionClient([valid_payload()])
@@ -90,7 +172,7 @@ def test_extract_job_returns_validated_result() -> None:
     result, raw_response = extract_job(make_job(), client)
 
     assert result.role_family.value == "rag_application"
-    assert result.requirements[0].raw_name == "Python 和 RAG"
+    assert [item.raw_name for item in result.requirements] == ["Python", "RAG"]
     assert raw_response["seniority"] == "junior"
     assert client.calls == 1
 
@@ -149,6 +231,5 @@ def test_persist_extraction_is_idempotent(tmp_path: Path) -> None:
     assert second_created is False
     assert extraction_count == 1
     assert responsibility_count == 1
-    assert requirement_count == 1
+    assert requirement_count == 2
     engine.dispose()
-

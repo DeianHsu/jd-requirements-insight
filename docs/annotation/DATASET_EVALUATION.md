@@ -1,0 +1,95 @@
+# 证据、Golden与Evaluation规范
+
+> 只在处理证据、人工样例、数据集划分或评测指标时读取本文。
+
+## 1. 证据规则
+
+每条证据必须：
+
+1. 是JD中的连续原文；
+2. 足以支持职责或要求名称；
+3. 足以支持重要程度、熟练度和年限判断；
+4. 尽量是最短但信息完整的片段；
+5. 不得改写、概括或拼接不连续文本。
+
+多个原子项可以共享同一句证据。
+
+```text
+熟悉LangChain，有RAG项目经验者优先。
+```
+
+推荐：
+
+```text
+LangChain → 熟悉LangChain
+RAG       → 有RAG项目经验者优先
+```
+
+只引用`RAG`不足以支持`preferred`判断。
+
+## 2. 人工标注流程
+
+1. 区分职责、任职要求、加分项和公司介绍；
+2. 按职责规范提取可独立验收的工作；
+3. 找出全部候选要求；
+4. 按要求规范进行原子化和逻辑组标注；
+5. 标注类别、重要程度、熟练度和年限；
+6. 复制最小充分的连续证据；
+7. 检查漏拆、多拆、错误合并和无依据推断；
+8. 通过Pydantic结构校验和证据存在性校验。
+
+职责规则见[RESPONSIBILITIES.md](RESPONSIBILITIES.md)，要求规则见[REQUIREMENTS.md](REQUIREMENTS.md)。
+
+## 3. Golden Dataset
+
+- 每条Golden必须通过Pydantic校验；
+- 每条证据必须存在于对应JD原文；
+- 人工确认后的`confidence`统一为`1.0`；
+- 有争议的标注记录判断理由，不修改答案迎合模型；
+- 真实JD和Golden只保存在本地，不上传公开仓库。
+
+## 4. development与validation
+
+- 用于调整Prompt、Schema或规则的样例标记为`development`；
+- 已经用于调参的样例不能事后改名为validation；
+- validation必须按预先确定的规则选择，不能根据模型表现挑选；
+- validation在人工批准后冻结，只用于报告泛化结果；
+- 如果根据validation错误修改Prompt，该批数据不再承担下一轮正式验证职责，必须另建未见样例。
+
+具体样例数量、`split`和审核状态以本地`annotation_cases.json`为准，避免在多份文档中重复维护易变化的项目状态。
+
+## 5. 分层Evaluation
+
+不能用一个总分代表系统质量。至少分别检查：
+
+| 层级 | 指标或检查方式 |
+|---|---|
+| 要求和职责发现 | 名称代理Precision、Recall、F1 |
+| 原子化 | 样例预测数量与期望数量是否一致 |
+| 逻辑组 | `any_of`组完整性 |
+| 字段 | category、importance、proficiency、年限准确率 |
+| 证据存在性 | 自动原文包含校验 |
+| 证据支持性和最小性 | 人工Golden复核 |
+
+名称代理指标先用证据包含关系定位句内输出，再使用保留专有英文技术词边界的确定性相似度一对一匹配。它只用于稳定比较版本，不能替代人工语义判断。
+
+无适用样本的指标必须显示`N/A`，不能显示为0%。
+
+## 6. 运行方式
+
+```powershell
+python -m app.cli evaluate-cases <annotation_cases.json> `
+  --prompt-version 2.3 `
+  --schema-version 2.0 `
+  --model <模型名称> `
+  --split development
+```
+
+评测真实validation时把`--split`改为`validation`。
+
+## 7. 当前限制
+
+- 当前validation只有职责样例，不能代表完整JD端到端质量；
+- 证据存在率不等于证据边界最小或真正支持结论；
+- 技能归一尚未实现，因此没有canonical mapping和relation accuracy；
+- validation职责草案批准前，相关结果只能标记为草案基线。

@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Engine, create_engine, inspect
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -42,5 +42,44 @@ def create_session_factory(engine: Engine) -> sessionmaker[Session]:
 
 
 def initialize_database(engine: Engine) -> None:
-    """根据ORM模型创建尚不存在的数据表，重复执行不会删除已有数据。"""
+    """创建数据表并为旧SQLite数据库补充当前Schema所需字段。"""
     Base.metadata.create_all(engine)
+    if engine.dialect.name == "sqlite":
+        _migrate_sqlite_job_requirements_to_v2(engine)
+
+
+def _migrate_sqlite_job_requirements_to_v2(engine: Engine) -> None:
+    """以可重复执行的ALTER TABLE把旧岗位要求表升级到Schema V2。"""
+    inspector = inspect(engine)
+    if not inspector.has_table("job_requirements"):
+        return
+
+    existing_columns = {
+        column["name"] for column in inspector.get_columns("job_requirements")
+    }
+    # SQLite的ADD COLUMN不会覆盖已有数据，静态SQL也避免把外部输入拼进DDL。
+    column_definitions = {
+        "group_id": "VARCHAR(100)",
+        "group_logic": "VARCHAR(20) NOT NULL DEFAULT 'standalone'",
+        "min_years": "FLOAT",
+        "max_years": "FLOAT",
+        "years_text": "VARCHAR(100)",
+    }
+    with engine.begin() as connection:
+        for column_name, definition in column_definitions.items():
+            if column_name not in existing_columns:
+                connection.exec_driver_sql(
+                    f"ALTER TABLE job_requirements ADD COLUMN {column_name} {definition}"
+                )
+        # 旧库保留years_required列时，将已有最低年限一次性回填到V2字段。
+        if "years_required" in existing_columns:
+            connection.exec_driver_sql(
+                "UPDATE job_requirements "
+                "SET min_years = years_required "
+                "WHERE min_years IS NULL AND years_required IS NOT NULL"
+            )
+        # create_all不会为已存在的旧表补索引，因此迁移阶段显式保证分组查询性能。
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_job_requirements_group_id "
+            "ON job_requirements (group_id)"
+        )

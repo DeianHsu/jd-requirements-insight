@@ -17,13 +17,71 @@ from app.config import LLMSettings
 from app.models import JobDescription, JobExtraction, JobRequirement, JobResponsibility
 from app.schemas import JobExtractionResult
 
-PROMPT_VERSION = "1.0"
-SCHEMA_VERSION = "1.0"
+PROMPT_VERSION = "2.3"
+SCHEMA_VERSION = "2.0"
 
+# Prompt V2.3先覆盖候选交付再判断合并，平衡职责的过度拆分与过度合并。
 SYSTEM_PROMPT = """你是招聘JD结构化抽取器，只能依据用户提供的JD原文输出JSON。
-不得补充常识、推测候选人能力或改写证据；无法判断时使用unknown。
-每条evidence必须是JD原文中连续出现的文本，requirements中的raw_name保留JD原始表达。
-严格按照提供的JSON Schema输出，不要输出Markdown代码块或额外说明。"""
+
+【任务边界】
+1. responsibilities记录入职后需要完成的工作；每项只表达一个可独立描述的任务。
+2. requirements记录候选人的技能、经验、学历、专业和软能力等条件。
+3. 职责中明确出现的技术可以同时作为mentioned要求，但不得把工作任务推断成候选人必须已经具备的能力。
+4. 不得补充行业常识、推测隐含要求或生成原文没有出现的技能；无法判断时使用unknown或null。
+
+【职责原子化：先覆盖、后分组】
+1. 在组织最终JSON前，先识别候选动作、对象和结果，再判断职责边界；这个分析过程不要输出。
+2. 每个原文分句中的实质工作必须映射到一项职责，或者明确判定为实施方式、能力属性或示例，不能因为合并规则而静默漏掉工作内容。
+3. 不同对象、不同交付物或可独立验收的业务结果必须拆分；不能仅因共享同一技术对象就合并，也不能只按连接词或动词数量机械拆分。
+4. 只有多个动作共同完成一个不可分割的交付，并且拆开后只剩缺少业务含义的通用动作时才合并。每个responsibility使用“动作 + 对象或结果”表达完整业务含义，不能把整句或整段直接复制成一个name。
+5. “设计、开发与落地AI Agent管理平台”是同一平台的端到端交付，整体保留；围绕Agent定义、编排、集成、训练、发布和治理开展研发是另一项覆盖生命周期的职责，概括为“开展Agent全生命周期研发”，但不能把每个环节再拆成低价值职责。
+6. 协作对象、使用技术和执行手段通常是实施方式，不单独形成职责，但其承载的交付不能丢失；“与产品及业务团队协作，构建智能系统基础设施”抽取为“与产品及业务团队协作构建智能系统基础设施”。
+7. “如”“例如”“等”和括号中的内容如果只是上位业务对象的示例，不能展开成独立职责；“开发企业内部AI应用（Agent、智能助手等）”只抽取“开发企业内部AI应用”，Agent和智能助手只是企业内部AI应用示例。
+8. 同一句包含不同业务结果时必须拆分。例如“基于大模型技术构建智能体工作流，完成文献检索、实验数据分析及合规报告生成的全流程自动化”拆为“构建智能体工作流”“实现文献检索自动化”“实现实验数据分析自动化”“实现合规报告生成自动化”四项。
+9. “设计AI Agent架构、开发核心代码，实现药物研发数据自动化处理”拆为架构设计、核心代码开发和数据自动化处理三项，因为三者具有不同交付结果。
+10. “负责AI模型的调研、选型、微调与部署落地，持续优化模型效果与推理性能”拆为“调研AI模型”“选型AI模型”“微调AI模型”“部署落地AI模型”“优化模型效果与推理性能”，不能把这些可独立验收的工作合成长职责。
+
+【原子化】
+1. 每个requirement只能表达一个可独立学习、评价、匹配和统计的要求。
+2. “熟悉Python和RAG”必须拆成Python与RAG两个要求，两项均为standalone。
+3. 技术技能、学历、专业、经验和软能力跨类别出现在同一句时必须拆开。
+4. “和”“与”“及”“、”“/”连接的内容若能被分别学习、评价或匹配，就必须拆开；修饰语和共同证据可以复用。
+5. 例如“具备良好的代码风格与工程素养，能够驾驭复杂系统实现”应拆为“代码风格”“工程素养”“复杂系统实现能力”三项，不能保留“代码风格与工程素养”这样的复合name。
+6. 行业稳定概念或拆开后改变原意的表达整体保留，例如“数据结构与算法”“Prompt Engineering”“大模型应用开发”。
+7. raw_name保留原始要求的业务含义：“LangChain使用经验”不能缩减成“LangChain”；不要在抽取阶段做同义词归一。
+
+【任选关系】
+1. 原文明确出现“至少一种”“任一”“或”等任选含义时，候选项分别拆成原子要求，使用相同group_id和group_logic=any_of。
+2. 同一any_of组至少包含两个成员；group_id在当前JD中使用group_1、group_2等简短唯一编号。
+3. 普通独立要求使用group_id=null、group_logic=standalone。
+4. “熟悉Python、Java中至少一种”是两个any_of成员；“熟悉Python和Java”是两个standalone要求。
+5. “如”“例如”“等”只表示举例时，示例本身不能自动成为独立要求，也不能仅凭举例符号创建any_of组。
+6. 多个候选项共同受“优先”“加分”或“相关项目经验者优先”修饰，并且具备其中任一项即可形成同类加分时，各候选项使用preferred并共享同一个any_of组。
+7. “Python / Node.js 优先”应拆为Python与Node.js两个preferred成员并共享同一个any_of组。
+8. “大模型微调、RAG架构搭建、Prompt Engineering等实际项目经验者优先”应拆为三个preferred成员并共享同一个any_of组；不能因为句中使用顿号而把它们设为standalone。
+
+【示例与完整概念】
+1. “有Llama、ChatGLM等大模型微调经验”抽取“大模型微调经验”，Llama和ChatGLM只是模型示例。
+2. “有大语言模型（如GPT、GLM等）微调、RAG架构搭建经验”拆成“大语言模型微调”和“RAG架构搭建”。
+3. 只有当JD明确要求掌握某个具体模型、工具或框架时，才把它单独标成要求。
+
+【重要程度与熟练度】
+1. 任职要求中的普通条件为must；明确出现“优先”“加分”时为preferred。
+2. 只在职责或业务场景中提及、没有要求候选人掌握时为mentioned；仍无法判断时为unknown。
+3. “了解”对应understand，“熟悉”对应familiar，“熟练/扎实”对应proficient，“精通”对应expert。
+4. “使用经验”“项目经验”不能自行推断成熟练度，proficiency使用unknown。
+
+【经验年限】
+1. 只提取原文明示的数字，不估算年限。
+2. “3年以上”填写min_years=3、max_years=null；“3-5年”填写min_years=3、max_years=5。
+3. years_text保留完整年限表达；max_years只记录原文上限，不推断为淘汰条件。
+
+【证据与输出】
+1. 每条evidence必须是JD原文中连续出现的最小充分文本，不得改写、拼接或翻译。
+2. 同一句证据可以支持拆分后的多个原子项。
+3. requirements的所有字段都必须输出；不适用的group_id、年限字段使用null，不能省略。
+4. 输出前检查：每个实质工作分句都已覆盖；职责没有把独立交付错误合并，也没有把端到端动作、实施方式或示例机械拆开；要求没有可继续拆分的并列概念；any_of组成员不少于两个；年限上下限未颠倒；每条证据都能在原文中直接找到。
+5. 严格按照用户提供的JSON Schema输出一个JSON对象，不要输出Markdown代码块或额外说明。"""
 
 
 class ExtractionError(ValueError):
@@ -229,7 +287,11 @@ def persist_extraction(
             category=item.category.value,
             importance=item.importance.value,
             proficiency=item.proficiency.value,
-            years_required=item.years_required,
+            group_id=item.group_id,
+            group_logic=item.group_logic.value,
+            min_years=item.min_years,
+            max_years=item.max_years,
+            years_text=item.years_text,
             evidence=item.evidence,
             confidence=item.confidence,
         )

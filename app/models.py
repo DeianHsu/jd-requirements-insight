@@ -109,7 +109,7 @@ class JobResponsibility(Base):
 
 
 class JobRequirement(Base):
-    """保存一项岗位要求的原始名称、分类、强度、年限和证据。"""
+    """保存一项原子岗位要求的分类、逻辑组、年限范围和原文证据。"""
 
     __tablename__ = "job_requirements"
 
@@ -121,7 +121,11 @@ class JobRequirement(Base):
     category: Mapped[str] = mapped_column(String(50), index=True)
     importance: Mapped[str] = mapped_column(String(50), index=True)
     proficiency: Mapped[str] = mapped_column(String(50))
-    years_required: Mapped[float | None] = mapped_column(Float, nullable=True)
+    group_id: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    group_logic: Mapped[str] = mapped_column(String(20), default="standalone")
+    min_years: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_years: Mapped[float | None] = mapped_column(Float, nullable=True)
+    years_text: Mapped[str | None] = mapped_column(String(100), nullable=True)
     evidence: Mapped[str] = mapped_column(Text)
     confidence: Mapped[float] = mapped_column(Float)
 
