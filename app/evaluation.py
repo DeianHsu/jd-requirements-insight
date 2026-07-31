@@ -1,4 +1,4 @@
-"""该模块加载人工黄金答案，并计算JD要求抽取的Precision、Recall和分类准确率。"""
+"""该模块加载人工标准答案，并计算JD要求抽取的Precision、Recall和分类准确率。"""
 
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ class ExtractionMetrics:
 
 @dataclass
 class GoldenValidationSummary:
-    """汇总黄金数据文件数量、通过数量和带文件名的校验错误。"""
+    """汇总人工标准答案文件数量、通过数量和带文件名的校验错误。"""
 
     discovered: int = 0
     valid: int = 0
@@ -61,7 +61,7 @@ class GoldenValidationSummary:
 
     @property
     def failed(self) -> int:
-        """返回未通过Schema、来源或证据校验的黄金文件数量。"""
+        """返回未通过抽取数据合同、来源或证据校验的文件数量。"""
         return len(self.errors)
 
 
@@ -161,7 +161,7 @@ def combine_metrics(metrics: list[ExtractionMetrics]) -> ExtractionMetrics:
 
 
 def normalize_requirement_name(name: str) -> str:
-    """对要求名称进行最小格式归一，暂不合并不同表达的技能同义词。"""
+    """对要求名称进行最小格式规范化，暂不合并不同的要求表达。"""
     normalized = unicodedata.normalize("NFKC", name).lower()
     return re.sub(r"\s+", " ", normalized).strip()
 
@@ -261,7 +261,7 @@ def requirement_map(items: list[RequirementItem]) -> dict[str, RequirementItem]:
 def evaluate_extraction(
     predicted: JobExtractionResult, expected: JobExtractionResult
 ) -> ExtractionMetrics:
-    """按raw_name匹配预测与黄金要求，并计算抽取和重要程度指标。"""
+    """按raw_name匹配预测与人工标准答案要求，并计算抽取和重要程度指标。"""
     predicted_map = requirement_map(predicted.requirements)
     expected_map = requirement_map(expected.requirements)
     matched_keys = predicted_map.keys() & expected_map.keys()
@@ -285,7 +285,7 @@ def load_golden_file(path: Path) -> GoldenExtractionRecord:
 def validate_golden_directory(
     golden_directory: Path, raw_jd_directory: Path
 ) -> GoldenValidationSummary:
-    """批量验证黄金文件Schema、来源文件对应关系和所有原文证据。"""
+    """批量验证人工标准答案的抽取数据合同、来源关系和原文证据。"""
     files = sorted(golden_directory.glob("*.json"))
     summary = GoldenValidationSummary(discovered=len(files))
 
@@ -299,7 +299,7 @@ def validate_golden_directory(
             validate_evidence(record.extraction, document.raw_text)
             summary.valid += 1
         except (ValueError, json.JSONDecodeError, OSError, JobFileError) as exc:
-            # 每个黄金文件单独记录错误，避免一处人工标注问题遮蔽其他文件状态。
+            # 每个人工标准答案文件单独记录错误，避免一处标注问题遮蔽其他文件状态。
             summary.errors.append(f"{path.name}: {exc}")
 
     return summary
@@ -316,7 +316,7 @@ def load_annotation_cases_file(path: Path) -> dict[str, Any]:
 def _case_items(
     case: dict[str, Any], target: str
 ) -> list[RequirementItem] | list[ResponsibilityItem]:
-    """把单个困难样例的期望项校验为Schema对象并按目标类型返回。"""
+    """把单个困难样例的期望项校验为抽取数据合同对象并按目标类型返回。"""
     expected = case.get("expected")
     if not isinstance(expected, dict) or not isinstance(expected.get(target), list):
         raise ValueError(f"{case.get('case_id', 'unknown')}缺少expected.{target}数组")

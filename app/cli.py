@@ -121,12 +121,12 @@ def show_jds() -> None:
 
 @cli.command("validate-golden")
 def validate_golden(
-    golden_directory: Path = typer.Argument(..., help="人工黄金JSON所在目录"),
+    golden_directory: Path = typer.Argument(..., help="人工标准答案JSON所在目录"),
     raw_jd_directory: Path = typer.Argument(..., help="原始Markdown JD所在目录"),
 ) -> None:
-    """验证黄金数据的Schema、来源文件和原文证据是否全部有效。"""
+    """验证人工标准答案的抽取数据合同、来源文件和原文证据是否有效。"""
     summary = validate_golden_directory(golden_directory, raw_jd_directory)
-    console.print(f"发现 [bold]{summary.discovered}[/bold] 个黄金文件")
+    console.print(f"发现 [bold]{summary.discovered}[/bold] 个人工标准答案文件")
     console.print(f"校验通过 [green]{summary.valid}[/green]")
     console.print(f"失败 [red]{summary.failed}[/red]")
     for error in summary.errors:
@@ -220,9 +220,9 @@ def show_extractions() -> None:
 
 @cli.command("evaluate-extractions")
 def evaluate_extractions(
-    golden_directory: Path = typer.Argument(..., help="人工黄金JSON所在目录"),
+    golden_directory: Path = typer.Argument(..., help="人工标准答案JSON所在目录"),
 ) -> None:
-    """把数据库中每份JD的最新抽取结果与人工黄金答案进行对比评测。"""
+    """把数据库中每份JD的最新抽取结果与人工标准答案进行对比评测。"""
     engine, session_factory = database_resources()
     try:
         persisted = list_extractions(session_factory)
@@ -246,7 +246,7 @@ def evaluate_extractions(
         metrics.append(evaluate_extraction(predicted, golden.extraction))
 
     if not metrics:
-        console.print("[yellow]没有可与黄金答案对比的抽取结果。[/yellow]")
+        console.print("[yellow]没有可与人工标准答案对比的抽取结果。[/yellow]")
         raise typer.Exit(code=1)
 
     combined = combine_metrics(metrics)
@@ -294,7 +294,7 @@ def evaluate_cases(
         if model_names:
             model_name = next(iter(model_names))
     if not selected:
-        console.print("[yellow]没有找到符合模型、Prompt和Schema版本的结果。[/yellow]")
+        console.print("[yellow]没有找到符合指定抽取器版本的结果。[/yellow]")
         raise typer.Exit(code=1)
 
     try:

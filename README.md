@@ -1,12 +1,12 @@
 # JD Skill Insight
 
-面向个人求职决策的岗位技能洞察系统。
+面向个人求职决策的岗位要求洞察系统。
 
-项目从个人求职时难以横向比较大量JD的真实问题出发，通过Schema约束、要求原子化、技能本体、证据绑定和分层评测，把非结构化JD转化为可统计、可追溯的岗位技能数据。
+项目从个人求职时难以横向比较大量JD的真实问题出发，通过抽取数据合同约束、要求原子化、跨JD原子要求归并、证据绑定和分层评测，把非结构化JD转化为可统计、可追溯的岗位要求数据。
 
 ## 当前状态
 
-已实现 Markdown JD 的校验、SQLite 导入、内容哈希去重和列表查看，并完成JD结构化抽取基础设施：已经使用DeepSeek V4 Flash完成5份真实JD的多版本抽取，保存岗位方向、级别、职责、要求和原文证据，并可用人工Golden Dataset评测。当前Schema V2和Prompt V2.3.1能够表达职责业务边界、要求示例、具体技术名、任选逻辑组与经验范围；困难样例分层Evaluation可以按development、regression、validation、模型、Prompt和Schema版本报告原子项、字段、逻辑组、年限和证据指标，当前正在评估单次混合抽取中的跨任务干扰。
+已实现Markdown JD的校验、SQLite导入、内容哈希去重和列表查看，并完成JD结构化抽取基础设施：已经使用DeepSeek V4 Flash完成5份真实JD的多版本抽取，保存岗位方向、岗位级别、职责、要求和原文证据，并可用人工标准答案评测。当前抽取数据合同V2和Prompt V2.3.1能够表达职责业务边界、要求示例、具体技术名、任选逻辑组与经验范围；困难样例分层评测可以按开发集（`development`）、回归集（`regression`）、验证集（`validation`）和抽取器版本报告原子项、字段、逻辑组、年限和证据指标，当前正在评估单次混合抽取中的跨任务干扰。P0-4跨JD原子要求归并与映射只有未提交开发草稿，不能作为稳定实现事实。
 
 ## 环境
 
@@ -57,7 +57,7 @@ python -m app.cli list-jds
 
 ## 结构化抽取与评测
 
-准备自己的JD和人工标注数据后，可以校验Golden Dataset及其中的原文证据：
+准备自己的JD和人工标注数据后，可以校验人工标准答案及其中的原文证据：
 
 ```powershell
 python -m app.cli validate-golden data\golden\jd_extractions data\raw_jds
@@ -82,9 +82,10 @@ python -m app.cli evaluate-cases <annotation_cases.json> `
   --split development
 ```
 
-相同JD使用相同模型、Prompt版本和Schema版本重复抽取时会自动跳过，避免重复结果污染数据库。
+相同JD使用相同抽取器版本（模型、Prompt和抽取数据合同版本）重复抽取时会自动跳过，避免重复结果污染数据库。
 `evaluate-cases`默认只显示前10条错误摘要，可使用`--max-issues`调整；完整模型JSON保存在本地数据库中，不在终端默认输出。
 
 ## 方法文档
 
+- [全项目术语词典](docs/GLOSSARY.md)：统一数据单位、抽取数据合同、评测、要求归并和公共CLI的固定含义。
 - [人工标注规范](docs/annotation/README.md)：按职责、要求和数据集评测三个主题提供规则入口。

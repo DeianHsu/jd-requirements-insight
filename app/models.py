@@ -57,7 +57,7 @@ class JobDescription(Base):
         DateTime(timezone=True), default=utc_now, onupdate=utc_now
     )
 
-    # 一个原始JD可以保留多个版本的抽取结果，便于比较Prompt或Schema迭代效果。
+    # 一个原始JD可以保留多个版本的抽取结果，便于比较抽取器迭代效果。
     extractions: Mapped[list[JobExtraction]] = relationship(
         back_populates="job", cascade="all, delete-orphan"
     )

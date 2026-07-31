@@ -42,14 +42,14 @@ def create_session_factory(engine: Engine) -> sessionmaker[Session]:
 
 
 def initialize_database(engine: Engine) -> None:
-    """创建数据表并为旧SQLite数据库补充当前Schema所需字段。"""
+    """创建数据表并为旧SQLite数据库补充当前数据库结构所需字段。"""
     Base.metadata.create_all(engine)
     if engine.dialect.name == "sqlite":
         _migrate_sqlite_job_requirements_to_v2(engine)
 
 
 def _migrate_sqlite_job_requirements_to_v2(engine: Engine) -> None:
-    """以可重复执行的ALTER TABLE把旧岗位要求表升级到Schema V2。"""
+    """以可重复执行的ALTER TABLE把旧岗位要求表升级到数据库结构V2。"""
     inspector = inspect(engine)
     if not inspector.has_table("job_requirements"):
         return

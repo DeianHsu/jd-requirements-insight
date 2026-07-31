@@ -1,21 +1,22 @@
 # app 目录说明
 
-该目录保存应用的功能代码，当前实现了FastAPI健康检查、JD文件校验、SQLite持久化、LLM结构化抽取、证据校验、Golden Dataset评测和命令行操作。
+该目录保存应用的功能代码，当前实现了FastAPI健康检查、JD文件校验、SQLite持久化、LLM结构化抽取、证据校验、人工标准答案评测和命令行操作。
 
 ## 文件职责
 
-| 文件 | 功能 | 实现原理 |
-|---|---|---|
-| `__init__.py` | 标记 `app` 为Python应用包 | 使项目可以通过 `python -m app.xxx` 方式运行模块 |
-| `main.py` | 提供FastAPI应用和环境验证入口 | 创建FastAPI实例并暴露 `/health` 健康检查接口 |
-| `database.py` | 管理数据库地址、Engine、Session、建表和SQLite结构升级 | 使用SQLAlchemy连接本地SQLite，并以可重复执行的补列和回填逻辑兼容Schema V1数据库 |
-| `models.py` | 定义JD原文、抽取任务、职责和要求等数据库表 | 使用SQLAlchemy ORM建立一对多关联，保存原子要求的逻辑组与年限范围，并以抽取版本联合唯一约束保证幂等性 |
-| `schemas.py` | 校验JD导入和Schema V2结构化抽取数据 | 使用Pydantic模型、枚举、字段范围和跨字段校验约束 `any_of` 逻辑组及经验年限 |
-| `ingestion.py` | 解析、校验、去重并导入JD | 读取YAML Front Matter和正文，计算规范化正文的SHA-256哈希，再按文件独立事务写入数据库 |
-| `config.py` | 读取并校验LLM运行配置 | 使用Pydantic Settings从环境变量或 `.env` 读取模型地址、名称和密钥 |
-| `extraction.py` | 使用原子化Prompt V2.3.1抽取JD职责和要求并保存原文证据 | 先覆盖候选动作、对象和结果，再处理职责及原子要求边界；发送前压缩Schema，可按数量或ID限制调用；另提供不入库的单次重组与职责隔离实验入口，只有正式结果才经校验后按版本写入SQLite |
-| `evaluation.py` | 校验Golden Dataset并计算基础及困难样例分层指标 | 基础评测按原始名称匹配；困难样例可按development/validation分组，先用证据定位句内输出，再以保留专有技术词的确定性相似度进行一对一匹配，分别统计原子项、字段、逻辑组、年限和证据指标 |
-| `cli.py` | 提供本地JD导入、抽取、查看和评测命令 | 使用Typer组织业务入口；抽取默认限制为3份，支持指定JD及显式全量回归，评测默认输出有限错误摘要，完整结果仍保存在数据库中 |
+| 文件 | 职责与实现重点 |
+|---|---|
+| `__init__.py` | 标记Python应用包。 |
+| `main.py` | 创建FastAPI应用并提供`/health`健康检查。 |
+| `database.py` | 管理SQLAlchemy Engine、Session、建表和可重复执行的SQLite增量迁移。 |
+| `models.py` | 定义JD、抽取结果、职责和要求的ORM关系及幂等约束。 |
+| `schemas.py` | 用Pydantic定义JD输入和抽取数据合同V2。 |
+| `ingestion.py` | 解析Markdown与Front Matter，按内容哈希去重并逐文件事务导入。 |
+| `config.py` | 从环境变量或`.env`读取并校验LLM配置。 |
+| `extraction.py` | 执行结构化抽取、抽取数据合同与证据校验、有限重试和按抽取器版本持久化。 |
+| `evaluation.py` | 校验人工标准答案并计算完整JD及困难样例的分层评测指标。 |
+| `requirement_consolidation.py` | P0-4开发草稿：定义跨JD原子要求归并与映射的输入、输出和确定性约束；合同尚未稳定。 |
+| `cli.py` | 用Typer提供导入、查看、抽取和评测命令。 |
 
 ## 当前数据流
 
@@ -23,26 +24,12 @@
 Markdown JD
   → Front Matter解析
   → Pydantic校验
-  → 正文规范化与SHA-256哈希
-  → 数据库重复检查
-  → SQLAlchemy写入SQLite
-  → CLI展示结果
+  → 内容哈希去重并写入SQLite
+  → LLM结构化抽取
+  → 抽取数据合同与证据校验及有限重试
+  → 按抽取器版本幂等写入SQLite
+  → 人工标准答案与困难样例分层评测
 ```
-
-## 结构化抽取数据流
-
-```text
-数据库中的JD原文
-  → 拼接JSON Schema与抽取规则
-  → 兼容OpenAI协议的LLM返回JSON
-  → Pydantic结构校验
-  → 逐条核对原文证据
-  → 失败时携带错误原因有限重试
-  → 按模型、Prompt和Schema版本幂等写入SQLite
-  → 与人工Golden Dataset对比评测
-```
-
-Schema V2将每项要求保存为独立原子项，通过 `group_id + group_logic` 表达任选关系，并用 `min_years`、`max_years`、`years_text` 分别保存最低门槛、原文上限和完整年限表达。
 
 ## 维护要求
 

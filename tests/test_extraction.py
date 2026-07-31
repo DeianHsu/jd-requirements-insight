@@ -64,7 +64,7 @@ class RecordingExperimentClient:
 
 
 def valid_payload(evidence: str = "熟悉 Python 和 RAG。") -> dict[str, object]:
-    """生成一份符合抽取Schema且可按需替换证据的测试响应。"""
+    """生成一份符合抽取数据合同且可按需替换证据的测试响应。"""
     return {
         "role_family": "rag_application",
         "seniority": "junior",
@@ -199,7 +199,7 @@ def test_build_user_prompt_contains_schema_v2_and_retry_feedback() -> None:
 
 
 def test_compact_json_schema_keeps_constraints_without_explanatory_fields() -> None:
-    """验证模型Schema删除重复说明时仍保留字段、必填项和枚举约束。"""
+    """验证模型JSON Schema删除重复说明时仍保留字段、必填项和枚举约束。"""
     schema = compact_json_schema(JobExtractionResult.model_json_schema())
     serialized = json.dumps(schema, ensure_ascii=False)
 
@@ -211,7 +211,7 @@ def test_compact_json_schema_keeps_constraints_without_explanatory_fields() -> N
 
 
 def test_extract_job_returns_validated_result() -> None:
-    """验证合法模型JSON能够通过Schema和原文证据检查。"""
+    """验证合法模型JSON能够通过抽取数据合同和原文证据检查。"""
     client = FakeExtractionClient([valid_payload()])
 
     result, raw_response = extract_job(make_job(), client)
@@ -235,7 +235,7 @@ def test_extract_job_retries_after_invalid_evidence() -> None:
 
 
 def test_reordered_experiment_keeps_single_complete_extraction_call() -> None:
-    """验证单次重组实验仍用一次完整Schema调用并通过既有校验。"""
+    """验证单次重组实验仍用一次完整抽取数据合同调用并通过既有校验。"""
     client = FakeExtractionClient([valid_payload()])
     experimental_prompt = f"{REORDERED_EXPERIMENT_INSTRUCTION}\n\n{SYSTEM_PROMPT}"
 

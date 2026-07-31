@@ -84,7 +84,7 @@ def parse_job_file(path: Path) -> JobDocument:
 
 
 def to_model(document: JobDocument, digest: str) -> JobDescription:
-    """把通过校验的输入Schema映射为可由SQLAlchemy持久化的ORM对象。"""
+    """把通过校验的JD输入合同映射为可由SQLAlchemy持久化的ORM对象。"""
     return JobDescription(
         source_hash=digest,
         source_file=document.source_file,

@@ -1,4 +1,4 @@
-"""该模块验证黄金数据加载、抽取指标计算和原文证据校验。"""
+"""该模块验证人工标准答案加载、抽取指标计算和原文证据校验。"""
 
 import json
 from pathlib import Path
@@ -59,7 +59,7 @@ def test_evaluate_extraction_calculates_expected_metrics() -> None:
 
 
 def test_validate_golden_directory_checks_source_evidence(tmp_path: Path) -> None:
-    """验证黄金数据只有在来源文件存在且证据位于原文时才能通过。"""
+    """验证人工标准答案只有在来源文件存在且证据位于原文时才能通过。"""
     raw_directory = tmp_path / "raw"
     golden_directory = tmp_path / "golden"
     raw_directory.mkdir()

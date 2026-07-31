@@ -1,4 +1,4 @@
-# 证据、Golden与Evaluation规范
+# 证据、人工标准答案与评测规范
 
 > 只在处理证据、人工样例、数据集划分或评测指标时读取本文。
 
@@ -40,25 +40,26 @@ RAG       → 有RAG项目经验者优先
 
 职责规则见[RESPONSIBILITIES.md](RESPONSIBILITIES.md)，要求规则见[REQUIREMENTS.md](REQUIREMENTS.md)。
 
-## 3. Golden Dataset
+## 3. 人工标准答案
 
-- 每条Golden必须通过Pydantic校验；
+- 每条人工标准答案必须通过Pydantic校验；
 - 每条证据必须存在于对应JD原文；
 - 人工确认后的`confidence`统一为`1.0`；
 - 有争议的标注记录判断理由，不修改答案迎合模型；
-- 真实JD和Golden只保存在本地，不上传公开仓库。
+- 真实JD和人工标准答案只保存在本地，不上传公开仓库。
 
-## 4. development与validation
+## 4. 开发集、回归集与验证集
 
-- 用于调整Prompt、Schema或规则的样例标记为`development`；
-- 已经用于调参的样例不能事后改名为validation；
-- validation必须按预先确定的规则选择，不能根据模型表现挑选；
-- validation在人工批准后冻结，只用于报告泛化结果；
-- 如果根据validation错误修改Prompt，该批数据不再承担下一轮正式验证职责，必须另建未见样例。
+- 用于调整Prompt、抽取数据合同或规则的样例标记为开发集（`development`）；
+- 已经暴露给设计或调参过程、保留下来检查已知能力是否回退的样例标记为回归集（`regression`）；
+- 已经用于调参的样例不能事后改名为验证集；
+- 验证集（`validation`）必须按预先确定的规则选择，不能根据模型表现挑选；
+- 验证集在人工批准后冻结，只用于报告泛化结果；
+- 如果根据验证集错误修改Prompt，该批数据不再承担下一轮正式验证职责，必须另建未见样例。
 
 具体样例数量、`split`和审核状态以本地`annotation_cases.json`为准，避免在多份文档中重复维护易变化的项目状态。
 
-## 5. 分层Evaluation
+## 5. 分层评测
 
 不能用一个总分代表系统质量。至少分别检查：
 
@@ -68,8 +69,8 @@ RAG       → 有RAG项目经验者优先
 | 原子化 | 样例预测数量与期望数量是否一致 |
 | 逻辑组 | `any_of`组完整性 |
 | 字段 | category、importance、proficiency、年限准确率 |
-| 证据存在性 | 自动原文包含校验 |
-| 证据支持性和最小性 | 人工Golden复核 |
+| 证据存在性 | 自动原文包含校验；聚合后报告证据存在率 |
+| 证据支持性和最小性 | 人工复核；聚合后报告证据支持率 |
 
 名称代理指标先用证据包含关系定位句内输出，再使用保留专有英文技术词边界的确定性相似度一对一匹配。它只用于稳定比较版本，不能替代人工语义判断。
 
@@ -85,11 +86,11 @@ python -m app.cli evaluate-cases <annotation_cases.json> `
   --split development
 ```
 
-评测真实validation时把`--split`改为`validation`。
+评测真实验证集时把`--split`改为`validation`。
 
 ## 7. 当前限制
 
-- 当前validation只有职责样例，不能代表完整JD端到端质量；
+- 当前验证集只有职责样例，不能代表完整JD端到端质量；
 - 证据存在率不等于证据边界最小或真正支持结论；
-- 技能归一尚未实现，因此没有canonical mapping和relation accuracy；
-- validation职责草案批准前，相关结果只能标记为草案基线。
+- 跨JD原子要求归并与映射目前只有开发草稿，因此尚无稳定的要求映射准确率和关系准确率；
+- 验证集职责草案批准前，相关结果只能标记为草案基线。

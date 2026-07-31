@@ -12,7 +12,7 @@ def test_initialize_database_migrates_legacy_requirement_columns(tmp_path: Path)
     database_path = tmp_path / "legacy.db"
     engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
     with engine.begin() as connection:
-        # 人工创建最小旧表，准确复现Schema V1只有years_required的状态。
+        # 人工创建最小旧表，准确复现数据库结构V1只有years_required的状态。
         connection.execute(
             text(
                 "CREATE TABLE job_requirements ("

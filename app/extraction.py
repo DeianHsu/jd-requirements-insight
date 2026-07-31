@@ -159,7 +159,7 @@ class OpenAICompatibleExtractionClient:
 
 @dataclass(frozen=True)
 class ExtractorMetadata:
-    """记录模型、Prompt和Schema版本，并生成用于幂等判断的抽取器版本。"""
+    """记录模型、Prompt和抽取数据合同版本，并生成用于幂等判断的抽取器版本。"""
 
     model_name: str
     prompt_version: str = PROMPT_VERSION
@@ -196,7 +196,7 @@ class ExtractionSummary:
 
 
 def compact_json_schema(schema: object) -> object:
-    """递归移除不影响输出约束的Schema说明字段，减少每次LLM请求的输入长度。"""
+    """递归移除不影响输出约束的JSON Schema说明字段，减少每次LLM请求的输入长度。"""
     if isinstance(schema, dict):
         return {
             key: compact_json_schema(value)
@@ -209,8 +209,8 @@ def compact_json_schema(schema: object) -> object:
 
 
 def build_user_prompt(job: JobDescription, correction: str | None = None) -> str:
-    """把JD原文、输出Schema和上次校验错误组合成一次结构化抽取提示。"""
-    # Schema保留类型、枚举、必填项和跨字段结构，删除重复标题及说明以降低调用成本。
+    """把JD原文、输出JSON Schema和上次校验错误组合成一次结构化抽取提示。"""
+    # JSON Schema保留类型、枚举、必填项和跨字段结构，删除重复标题及说明以降低调用成本。
     schema_json = json.dumps(
         compact_json_schema(JobExtractionResult.model_json_schema()),
         ensure_ascii=False,
@@ -236,7 +236,7 @@ JD原文：
 def build_responsibility_experiment_prompt(
     job: JobDescription, correction: str | None = None
 ) -> str:
-    """为职责隔离实验组合压缩Schema、JD原文和可选校验反馈。"""
+    """为职责隔离实验组合压缩JSON Schema、JD原文和可选校验反馈。"""
     schema_json = json.dumps(
         compact_json_schema(ResponsibilityExperimentResult.model_json_schema()),
         ensure_ascii=False,
@@ -269,7 +269,7 @@ def parse_model_response(response_text: str) -> JobExtractionResult:
     try:
         return JobExtractionResult.model_validate(payload)
     except ValidationError as exc:
-        raise ExtractionError(f"模型输出不符合Schema：{exc}") from exc
+        raise ExtractionError(f"模型输出不符合抽取数据合同：{exc}") from exc
 
 
 def normalize_evidence(text: str) -> str:

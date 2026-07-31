@@ -1,4 +1,4 @@
-"""该模块验证Schema V2的逻辑组、年限范围和旧字段兼容规则。"""
+"""该模块验证抽取数据合同V2的逻辑组、年限范围和旧字段兼容规则。"""
 
 import pytest
 from pydantic import ValidationError
@@ -82,7 +82,7 @@ def test_year_range_rejects_reversed_bounds() -> None:
 
 
 def test_legacy_years_required_is_loaded_as_min_years() -> None:
-    """验证旧Golden字段仍能读取，但新输出只保留Schema V2字段名。"""
+    """验证旧人工标准答案字段仍能读取，但新输出只保留V2字段名。"""
     payload = requirement_payload()
     payload.pop("min_years")
     payload["years_required"] = 3

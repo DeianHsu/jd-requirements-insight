@@ -1,60 +1,130 @@
-# 阶段交接文档规则
+# P0功能交接文档规则
 
-本目录保存可提交到Git的工程阶段交接，使新Codex会话或开发者不依赖历史聊天即可恢复项目状态。
+本目录保存每个P0功能点的当前工作交接，使新Codex会话或开发者不依赖历史聊天即可恢复该功能的真实状态。
 
-## 阶段边界与创建时机
+handoff是持续维护的工作恢复文档，不是不可修改的历史快照。提交历史由Git保存，长期技术取舍由`docs/DECISIONS.md`保存，阶段实验过程由`reports/`保存。
 
-1. `docs/PROJECT_PLAN.md`中的一个功能点默认对应一个独立开发阶段，并在新会话中继续下一阶段。
-2. 一个功能点过大时，可拆成`4A`、`4B`等可独立验收的子阶段；只有全部子阶段达到原验收标准，才能把该功能点标记为完成。
-3. 普通缺陷修复、文案调整和小型文档维护并不自动形成新阶段，可并入当前阶段。
-4. 阶段完成、冻结或明确暂停时，在运行相应验证后创建一份handoff，并将其纳入建议提交范围。
+## 1. 文件索引
 
-文件名使用`YYYY-MM-DD-阶段英文短名.md`。已提交handoff是历史快照，不得改写为新的项目状态；后续变化应创建新文件。
+`docs/PROJECT_PLAN.md`中的每个P0功能点固定对应一份handoff：
 
-## 元数据
+| P0功能点 | handoff |
+|---|---|
+| P0-1 抽取数据合同与人工标注规范 | [P0-1-extraction-contract-and-annotation.md](P0-1-extraction-contract-and-annotation.md) |
+| P0-2 JD结构化抽取 | [P0-2-structured-extraction.md](P0-2-structured-extraction.md) |
+| P0-3 原子要求粒度验证与改进 | [P0-3-atomic-requirement-quality.md](P0-3-atomic-requirement-quality.md) |
+| P0-4 跨JD原子要求归并与映射 | [P0-4-requirement-consolidation.md](P0-4-requirement-consolidation.md) |
+| P0-5 分层评测与错误分析 | [P0-5-layered-evaluation.md](P0-5-layered-evaluation.md) |
+| P0-6 高频岗位要求统计 | [P0-6-requirement-statistics.md](P0-6-requirement-statistics.md) |
+| P0-7 统计结论证据追溯 | [P0-7-evidence-traceability.md](P0-7-evidence-traceability.md) |
+| P0-8 扩充真实JD | [P0-8-jd-dataset-expansion.md](P0-8-jd-dataset-expansion.md) |
+| P0-9 核心自动化测试 | [P0-9-automated-tests.md](P0-9-automated-tests.md) |
+| P0-10 市场分析报告 | [P0-10-market-report.md](P0-10-market-report.md) |
+| P0-11 演示与项目文档 | [P0-11-demo-and-documentation.md](P0-11-demo-and-documentation.md) |
 
-新handoff在标题后添加以下元数据；不适用的字段填写`none`，不得猜测：
+新增、合并或拆分P0功能点时，必须同步调整本索引和对应handoff。普通缺陷、文案调整或子任务不新增handoff文件，而是更新受影响的现有文件。
 
-```yaml
-stage_id: "计划编号或子阶段编号"
-plan_item: "PROJECT_PLAN中的功能名称"
-status: "completed | frozen | paused"
-created_at: "YYYY-MM-DD"
-baseline_commit: "阶段开始时的commit短哈希"
-verified_revision: "working-tree based on <baseline_commit>，或实际已验证commit"
-next_stage: "下一计划编号或阶段名称"
-related_decisions: ["DEC编号或none"]
+## 2. 新会话快速启动
+
+用户只需声明当前P0功能点和本次任务，不需要列出待读文档：
+
+```text
+继续 JD Skill Insight，当前开发 P0-X。
+
+本次任务：<想完成的事情>。
+约束：<可选限制>。
 ```
 
-`verified_revision`必须与“测试与验证”中的结果对应。由于handoff通常和代码一起提交，提交前的验证可写为基于某个baseline的working tree，不能虚构尚未产生的commit哈希。
+收到该指令后按以下顺序恢复上下文：
 
-## 内容要求
+1. 完整读取`docs/GLOSSARY.md`，检查`git status`和最近提交；
+2. 读取`docs/PROJECT_PLAN.md`中的目标P0功能行；
+3. 完整读取目标P0 handoff；
+4. 对`depends_on`列出的直接上游，先只读取“稳定事实”和“数据合同与不变量”；
+5. 根据用户的具体任务，按`docs/CONTEXT_ROUTING.md`定点读取代码、测试、决策或数据摘要；
+6. 完成修改前检查`affects`，只在下游状态、合同、入口或继续开发判断实际变化时更新对应handoff。
 
-每份handoff必须包含以下一级标题：
+用户未说明具体任务时，只汇报目标P0的当前状态、直接依赖、阻塞项和建议下一步，不执行修改。
 
-1. `阶段目标`
-2. `已完成内容`
-3. `修改文件`
-4. `当前架构状态`
-5. `数据契约`
+## 3. 依赖与影响规则
+
+每份handoff使用以下字段表达跨功能关系：
+
+- `depends_on`：开展当前功能前必须了解的直接上游P0功能点；
+- `affects`：把当前功能列为直接依赖的下游P0功能点；
+- `dependency_mode`：可选字段。默认是`fixed`；`task_scoped`表示按本次目标补充依赖，`selective`表示只读取已列依赖中与本次任务直接相关的部分。
+
+读取和维护遵守以下边界：
+
+1. 默认只展开一层`depends_on`，不递归加载完整依赖树；只有合同来源仍不明确时才继续向上游定点读取。
+2. 读取上游handoff不等于读取其全部代码；先读稳定事实与不变量，仍不足时再读其他章节或目标代码片段。
+3. `affects`不在会话启动时全文读取，只在修改完成前用于下游影响检查。
+4. P0-11使用`selective`模式：依赖图保留全部上游关系，但会话启动只读取与本次文档或演示任务直接相关的上游handoff章节，不默认加载全部代码和报告。
+5. P0-9使用`task_scoped`模式：按当前测试目标读取被测试功能的handoff，不把所有功能永久列为固定上游依赖。
+6. `depends_on`和上游的`affects`必须双向一致，引用的P0编号必须存在，不得依赖自身。
+7. 修改依赖关系时同步更新两端handoff；没有下游语义变化时，不机械改写所有`affects`文件。
+
+## 4. 维护时机
+
+出现以下任一情况时，更新受影响的handoff：
+
+1. 功能开始开发、状态变化、暂停、恢复或达到验收标准；
+2. 公共合同、核心流程、文件入口、依赖关系或禁止事项发生变化；
+3. 一轮开发完成并产生可复现的验证结果；
+4. 新发现的问题会影响下一会话的开发顺序或判断；
+5. 跨功能变更影响多个P0功能点，此时同时维护所有受影响的handoff。
+
+每个完成的开发阶段都必须更新对应handoff。handoff只保留恢复工作所需的当前事实，不记录每日流水、聊天过程或已经失效的操作步骤。
+
+## 5. 元数据
+
+每份handoff在标题后保存以下元数据：
+
+```yaml
+p0_id: "P0-N"
+plan_item: "PROJECT_PLAN中的功能名称"
+status: "completed | partial | in_progress | not_started"
+baseline_commit: "当前工作所基于的commit短哈希，无法确认时为none"
+verified_revision: "实际通过验证的commit，或working tree based on <baseline_commit>"
+related_decisions: ["DEC编号或none"]
+glossary_terms: ["本功能依赖的GLOSSARY术语"]
+depends_on: ["直接上游P0编号，没有则为空列表"]
+affects: ["直接下游P0编号，没有则为空列表"]
+dependency_mode: "仅特殊功能填写，例如task_scoped或selective"
+```
+
+`status`必须与`docs/PROJECT_PLAN.md`一致。`verified_revision`只记录实际验证版本，不得虚构提交；未验证的草稿必须明确写为开发草稿。使用默认`fixed`模式时可以省略`dependency_mode`。
+
+## 6. 内容结构
+
+每份handoff使用以下一级标题：
+
+1. `功能目标与边界`
+2. `当前状态`
+3. `稳定事实`
+4. `实现与文件入口`
+5. `数据合同与不变量`
 6. `测试与验证`
-7. `已知问题与限制`
-8. `下一阶段任务`
-9. `下一阶段注意事项`
+7. `未完成事项与已知问题`
+8. `继续开发入口`
 
-内容以代码、Git差异和实际测试为依据，只记录接手工作所需的当前工程事实。采用“变化优先、链接优先”：重点说明本阶段改变了什么、当前接口和下一步约束，稳定且已有唯一信息源的内容只写摘要与路径，不复制完整项目知识。单份handoff通常控制在约1000至1800 token；复杂阶段可适当超出，但不得靠复制已有文档扩充。
+未开始的功能也必须建立handoff，但只记录计划边界、依赖、预期入口和禁止提前假设的内容，不得把设计设想写成稳定事实。
 
-恢复项目状态时，事实来源优先级为：代码与数据契约 → 自动化测试 → Git差异与提交 → 生效中的决策记录 → 最近相关handoff → 项目计划摘要 → 历史聊天。来源冲突时以前者为准，并修正文档，而不是依赖聊天记忆。
+## 7. 信息职责
 
-禁止复制完整真实JD、模型JSON、Golden数据、密钥、私人材料或大段历史报告；需要时只记录文件路径、case ID和指标摘要。
+- `PROJECT_PLAN.md`维护范围、优先级、验收标准和状态摘要；
+- handoff维护恢复某个P0功能所需的当前工程上下文；
+- `DECISIONS.md`维护长期选择及理由；
+- `GLOSSARY.md`维护术语定义和跨阶段不变量；
+- `reports/`维护实验过程和指标分析；
+- Git维护历史版本和变更时间线。
 
-## 阶段完成流程
+handoff优先链接唯一信息源，不复制完整规则、Prompt、实验报告或数据内容。不得复制真实JD、完整模型JSON、完整人工标准答案、数据库内容、密钥或私人材料。
 
-1. 检查`git status`和最近提交，确认修改范围；如存在与本阶段无关的改动，应从建议提交范围中排除，不得顺带提交。
-2. 运行与阶段风险匹配的测试和静态检查。
-3. 按本模板创建handoff，记录实际命令与结果。
-4. 检查敏感信息、文档链接和待提交差异。
-5. Codex列出建议提交文件、建议Summary和Description，等待用户确认；不得默认执行commit或push。
-6. 用户手动提交后，检查最新commit和`git status`；确认阶段文件已提交且工作区没有遗漏，才视为交接闭环。
+## 8. 开发完成检查
 
-本项目当前的`commit`和`push`均由用户手动执行。阶段交接完成不等于代码已经推送到远端。
+1. 检查Git范围并运行与风险匹配的验证；
+2. 按`affects`检查下游，并更新所有实际受影响P0功能点的handoff；
+3. 同步`PROJECT_PLAN.md`中的状态和验收摘要；
+4. 检查术语、链接、敏感信息和待提交差异；
+5. Codex提供建议提交范围、Summary和Description，commit和push仍由用户手动执行。

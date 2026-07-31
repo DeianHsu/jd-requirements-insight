@@ -44,7 +44,7 @@ class JobDocument(BaseModel):
         return cleaned
 
     def unknown_metadata(self) -> dict[str, Any]:
-        """返回尚未进入稳定Schema的额外元数据，以便原样保存和后续扩展。"""
+        """返回尚未进入稳定抽取数据合同的额外元数据，以便原样保存和后续扩展。"""
         return dict(self.model_extra or {})
 
 

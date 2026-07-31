@@ -70,13 +70,13 @@
 
 证据必须是JD中的连续文本，并足以支持职责名称。拆分后的多项职责可以共享同一句证据，但不能拼接不连续片段。
 
-证据通用规则和Golden数据管理见[DATASET_EVALUATION.md](DATASET_EVALUATION.md)。
+证据通用规则和人工标准答案数据管理见[DATASET_EVALUATION.md](DATASET_EVALUATION.md)。
 
 ## 6. 评测关注点
 
-当前validation职责草案专门检查两类错误：
+当前验证集（`validation`）职责草案专门检查两类错误：
 
 1. 把端到端动作链拆成大量低价值通用动作；
 2. 把能力属性或括号中的示例错误拆成独立职责。
 
-validation草案批准后必须冻结；如根据其结果修改Prompt，下一轮正式验证需使用新的未见样例。
+验证集草案批准后必须冻结；如根据其结果修改Prompt，下一轮正式验证需使用新的未见样例。
