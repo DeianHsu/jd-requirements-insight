@@ -109,7 +109,7 @@ def valid_result_payload() -> dict[str, object]:
 
 def test_prompt_v1_is_domain_agnostic() -> None:
     """验证Prompt v1不绑定任何具体领域技能，只描述通用归并任务。"""
-    assert CONSOLIDATION_PROMPT_VERSION == "1.3"
+    assert CONSOLIDATION_PROMPT_VERSION == "1.5"
     assert CONSOLIDATION_SCHEMA_VERSION == "1.0"
     for domain_word in ("Python", "RAG", "LangChain", "Agent", "大模型", "AI"):
         assert domain_word not in CONSOLIDATION_SYSTEM_PROMPT
@@ -123,7 +123,7 @@ def test_metadata_combines_version_components() -> None:
     metadata = ConsolidatorMetadata(model_name="test-model")
 
     assert metadata.consolidator_version == (
-        "test-model|prompt:1.3|schema:1.0"
+        "test-model|prompt:1.5|schema:1.0"
     )
 
 

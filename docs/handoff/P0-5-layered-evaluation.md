@@ -8,7 +8,7 @@ baseline_commit: "b983db5"
 verified_revision: "working tree based on b983db5"
 related_decisions: ["DEC-012", "DEC-013"]
 glossary_terms: ["人工标准答案", "开发集", "回归集", "验证集", "名称代理指标", "证据存在率", "证据支持率"]
-depends_on: ["P0-1", "P0-2"]
+depends_on: ["P0-1", "P0-2", "P0-4"]
 affects: ["P0-3", "P0-4", "P0-10", "P0-11"]
 ```
 

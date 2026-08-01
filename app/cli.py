@@ -13,6 +13,7 @@ from app.consolidation import (
     ConsolidatorMetadata,
     OpenAICompatibleConsolidationClient,
     consolidate_requirements,
+    list_consolidations,
 )
 from app.database import create_database_engine, create_session_factory, initialize_database
 from app.evaluation import (
@@ -232,6 +233,41 @@ def consolidate_requirements_cmd(
         console.print(f"  [red]- {error.scope}: {error.message}[/red]")
     if summary.failed:
         raise typer.Exit(code=1)
+
+
+@cli.command("list-consolidations")
+def show_consolidations() -> None:
+    """以表格形式列出已持久化的归并批次摘要而不输出完整映射。"""
+    engine, session_factory = database_resources()
+    try:
+        consolidations = list_consolidations(session_factory)
+    finally:
+        engine.dispose()
+
+    if not consolidations:
+        console.print("数据库中还没有归并批次。")
+        return
+
+    table = Table(title=f"已持久化归并批次（{len(consolidations)}）")
+    table.add_column("ID", justify="right")
+    table.add_column("范围")
+    table.add_column("归并器版本")
+    table.add_column("实例数", justify="right")
+    table.add_column("标准项", justify="right")
+    table.add_column("映射", justify="right")
+    table.add_column("关系", justify="right")
+
+    for record in consolidations:
+        table.add_row(
+            str(record.id),
+            record.scope_key,
+            record.consolidator_version,
+            str(record.occurrence_count),
+            str(len(record.canonical_requirements)),
+            str(len(record.mappings)),
+            str(len(record.relations)),
+        )
+    console.print(table)
 
 
 @cli.command("list-extractions")

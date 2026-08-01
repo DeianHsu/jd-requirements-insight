@@ -3,13 +3,13 @@
 ```yaml
 p0_id: "P0-4"
 plan_item: "跨JD原子要求归并与映射"
-status: "in_progress"
-baseline_commit: "b983db5"
-verified_revision: "working tree based on b983db5; draft contract only"
+status: "completed"
+baseline_commit: "efac164"
+verified_revision: "working tree based on efac164"
 related_decisions: ["DEC-009", "DEC-018"]
 glossary_terms: ["要求实例", "标准要求项", "要求归并", "要求映射", "要求关系"]
 depends_on: ["P0-1", "P0-3", "P0-5"]
-affects: ["P0-6", "P0-7", "P0-8", "P0-10", "P0-11"]
+affects: ["P0-5", "P0-6", "P0-7", "P0-8", "P0-10", "P0-11"]
 ```
 
 # 功能目标与边界
@@ -18,7 +18,7 @@ affects: ["P0-6", "P0-7", "P0-8", "P0-10", "P0-11"]
 
 # 当前状态
 
-开发中。`app/requirement_consolidation.py`和对应9项测试已随`b983db5`提交，但仍是开发草稿：只证明候选合同和确定性校验可以运行，不构成稳定下游合同，也没有完成真实语义评测或持久化。阶段1（数据输入装配）已完成：`app/consolidation.py`从数据库读取选定JD的最新抽取要求实例并保留来源定位，7项测试通过。阶段2（LLM归并调用与Prompt v1）已完成：客户端、领域无关Prompt v1、解析与有限重试闭环，9项测试通过。阶段2.8真实试跑已完成：DeepSeek V4 Flash按prompt:1.0将当前5份JD的149条要求实例归并为125个标准要求项、17条关系，全部mapped并通过合同与覆盖校验；试跑结果未持久化（阶段4实现后重跑）。阶段3（归并执行与校验闭环）已完成：批量执行入口、失败隔离与汇总摘要，5项测试通过。阶段4（持久化与幂等）已完成：4张归并表（批次/标准要求项/映射/关系）、按范围键+归并器版本幂等保存、映射可追溯回原始要求，6项测试通过。阶段5（CLI）已完成：`consolidate-requirements`命令（--job-id/--all/--max-attempts，互斥校验，LLM配置检查，错误退出码），3项CLI测试通过。
+已完成。七个阶段全部交付：输入装配（`app/consolidation.py`）→ LLM归并调用与Prompt迭代至v1.4（领域无关）→ 批量执行与失败隔离 → 4张归并表持久化与幂等 → `consolidate-requirements` CLI → 人工标准答案评测（`app/consolidation_evaluation.py`）→ 真实全量归并验证。真实评测基线（DeepSeek V4 Flash，13实例人工标准答案，4轮Prompt迭代）：映射准确率84.62%（11/13）、关系准确率80%（4/5）；全量归并149实例→101标准项、25处归并、关系67条，映射理由与来源可追溯。
 
 # 稳定事实
 
@@ -26,17 +26,18 @@ affects: ["P0-6", "P0-7", "P0-8", "P0-10", "P0-11"]
 - 职责文本中的候选人条件必须先由P0-2抽取为`RequirementItem`。
 - 同义表达归并到同一标准要求项；`is_a`、`part_of`和`related_to`只建立关系，不触发归并。
 - 同一表面词可以因证据上下文不同而映射到不同标准要求项。
-- 代码必须领域无关，不硬编码Python、LangChain等具体领域技能。
+- 代码与Prompt必须领域无关，不硬编码具体领域技能（有自动化测试断言）。
+- 归并按范围键（`all`或`job_ids=...`）+ 归并器版本（model|prompt|schema）幂等保存，规则变化保留新旧结果。
 
 # 实现与文件入口
 
-- `app/requirement_consolidation.py`：开发草稿中的输入、输出、枚举和一致性校验。
-- `app/consolidation.py`：P0-4归并执行：装配输入、LLM客户端与Prompt v1、解析与有限重试。
-- `tests/test_requirement_consolidation.py`：草稿合同的9项确定性测试。
-- `tests/test_consolidation.py`：输入装配的7项测试。
-- `tests/test_consolidation_client.py`：归并LLM客户端、Prompt领域无关性与重试闭环的9项测试。
-- `tests/test_consolidation_run.py`：批量归并执行与失败隔离的5项测试。
-- `tests/test_consolidation_persist.py`：归并持久化与幂等的6项测试。
+- `app/requirement_consolidation.py`：归并合同的输入、输出、枚举和一致性校验（已稳定，9项测试）。
+- `app/consolidation.py`：归并执行：装配输入、LLM客户端与Prompt v1.4、解析与有限重试、批量执行、幂等持久化。
+- `app/consolidation_evaluation.py`：映射/关系/未映射准确率评测（名称规范化跨ID匹配，N/A语义）。
+- `app/models.py`：`JobConsolidation`、`CanonicalRequirementRecord`、`RequirementMappingRecord`、`RequirementRelationRecord`四张表（幂等唯一约束、追溯外键）。
+- `app/cli.py`：`consolidate-requirements`与`list-consolidations`命令。
+- `tests/test_requirement_consolidation.py`：合同9项；`tests/test_consolidation.py`：装配7项；`tests/test_consolidation_client.py`：客户端9项；`tests/test_consolidation_run.py`：批量5项；`tests/test_consolidation_persist.py`：持久化6项；`tests/test_consolidation_evaluation.py`：评测7项；`tests/test_cli.py`：CLI归并3项。
+- `data/consolidation_cases.json`：本地私有评测样例（含真实JD证据，.gitignore排除，不进公开仓库）。
 - `docs/GLOSSARY.md`：P0-4术语和跨阶段不变量。
 - `docs/DECISIONS.md`中的DEC-009、DEC-018：分层保存与语料驱动方案。
 
@@ -50,16 +51,19 @@ affects: ["P0-6", "P0-7", "P0-8", "P0-10", "P0-11"]
 
 # 测试与验证
 
-草稿的9项、输入装配的7项、归并客户端的9项、批量执行的5项、持久化的6项与CLI的3项测试通过，完整工作树73项测试通过，Ruff通过。阶段2.8已用真实LLM完成一次小规模试跑（约1次API调用，149实例→125标准要求项、17关系，全部mapped）。
+全量81项测试通过（合同9 + 装配7 + 客户端9 + 批量5 + 持久化6 + 评测7 + CLI归并与列表4 + 其余34），Ruff通过。真实评测4轮Prompt迭代（v1.0 46%/0% → v1.1 77%/60% → v1.2 85%/80% → v1.4 85%/80%基线）；全量归并成功持久化（149实例→101标准项，抽查归并合理、理由可追溯）。
 
 # 未完成事项与已知问题
 
-- 公共合同尚未冻结，也未进入数据库结构。
-- 批次边界：当前语料规模（约150条实例）单次调用已验证可行，暂不分批；待P0-8数据扩充后再评估。
-- CLI已完成；尚未建立要求映射准确率、关系准确率和人工复核样例（阶段6）。
-- 尚未建立要求映射准确率、关系准确率和人工复核样例。
-- 在小规模人工标准答案通过前，不运行全量要求归并。
+- any_of任选组成员偶发被归并（如656"Python"被并入上位概念、C++/Java/Go被顿号拼接），影响统计口径，P0-6需关注。
+- "微调经验"类具体活动与"落地经验"的关系模型判为`related_to`而人工标准答案判`part_of`，属可讨论的判断分歧。
+- 评测样例为开发集性质（已用于调参），正式的未见验证集与要求映射指标挂接属P0-5职责。
+- 批次边界：当前语料规模（约150条实例）单次调用可行，暂不分批；待P0-8数据扩充后再评估。
+- 全量归并单次调用耗时5-8分钟，且新Prompt版本首次调用常失败需重试一次（疑似输出过长或API偶发，未诊断根因）。
+- 关系类型互斥无合同约束：`is_a`/`part_of`与`related_to`语义互斥（GLOSSARY），但合同只禁止同三元组重复，不禁止两者并存（真实数据当前0冲突）。
+- `review_required`/`unmapped`路径在真实数据中未被触发（评测全部mapped），仅有确定性测试覆盖。
+- Prompt v1.5已补充年限/门槛差异归并规则（"3年以上"与"5年以上"经验不得归并），未重跑评测（语料仅1个年限实例，v1.4已验证其正确处理）；评测基线仍为v1.4。
 
 # 继续开发入口
 
-先读取本handoff、`docs/GLOSSARY.md`的要求归并章节、DEC-018、草稿实现和草稿测试。下一步应先冻结小规模输入输出合同和评测样例，再决定LLM调用与持久化设计。
+下游P0-6（高频统计）直接读取`canonical_requirements`/`requirement_mappings`；P0-5在分层评测中接入`consolidation_evaluation`的要求映射指标并建立未见验证集；P0-8数据扩充后重新评估批次边界与全量耗时。

@@ -13,7 +13,7 @@ from typing import Protocol
 from openai import OpenAI
 from pydantic import ValidationError
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session, selectinload, sessionmaker
 
 from app.config import LLMSettings
 from app.models import (
@@ -33,7 +33,7 @@ from app.requirement_consolidation import (
 )
 from app.schemas import RequirementItem
 
-CONSOLIDATION_PROMPT_VERSION = "1.3"
+CONSOLIDATION_PROMPT_VERSION = "1.5"
 CONSOLIDATION_SCHEMA_VERSION = "1.0"
 
 # Prompt V1只定义通用归并任务：同义归并、关系判断和未映射处理，不出现任何具体领域技能。
@@ -50,7 +50,7 @@ CONSOLIDATION_SYSTEM_PROMPT = """你是跨JD岗位要求归并器。输入是一
 8. 每条mapping和relation都必须给出理由：说明依据了哪些证据和名称线索，不能只写"语义相同"或"相关"。
 
 【标准项名称】
-1. 标准要求项名称使用简洁、独立可读的常见表达；优先直接采用最贴近该条件且完整的实例原文（如实例原文就是简洁完整的"能力甲"，标准项名称就用"能力甲"），改写只做最小必要修改（如去掉"相关知识"等冗余后缀、统一中英文表达）。
+1. 标准要求项名称使用简洁、独立可读的常见表达，优先采用最贴近该条件的原文表达；改写只做最小必要修改：去掉"相关知识""概念"等冗余后缀，统一中英文或同义表达（例如"能力甲应用开发"与"甲类应用开发"归并后统一使用一个名称）。
 2. 不要用"/"拼接多个实例原文，不要添加前缀修饰（如"主流开发语言""优先"），不要缩写或简化（如"能力甲基础"不能缩成"能力甲"）。
 3. 名称只表达招聘条件本身，不得包含括号注释、任选组说明、重要性或熟练度标注（例如不得出现"（必备）""（任选）"等括号内容）。
 4. 示例：实例"能力甲应用开发相关知识"与"甲类应用开发"归并后，标准项名称使用"能力甲应用开发"，而不是"能力甲/甲类应用开发知识"或"主流能力甲应用开发"。
@@ -58,7 +58,8 @@ CONSOLIDATION_SYSTEM_PROMPT = """你是跨JD岗位要求归并器。输入是一
 【归并边界】
 1. 任选组（any_of，例如"至少掌握一门主流能力"中的各选项）的成员与单独的硬性条件（例如"具备扎实的能力甲基础"）即使表面名称相似，也代表不同招聘门槛，不得归并到同一标准要求项。
 2. 单独条件只是整体的一部分时（例如"能力甲分析能力"是"能力甲分析与解决能力"的一部分），不得与整体归并，应独立映射并建立part_of关系。
-3. 示例：实例"能力甲"（属于"至少掌握一门主流能力"任选组）与实例"能力甲基础"（硬性条件）不得归并，必须分别映射到不同标准要求项。
+3. 年限或数值门槛不同的条件不得归并：例如"3年以上能力甲经验"与"5年以上能力甲经验"是不同招聘门槛，必须分别映射到不同标准要求项；实例带年限时，标准项名称应保留年限含义（如"3年以上能力甲经验"）。
+4. 示例：实例"能力甲"（属于"至少掌握一门主流能力"任选组）与实例"能力甲基础"（硬性条件）不得归并，必须分别映射到不同标准要求项。
 
 【关系生成】
 1. 同一证据中并列出现的多个机制、能力或组件（例如"任务分解、工具调用、协同执行等机制"）彼此必须全部两两建立related_to关系，不得遗漏任意一对。
@@ -448,3 +449,20 @@ def consolidate_requirements(
     summary.canonical_count = len(result.canonical_requirements)
     summary.relation_count = len(result.relations)
     return summary
+
+
+def list_consolidations(
+    session_factory: sessionmaker[Session],
+) -> list[JobConsolidation]:
+    """返回按ID排序的全部归并批次记录，供CLI摘要展示。"""
+    with session_factory() as session:
+        statement = (
+            select(JobConsolidation)
+            .options(
+                selectinload(JobConsolidation.canonical_requirements),
+                selectinload(JobConsolidation.mappings),
+                selectinload(JobConsolidation.relations),
+            )
+            .order_by(JobConsolidation.id)
+        )
+        return list(session.scalars(statement))

@@ -102,3 +102,68 @@ def test_cli_consolidate_reports_empty_pool_error(
 
     assert result.exit_code == 1
     assert "没有可归并的要求实例" in result.stdout
+
+
+def test_cli_list_consolidations_empty_and_with_records(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """验证list-consolidations在空库提示无记录，有批次时显示摘要。"""
+    from app.database import (
+        create_database_engine,
+        create_session_factory,
+        initialize_database,
+    )
+    from app.models import (
+        CanonicalRequirementRecord,
+        JobConsolidation,
+        RequirementMappingRecord,
+    )
+
+    database_path = tmp_path / "cli_list.db"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{database_path.as_posix()}")
+    engine = create_database_engine()
+    initialize_database(engine)
+    session_factory = create_session_factory(engine)
+
+    empty = runner.invoke(cli, ["list-consolidations"])
+    assert empty.exit_code == 0
+    assert "还没有归并批次" in empty.stdout
+
+    with session_factory() as session:
+        record = JobConsolidation(
+            scope_key="all",
+            consolidator_version="test-model|prompt:1.4|schema:1.0",
+            model_name="test-model",
+            prompt_version="1.4",
+            schema_version="1.0",
+            occurrence_count=2,
+            raw_response={},
+        )
+        session.add(record)
+        session.flush()
+        record.canonical_requirements.append(
+            CanonicalRequirementRecord(
+                canonical_requirement_id="c1",
+                canonical_name="能力甲",
+                rationale="测试",
+                confidence=0.9,
+            )
+        )
+        record.mappings.append(
+            RequirementMappingRecord(
+                requirement_id=1,
+                status="mapped",
+                canonical_requirement_id="c1",
+                candidate_requirement_ids=[],
+                rationale="测试",
+                confidence=0.9,
+            )
+        )
+        session.commit()
+        engine.dispose()
+
+    listed = runner.invoke(cli, ["list-consolidations"])
+    assert listed.exit_code == 0
+    assert "已持久化归并批次" in listed.stdout
+    assert "all" in listed.stdout
+    assert "标准项" in listed.stdout
