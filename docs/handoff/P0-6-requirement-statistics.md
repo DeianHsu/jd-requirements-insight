@@ -4,7 +4,7 @@
 p0_id: "P0-6"
 plan_item: "高频岗位要求统计"
 status: "not_started"
-baseline_commit: "1f50451"
+baseline_commit: "b983db5"
 verified_revision: "none"
 related_decisions: ["DEC-003", "DEC-005", "DEC-009", "DEC-018"]
 glossary_terms: ["标准要求项", "独立JD计数", "要求映射"]

@@ -4,8 +4,8 @@
 p0_id: "P0-3"
 plan_item: "原子要求粒度验证与改进"
 status: "partial"
-baseline_commit: "1f50451"
-verified_revision: "working tree based on 1f50451"
+baseline_commit: "b983db5"
+verified_revision: "working tree based on b983db5"
 related_decisions: ["DEC-008", "DEC-016", "DEC-017"]
 glossary_terms: ["原子要求", "固定复合要求", "困难样例", "名称代理指标"]
 depends_on: ["P0-1", "P0-2", "P0-5"]

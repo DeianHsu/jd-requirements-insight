@@ -37,14 +37,15 @@ handoff是持续维护的工作恢复文档，不是不可修改的历史快照�
 
 收到该指令后按以下顺序恢复上下文：
 
-1. 完整读取`docs/GLOSSARY.md`，检查`git status`和最近提交；
-2. 读取`docs/PROJECT_PLAN.md`中的目标P0功能行；
-3. 完整读取目标P0 handoff；
-4. 对`depends_on`列出的直接上游，先只读取“稳定事实”和“数据合同与不变量”；
-5. 根据用户的具体任务，按`docs/CONTEXT_ROUTING.md`定点读取代码、测试、决策或数据摘要；
-6. 完成修改前检查`affects`，只在下游状态、合同、入口或继续开发判断实际变化时更新对应handoff。
+1. 按目标P0 handoff的`glossary_terms`定点读取`docs/GLOSSARY.md`对应章节及“跨阶段不变量”（术语语义存疑时读取全文），检查`git status`和最近提交；
+2. 读取项目memory中的“当前P0状态摘要”（如存在，绑定同步commit），与`git log`对照；摘要过时时顺手更新memory；
+3. 读取`docs/PROJECT_PLAN.md`中的目标P0功能行；
+4. 完整读取目标P0 handoff；
+5. 对`depends_on`列出的直接上游，先只读取“稳定事实”和“数据合同与不变量”；
+6. 根据用户的具体任务，按`docs/CONTEXT_ROUTING.md`定点读取代码、测试、决策或数据摘要；
+7. 完成修改前检查`affects`，只在下游状态、合同、入口或继续开发判断实际变化时更新对应handoff。
 
-用户未说明具体任务时，只汇报目标P0的当前状态、直接依赖、阻塞项和建议下一步，不执行修改。
+用户未说明具体任务时只汇报不修改的行为边界以`AGENTS.md`为准。
 
 ## 3. 依赖与影响规则
 
@@ -84,7 +85,7 @@ handoff是持续维护的工作恢复文档，不是不可修改的历史快照�
 p0_id: "P0-N"
 plan_item: "PROJECT_PLAN中的功能名称"
 status: "completed | partial | in_progress | not_started"
-baseline_commit: "当前工作所基于的commit短哈希，无法确认时为none"
+baseline_commit: "本handoff内容最后一次与代码状态同步时的commit短哈希；只表示最近同步点，不保证等于最新提交，无法确认时为none"
 verified_revision: "实际通过验证的commit，或working tree based on <baseline_commit>"
 related_decisions: ["DEC编号或none"]
 glossary_terms: ["本功能依赖的GLOSSARY术语"]
@@ -94,6 +95,8 @@ dependency_mode: "仅特殊功能填写，例如task_scoped或selective"
 ```
 
 `status`必须与`docs/PROJECT_PLAN.md`一致。`verified_revision`只记录实际验证版本，不得虚构提交；未验证的草稿必须明确写为开发草稿。使用默认`fixed`模式时可以省略`dependency_mode`。
+
+新会话启动以`git log`和`git status`为事实基准：发现handoff元数据或状态表述与git不符时，以git为准并顺手修正handoff（属于文档维护，无需单独列任务）；`baseline_commit`在每次状态同步时更新为当时的commit，不必在每次提交后立即跟进。
 
 ## 6. 内容结构
 
@@ -112,19 +115,13 @@ dependency_mode: "仅特殊功能填写，例如task_scoped或selective"
 
 ## 7. 信息职责
 
-- `PROJECT_PLAN.md`维护范围、优先级、验收标准和状态摘要；
-- handoff维护恢复某个P0功能所需的当前工程上下文；
-- `DECISIONS.md`维护长期选择及理由；
-- `GLOSSARY.md`维护术语定义和跨阶段不变量；
-- `reports/`维护实验过程和指标分析；
-- Git维护历史版本和变更时间线。
-
-handoff优先链接唯一信息源，不复制完整规则、Prompt、实验报告或数据内容。不得复制真实JD、完整模型JSON、完整人工标准答案、数据库内容、密钥或私人材料。
+各文档的唯一职责和唯一信息源见`docs/DOCUMENT_RULES.md`第1节；handoff维护恢复某个P0功能所需的当前工程上下文。handoff优先链接唯一信息源，不复制完整规则、Prompt、实验报告或数据内容；不得复制真实JD、完整模型JSON、完整人工标准答案、数据库内容、密钥或私人材料。
 
 ## 8. 开发完成检查
 
 1. 检查Git范围并运行与风险匹配的验证；
 2. 按`affects`检查下游，并更新所有实际受影响P0功能点的handoff；
 3. 同步`PROJECT_PLAN.md`中的状态和验收摘要；
-4. 检查术语、链接、敏感信息和待提交差异；
-5. Codex提供建议提交范围、Summary和Description，commit和push仍由用户手动执行。
+4. 检查术语、链接、敏感信息和待提交差异。
+
+提交权限（Codex只准备建议提交范围、Summary和Description，commit和push由用户手动执行）以`AGENTS.md`为准。

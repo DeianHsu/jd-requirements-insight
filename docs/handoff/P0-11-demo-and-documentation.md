@@ -4,8 +4,8 @@
 p0_id: "P0-11"
 plan_item: "演示与项目文档"
 status: "partial"
-baseline_commit: "1f50451"
-verified_revision: "working tree based on 1f50451"
+baseline_commit: "b983db5"
+verified_revision: "working tree based on b983db5"
 related_decisions: ["DEC-002", "DEC-003", "DEC-006"]
 glossary_terms: ["P0-N", "开发中", "部分完成", "公共CLI"]
 depends_on: ["P0-1", "P0-2", "P0-3", "P0-4", "P0-5", "P0-6", "P0-7", "P0-8", "P0-9", "P0-10"]

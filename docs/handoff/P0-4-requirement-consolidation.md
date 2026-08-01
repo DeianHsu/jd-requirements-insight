@@ -4,8 +4,8 @@
 p0_id: "P0-4"
 plan_item: "跨JD原子要求归并与映射"
 status: "in_progress"
-baseline_commit: "1f50451"
-verified_revision: "working tree based on 1f50451; draft contract only"
+baseline_commit: "b983db5"
+verified_revision: "working tree based on b983db5; draft contract only"
 related_decisions: ["DEC-009", "DEC-018"]
 glossary_terms: ["要求实例", "标准要求项", "要求归并", "要求映射", "要求关系"]
 depends_on: ["P0-1", "P0-3", "P0-5"]
@@ -18,7 +18,7 @@ affects: ["P0-6", "P0-7", "P0-8", "P0-10", "P0-11"]
 
 # 当前状态
 
-开发中。`app/requirement_consolidation.py`和对应9项测试是未提交草稿，只证明候选合同和确定性校验可以运行，不构成稳定下游合同，也没有完成真实语义评测或持久化。
+开发中。`app/requirement_consolidation.py`和对应9项测试已随`b983db5`提交，但仍是开发草稿：只证明候选合同和确定性校验可以运行，不构成稳定下游合同，也没有完成真实语义评测或持久化。阶段1（数据输入装配）已完成：`app/consolidation.py`从数据库读取选定JD的最新抽取要求实例并保留来源定位，7项测试通过。
 
 # 稳定事实
 
@@ -31,7 +31,9 @@ affects: ["P0-6", "P0-7", "P0-8", "P0-10", "P0-11"]
 # 实现与文件入口
 
 - `app/requirement_consolidation.py`：开发草稿中的输入、输出、枚举和一致性校验。
+- `app/consolidation.py`：装配P0-4归并输入，从数据库读取选定JD的最新抽取要求实例。
 - `tests/test_requirement_consolidation.py`：草稿合同的9项确定性测试。
+- `tests/test_consolidation.py`：输入装配的7项测试。
 - `docs/GLOSSARY.md`：P0-4术语和跨阶段不变量。
 - `docs/DECISIONS.md`中的DEC-009、DEC-018：分层保存与语料驱动方案。
 
@@ -45,7 +47,7 @@ affects: ["P0-6", "P0-7", "P0-8", "P0-10", "P0-11"]
 
 # 测试与验证
 
-草稿的9项测试通过，完整工作树43项测试通过，Ruff通过。尚未使用真实JD、完整人工标准答案或付费LLM执行P0-4业务验证。
+草稿的9项测试与输入装配的7项测试通过，完整工作树50项测试通过，Ruff通过。尚未使用真实JD、完整人工标准答案或付费LLM执行P0-4业务验证。
 
 # 未完成事项与已知问题
 

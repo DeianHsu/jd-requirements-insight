@@ -14,6 +14,7 @@
 | `test_schemas.py` | 抽取数据合同V2的逻辑组、年限及旧字段兼容。 |
 | `test_database.py` | SQLite数据库结构V1到V2增量迁移。 |
 | `test_requirement_consolidation.py` | P0-4开发草稿的跨JD原子要求归并合同约束；目标合同尚未稳定。 |
+| `test_consolidation.py` | P0-4输入装配：多JD字段无损、最新抽取版本选择、范围过滤与空范围报错。 |
 
 ## 测试原则
 

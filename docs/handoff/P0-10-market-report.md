@@ -4,7 +4,7 @@
 p0_id: "P0-10"
 plan_item: "市场分析报告"
 status: "not_started"
-baseline_commit: "1f50451"
+baseline_commit: "b983db5"
 verified_revision: "none"
 related_decisions: ["DEC-003", "DEC-005", "DEC-007", "DEC-009", "DEC-012"]
 glossary_terms: ["独立JD计数", "标准要求项", "证据支持率", "名称代理指标"]

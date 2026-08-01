@@ -4,8 +4,8 @@
 p0_id: "P0-9"
 plan_item: "核心自动化测试"
 status: "partial"
-baseline_commit: "1f50451"
-verified_revision: "working tree based on 1f50451"
+baseline_commit: "b983db5"
+verified_revision: "working tree based on b983db5"
 related_decisions: ["DEC-004", "DEC-012"]
 glossary_terms: ["确定性校验", "小规模验证", "全量回归"]
 depends_on: []

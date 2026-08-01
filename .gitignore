@@ -25,3 +25,10 @@ data/private/
 
 # 本地生成的分析报告不默认上传。
 reports/
+
+# Reasonix本地会话、记忆与配置，不上传
+.reasonix/
+reasonix.toml
+
+# pytest 临时目录（系统Temp被锁定时使用 --basetemp）
+.pytest-tmp/

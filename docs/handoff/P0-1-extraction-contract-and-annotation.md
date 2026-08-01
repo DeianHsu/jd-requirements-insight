@@ -4,8 +4,8 @@
 p0_id: "P0-1"
 plan_item: "抽取数据合同与人工标注规范"
 status: "completed"
-baseline_commit: "1f50451"
-verified_revision: "working tree based on 1f50451"
+baseline_commit: "b983db5"
+verified_revision: "working tree based on b983db5"
 related_decisions: ["DEC-007", "DEC-008", "DEC-009", "DEC-010", "DEC-011", "DEC-013", "DEC-014", "DEC-017"]
 glossary_terms: ["抽取数据合同", "职责", "原子要求", "人工标准答案", "证据存在性"]
 depends_on: []

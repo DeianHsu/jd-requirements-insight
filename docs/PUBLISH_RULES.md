@@ -29,6 +29,8 @@
 
 P0 handoff默认提交到公开仓库，只能记录工程摘要、文件路径、困难样例ID和聚合指标；不得包含真实JD正文、完整模型输出、人工标准答案内容、密钥、本机绝对路径或个人材料。
 
+公开handoff中的`related_decisions`和其他DEC编号引用指向本地私有`docs/DECISIONS.md`，编号在公开仓库中不可解析，按内部代号保留。
+
 ## 3. 发布前检查
 
 1. 检查`git status`和待提交差异，只提交本次预期文件。
@@ -41,5 +43,4 @@ P0 handoff默认提交到公开仓库，只能记录工程摘要、文件路径�
 
 ## 4. 提交与推送权限
 
-1. Codex只检查差异并提供建议提交文件、Summary和Description，不执行commit。
-2. commit和push均由用户手动完成；更新本地P0 handoff不代表已经同步到GitHub。
+提交权限（Codex只准备建议提交范围、Summary和Description，commit和push由用户手动执行）以`AGENTS.md`为准。更新本地P0 handoff不代表已经同步到GitHub。

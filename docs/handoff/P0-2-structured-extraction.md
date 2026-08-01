@@ -4,8 +4,8 @@
 p0_id: "P0-2"
 plan_item: "JD结构化抽取"
 status: "completed"
-baseline_commit: "1f50451"
-verified_revision: "working tree based on 1f50451"
+baseline_commit: "b983db5"
+verified_revision: "working tree based on b983db5"
 related_decisions: ["DEC-007", "DEC-012", "DEC-014", "DEC-016", "DEC-017"]
 glossary_terms: ["结构化抽取", "抽取器版本", "证据存在性", "职责", "原子要求"]
 depends_on: ["P0-1"]

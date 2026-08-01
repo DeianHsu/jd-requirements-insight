@@ -4,8 +4,8 @@
 p0_id: "P0-7"
 plan_item: "统计结论证据追溯"
 status: "partial"
-baseline_commit: "1f50451"
-verified_revision: "working tree based on 1f50451"
+baseline_commit: "b983db5"
+verified_revision: "working tree based on b983db5"
 related_decisions: ["DEC-007", "DEC-009", "DEC-013"]
 glossary_terms: ["原始JD", "要求实例", "要求映射", "证据存在性"]
 depends_on: ["P0-2", "P0-4", "P0-6"]

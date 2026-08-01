@@ -4,8 +4,8 @@
 p0_id: "P0-8"
 plan_item: "扩充至15～20份真实JD"
 status: "partial"
-baseline_commit: "1f50451"
-verified_revision: "working tree based on 1f50451"
+baseline_commit: "b983db5"
+verified_revision: "working tree based on b983db5"
 related_decisions: ["DEC-003", "DEC-013"]
 glossary_terms: ["原始JD", "结构化抽取", "人工标准答案"]
 depends_on: ["P0-1", "P0-2", "P0-3", "P0-4"]
