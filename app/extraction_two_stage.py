@@ -1,0 +1,271 @@
+"""两段式抽取实验：发现段与判断段分离，验证跨任务干扰假设（P0-3恢复）。
+
+第一段（发现）只做全局扫描：分句归属（职责/要求/混合/排除）与岗位信息，
+不输出任何原子项；第二段（判断）只做局部语义判断：对候选块执行职责拆分、
+要求原子化、字段与逻辑组判定。两段之间用确定性覆盖检查衔接。
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.extraction import (
+    ExtractionClient,
+    ExtractionError,
+    normalize_evidence,
+    parse_model_response,
+    validate_evidence,
+)
+from app.models import JobDescription
+from app.schemas import JobExtractionResult, RoleFamily, Seniority
+
+TWO_STAGE_PROMPT_VERSION = "0.1"
+
+# 发现段Prompt：只做全局扫描与分句归属，不做拆分与字段判断。
+DISCOVERY_SYSTEM_PROMPT = """你是招聘JD结构化分析的第一阶段：全局发现。通读用户提供的完整JD原文，只完成三件事，不做任何拆分、原子化或字段判断。
+
+【任务】
+1. 判断岗位方向（role_family）与岗位级别（seniority）。
+2. 把原文按给定的分句编号拆成候选块：每个分句（或相邻连续语义单元）必须归属且只归属一个候选块，标注kind：
+   - responsibility：候选人入职后需要完成的工作；
+   - requirement：公司对候选人的条件（技能、经验、学历、专业、软能力）；
+   - mixed：同一句同时包含工作内容与候选人条件；
+   - excluded：宣传语、福利待遇、办公地点、投递提示、公司介绍等非条件内容。
+3. 每个候选块保留原文连续片段作为source_span，列出其覆盖的全部分句编号（sentence_indexes），并给出简短的归属理由note。
+
+【要求】
+1. 每个分句都必须出现在某个候选块的sentence_indexes中，不得遗漏任何实质内容；相邻同类的连续分句可以合并为一个候选块，但不得跳句。
+2. source_span必须是原文中连续出现的文本，不得改写、拼接或翻译。
+3. 不要输出responsibilities或requirements明细，本阶段只发现候选块。
+4. 严格按照用户提供的JSON结构输出一个JSON对象，不要输出Markdown代码块或额外说明。"""
+
+# 判断段Prompt：只做局部语义判断，直接输出完整抽取数据合同。
+# v0.2融合V2.3.1的成熟规则（职责先覆盖后分组、原子化、任选关系、示例边界、字段判断），示例保持中性化。
+JUDGE_SYSTEM_PROMPT = """你是招聘JD结构化分析的第二阶段：精细判断。输入是第一阶段的候选块列表（每个块含原文连续证据与归属），请对每个候选块做以下判断并输出完整抽取数据合同JSON。
+
+【职责判断：先覆盖、后分组】
+1. 在组织最终输出前，先识别每个职责候选块中的候选动作、对象和可验收结果，再判断职责边界；这个分析过程不要输出。
+2. 候选块中的每个实质工作内容必须映射到一项职责，不能静默漏掉；不能仅因共享同一对象就合并，也不能只按连接词或动词数量机械拆分。
+3. 不同对象、不同交付物或可独立验收的业务结果必须拆成多项；只有多个动作共同完成同一对象的单一端到端交付，并且拆开后只剩缺少业务含义的通用动作时才合并。
+4. 协作对象、使用技术和执行手段通常是实施方式，不单独形成职责，但其承载的交付不能丢失。
+5. "如""例如""等"和括号中的内容如果只是上位业务对象的示例，不展开为独立职责。
+6. 示例（仅说明拆分边界，按同类结构判断）：
+   - "设计、开发与落地同一管理平台"：作用于同一平台和同一端到端结果，整体保留为一项"设计、开发与落地管理平台"；
+   - "围绕平台的定义、编排、集成、训练、发布和治理等环节开展研发"：概括为一项"开展平台全生命周期研发"，不把每个环节拆成低价值职责；
+   - "设计架构、开发核心代码，实现数据自动化处理"：三者具有不同交付结果，拆为"设计架构"、"开发核心代码"、"实现数据自动化处理"三项；
+   - "负责能力模型的调研、选型、微调与部署落地，持续优化效果与推理性能"：拆为调研、选型、微调、部署落地、优化效果与推理性能五项，因为它们可独立验收；
+   - "与产品及业务团队协作，构建基础设施"：协作是实施方式，合并为一项"与产品及业务团队协作构建基础设施"。
+7. 环节列举必须概括：以"参与/负责/围绕"+同一对象的多个组成部分或环节（如定义、编排、集成、训练、发布、治理，或多个子能力、模块、机制）开头的内容，是同一项研发或建设工作的组成部分，必须合并为一项概括职责（如"开展XX全生命周期研发"、"建设XX体系"），不得拆成多项；只有当列举项是不同对象、不同交付物或可独立验收的结果时才拆分。
+8. 每项的name字段使用"动作+对象或结果"的完整表达（一个字符串），不要输出action、object_or_result等结构化子字段。
+9. name必须简洁：只保留动作与核心对象/结果（如"调研能力模型"），不要保留整句的修饰前缀和列举（如"负责XX、XX等能力模型的调研"）；修饰语和列举内容在evidence中保留，不进入name。
+10. evidence必须是最小充分连续原文。
+
+【要求原子化】
+1. 每个requirement只能表达一个可独立学习、评价、匹配和统计的条件。
+2. "和""与""及""、""/"连接的内容若能被分别学习、评价或匹配，就必须拆开；修饰语和共同证据可以复用。
+3. 技术技能、学历、专业、经验和软能力跨类别出现在同一句时必须拆开。
+4. 行业稳定复合表达（固定复合要求，如"数据结构与算法"）或拆分后改变原意的表达整体保留。
+5. raw_name保留原始业务含义，不做同义归一；"XX使用经验"不能缩减成"XX"。
+
+【任选关系与示例边界】
+1. 原文明确出现"至少一种""任一""或"等有限任选含义时才建立any_of组：组内各成员输出相同group_id（字符串，如"group_1"）和group_logic="any_of"，且同一组至少包含两个成员；普通独立要求必须输出group_logic="standalone"、group_id=null。group_logic不允许为null，group_id不允许输出数字。
+2. 完整上位要求后由"如""例如"或括号引出的非穷举内容只作为示例，不建立封闭any_of；"等"字本身不能决定是否为示例。
+3. 被"熟悉""掌握""使用经验"等条件直接修饰的具体技术名必须逐项保留，后面的"等"只表示名单未穷尽，不能把已点名技术改写成上位概念。
+4. 具体模型名只用于修饰上位经验类型时，不单独标注。
+5. 多个候选项共同受"优先""加分"或"相关项目经验者优先"修饰，并且具备任一项即可形成同类加分时，各候选项使用preferred并共享同一个any_of组。
+
+【重要程度与熟练度】
+1. importance：任职要求普通条件为must；明确"优先""加分"为preferred；只提及未要求为mentioned；无法判断为unknown。必须输出枚举值（must/preferred/mentioned/unknown），不要输出中文。
+2. proficiency：只按明确程度词判断并输出枚举值："了解"→understand、"熟悉"→familiar、"熟练/扎实"→proficient、"精通"→expert、无明确程度词→unknown；"使用经验""项目经验"不得推断熟练度，使用unknown。不要输出"熟悉""精通"等中文程度词。
+3. category：必须输出枚举值（programming_language、backend_engineering、agent_framework、agent_capability、rag、llm_application、model_training、ml_framework、retrieval、deployment、software_engineering、domain_knowledge、education、experience、soft_skill、other），不要输出中文类别名。
+
+【经验年限】
+1. 只提取原文明示的数字，不估算年限；min_years为下限，max_years只保存原文上限，years_text保留完整年限表达；无法判断使用null。
+2. 年限上下限不得颠倒。
+
+【mixed块】先分离工作部分与条件部分，再分别按上述规则处理。
+
+【岗位信息】role_family与seniority必须直接使用输入中"job_info"字段给出的值，不能省略或置为null，也不要重新判断。
+
+【输出前检查】
+每个实质工作内容都已覆盖为职责或明确排除；职责没有错误合并或机械拆分；要求没有可继续拆分的并列概念；any_of组成员不少于两个；年限上下限未颠倒；每条evidence都能在原文中找到。
+
+【输出要求】
+1. 严格按照抽取数据合同的JSON结构输出：responsibilities、requirements、role_family、seniority。
+2. responsibilities中的每一项必须包含name和evidence两个字段。
+3. requirements中的每一项必须包含以下全部字段：raw_name、category、importance、proficiency、group_id、group_logic、min_years、max_years、years_text、evidence、confidence。不要用name替代raw_name，不要省略字段（不适用时用null）。
+4. 不要输出Markdown代码块或额外说明。"""
+
+
+class CandidateBlock(BaseModel):
+    """发现段输出的候选块：一段连续原文及其归属判定。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    block_id: str = Field(min_length=1, max_length=50)
+    sentence_indexes: list[int] = Field(min_length=1)
+    kind: Literal["responsibility", "requirement", "mixed", "excluded"]
+    source_span: str = Field(min_length=1)
+    note: str = Field(min_length=1)
+
+    @field_validator("source_span", "note")
+    @classmethod
+    def block_text_must_not_be_blank(cls, value: str) -> str:
+        """清理候选块必填文本并拒绝空白。"""
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("不能为空")
+        return cleaned
+
+
+class DiscoveryResult(BaseModel):
+    """发现段输出：全文候选块列表与岗位信息。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    role_family: RoleFamily
+    seniority: Seniority
+    blocks: list[CandidateBlock] = Field(min_length=1)
+
+
+def split_sentences(raw_text: str) -> list[str]:
+    """按换行和中文标点把JD原文拆成分句，供覆盖检查与发现段输入。"""
+    pieces = re.split(r"[。；;\n]+", raw_text)
+    return [piece.strip() for piece in pieces if piece.strip()]
+
+
+def _alnum_sequence(text: str) -> str:
+    """提取规范化文本的字母数字字符序列，用于容忍标点差异的包含校验。"""
+    return "".join(ch for ch in normalize_evidence(text) if ch.isalnum())
+
+
+def validate_discovery_coverage(
+    discovery: DiscoveryResult, raw_text: str
+) -> None:
+    """确认发现段覆盖全部原文分句，阻止静默漏句进入判断段。"""
+    sentences = split_sentences(raw_text)
+    covered_indexes = {
+        index for block in discovery.blocks for index in block.sentence_indexes
+    }
+    if len(covered_indexes) != len(sentences):
+        missing = sorted(set(range(len(sentences))) - covered_indexes)
+        raise ExtractionError(f"发现段遗漏分句：{missing}")
+    source_sequence = _alnum_sequence(raw_text)
+    for block in discovery.blocks:
+        for index in block.sentence_indexes:
+            if index >= len(sentences):
+                raise ExtractionError(
+                    f"候选块引用不存在的分句：{index}"
+                )
+        # 按去标点字符序列校验：既能防编造原文（序列必须在原文中出现），
+        # 又容忍模型拼接多分句时丢失句号、逗号等分隔符的差异。
+        if _alnum_sequence(block.source_span) not in source_sequence:
+            raise ExtractionError(
+                f"候选块{block.block_id}的原文片段不在JD原文中"
+            )
+
+
+def build_discovery_user_prompt(job: JobDescription) -> str:
+    """构造发现段用户提示：分句编号列表与期望输出结构。"""
+    sentences = split_sentences(job.raw_text)
+    payload = {
+        "task": "请对以下JD原文分句执行全局发现，输出role_family、seniority和blocks。",
+        "output_schema": {
+            "role_family": "agent_application|llm_application|rag_application|ai_algorithm|ai_platform|other|unknown",
+            "seniority": "junior|transition|mid|senior|unknown",
+            "blocks": [
+                {
+                    "block_id": "string，唯一",
+                    "sentence_indexes": ["int，覆盖的全部分句编号"],
+                    "kind": "responsibility|requirement|mixed|excluded",
+                    "source_span": "string，原文连续片段",
+                    "note": "string，归属理由",
+                }
+            ],
+        },
+        "sentences": [
+            {"index": index, "text": text}
+            for index, text in enumerate(sentences)
+        ],
+    }
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def parse_discovery_response(response_text: str) -> DiscoveryResult:
+    """把发现段模型输出解析并校验为DiscoveryResult。"""
+    try:
+        payload = json.loads(response_text)
+    except json.JSONDecodeError as exc:
+        raise ExtractionError(f"发现段返回内容不是合法JSON：{exc}") from exc
+    try:
+        return DiscoveryResult.model_validate(payload)
+    except Exception as exc:
+        raise ExtractionError(f"发现段输出不符合中间合同：{exc}") from exc
+
+
+def build_judge_user_prompt(
+    job: JobDescription, discovery: DiscoveryResult
+) -> str:
+    """构造判断段用户提示：候选块列表、原文分句与岗位信息。"""
+    payload = {
+        "task": "请对以下候选块执行精细判断，输出完整抽取数据合同JSON。",
+        "job_info": {
+            "role_family": discovery.role_family.value,
+            "seniority": discovery.seniority.value,
+        },
+        "blocks": [block.model_dump() for block in discovery.blocks],
+        "sentences": [
+            {"index": index, "text": text}
+            for index, text in enumerate(split_sentences(job.raw_text))
+        ],
+    }
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def extract_job_two_stage(
+    job: JobDescription,
+    client: ExtractionClient,
+    max_attempts: int = 2,
+) -> tuple[JobExtractionResult, dict[str, object]]:
+    """对一份JD执行发现段与判断段两次调用，并做确定性覆盖与证据校验。"""
+    # 发现段：全局扫描，失败时把校验错误反馈重试。
+    correction = None
+    discovery: DiscoveryResult | None = None
+    for _ in range(max_attempts):
+        prompt = build_discovery_user_prompt(job)
+        if correction is not None:
+            prompt = f"{prompt}\n\n【上次校验错误，请修正后重新输出】\n{correction}"
+        response_text = client.complete(DISCOVERY_SYSTEM_PROMPT, prompt)
+        try:
+            candidate = parse_discovery_response(response_text)
+            validate_discovery_coverage(candidate, job.raw_text)
+            discovery = candidate
+            break
+        except ExtractionError as exc:
+            correction = str(exc)
+    if discovery is None:
+        raise ExtractionError(
+            f"发现段经过{max_attempts}次尝试仍未通过覆盖校验"
+        )
+
+    # 判断段：局部语义判断，输出完整抽取数据合同并校验证据存在。
+    correction = None
+    for _ in range(max_attempts):
+        prompt = build_judge_user_prompt(job, discovery)
+        if correction is not None:
+            prompt = f"{prompt}\n\n【上次校验错误，请修正后重新输出】\n{correction}"
+        response_text = client.complete(JUDGE_SYSTEM_PROMPT, prompt)
+        try:
+            result = parse_model_response(response_text)
+            validate_evidence(result, job.raw_text)
+            return result, result.model_dump(mode="json")
+        except ExtractionError as exc:
+            correction = str(exc)
+
+    raise ExtractionError(
+        f"判断段经过{max_attempts}次尝试仍未通过合同或证据校验：{correction}"
+    )
