@@ -15,6 +15,9 @@
 | `test_database.py` | SQLite数据库结构V1到V2增量迁移。 |
 | `test_requirement_consolidation.py` | P0-4开发草稿的跨JD原子要求归并合同约束；目标合同尚未稳定。 |
 | `test_consolidation.py` | P0-4输入装配：多JD字段无损、最新抽取版本选择、范围过滤与空范围报错。 |
+| `test_consolidation_client.py` | 归并LLM客户端、Prompt v1领域无关性、解析与重试闭环。 |
+| `test_consolidation_run.py` | 批量归并执行：装配、模型调用、失败隔离与汇总摘要。 |
+| `test_consolidation_persist.py` | 归并持久化：幂等跳过、字段无损、外键追溯与版本/范围共存。 |
 
 ## 测试原则
 

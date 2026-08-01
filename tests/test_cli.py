@@ -63,3 +63,42 @@ def test_cli_limits_issue_output_and_exposes_safe_extraction_scope() -> None:
     assert "--limit" in help_result.stdout
     assert "--job-id" in help_result.stdout
     assert "--all" in help_result.stdout
+
+
+def test_cli_consolidate_help_exposes_scope_options() -> None:
+    """验证归并命令的选项覆盖指定JD、全量和重试次数。"""
+    help_result = runner.invoke(cli, ["consolidate-requirements", "--help"])
+
+    assert help_result.exit_code == 0
+    assert "--job-id" in help_result.stdout
+    assert "--all" in help_result.stdout
+    assert "--max-attempts" in help_result.stdout
+
+
+def test_cli_consolidate_rejects_conflicting_options() -> None:
+    """验证--all与--job-id互斥并给出明确错误。"""
+    result = runner.invoke(
+        cli, ["consolidate-requirements", "--all", "--job-id", "1"]
+    )
+
+    assert result.exit_code == 2
+    assert "--all不能与--job-id同时使用" in result.stdout
+
+
+def test_cli_consolidate_reports_empty_pool_error(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """验证空数据库时归并命令输出明确错误并以非零码退出。"""
+    from app.config import LLMSettings
+
+    database_path = tmp_path / "cli_consolidate.db"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{database_path.as_posix()}")
+    monkeypatch.setattr(
+        "app.cli.load_llm_settings",
+        lambda: LLMSettings(api_key="test-key", model="test-model"),
+    )
+
+    result = runner.invoke(cli, ["consolidate-requirements"])
+
+    assert result.exit_code == 1
+    assert "没有可归并的要求实例" in result.stdout

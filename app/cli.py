@@ -9,6 +9,11 @@ from rich.console import Console
 from rich.table import Table
 
 from app.config import load_llm_settings
+from app.consolidation import (
+    ConsolidatorMetadata,
+    OpenAICompatibleConsolidationClient,
+    consolidate_requirements,
+)
 from app.database import create_database_engine, create_session_factory, initialize_database
 from app.evaluation import (
     ItemMatchMetrics,
@@ -178,6 +183,53 @@ def extract_jds(
     console.print(f"失败 [red]{summary.failed}[/red]")
     for error in summary.errors:
         console.print(f"  [red]- JD {error.job_id} / {error.source_file}: {error.message}[/red]")
+    if summary.failed:
+        raise typer.Exit(code=1)
+
+
+@cli.command("consolidate-requirements")
+def consolidate_requirements_cmd(
+    max_attempts: int = typer.Option(2, min=1, max=5),
+    all_jobs: bool = typer.Option(False, "--all", help="显式归并全部JD"),
+    job_ids: list[int] | None = typer.Option(
+        None, "--job-id", min=1, help="只归并指定JD，可重复传入"
+    ),
+) -> None:
+    """对选定JD范围内的要求实例执行跨JD原子要求归并并幂等保存。"""
+    if all_jobs and job_ids:
+        console.print("[red]--all不能与--job-id同时使用。[/red]")
+        raise typer.Exit(code=2)
+
+    settings = load_llm_settings()
+    missing = settings.missing_fields()
+    if missing:
+        console.print(f"[red]缺少LLM配置：{', '.join(missing)}[/red]")
+        console.print("请复制 .env.example 为 .env，并填写真实配置。")
+        raise typer.Exit(code=1)
+
+    engine, session_factory = database_resources()
+    try:
+        # 客户端和版本元数据在批次开始时固定，保证整批结果可以复现和比较。
+        client = OpenAICompatibleConsolidationClient(settings)
+        metadata = ConsolidatorMetadata(model_name=settings.model)
+        summary = consolidate_requirements(
+            session_factory,
+            client,
+            metadata,
+            max_attempts=max_attempts,
+            job_ids=set(job_ids) if job_ids else None,
+        )
+    finally:
+        engine.dispose()
+
+    console.print(f"语料池 [bold]{summary.discovered}[/bold] 条要求实例")
+    console.print(f"归并成功 [green]{summary.consolidated}[/green] 条")
+    console.print(f"标准要求项 [bold]{summary.canonical_count}[/bold] 个")
+    console.print(f"要求关系 [bold]{summary.relation_count}[/bold] 条")
+    console.print(f"同版本跳过 [yellow]{summary.skipped}[/yellow]")
+    console.print(f"失败 [red]{summary.failed}[/red]")
+    for error in summary.errors:
+        console.print(f"  [red]- {error.scope}: {error.message}[/red]")
     if summary.failed:
         raise typer.Exit(code=1)
 

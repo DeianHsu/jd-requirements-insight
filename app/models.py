@@ -130,3 +130,111 @@ class JobRequirement(Base):
     confidence: Mapped[float] = mapped_column(Float)
 
     extraction: Mapped[JobExtraction] = relationship(back_populates="requirements")
+
+
+class JobConsolidation(Base):
+    """保存一次跨JD归并的批次主记录，携带范围键与归并器版本。"""
+
+    __tablename__ = "job_consolidations"
+    __table_args__ = (
+        UniqueConstraint(
+            "scope_key", "consolidator_version", name="uq_scope_consolidator_version"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    scope_key: Mapped[str] = mapped_column(String(255), index=True)
+    consolidator_version: Mapped[str] = mapped_column(String(255))
+    model_name: Mapped[str] = mapped_column(String(255))
+    prompt_version: Mapped[str] = mapped_column(String(50))
+    schema_version: Mapped[str] = mapped_column(String(50))
+    occurrence_count: Mapped[int] = mapped_column(default=0)
+    raw_response: Mapped[dict[str, Any]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    canonical_requirements: Mapped[list[CanonicalRequirementRecord]] = relationship(
+        back_populates="consolidation", cascade="all, delete-orphan"
+    )
+    mappings: Mapped[list[RequirementMappingRecord]] = relationship(
+        back_populates="consolidation", cascade="all, delete-orphan"
+    )
+    relations: Mapped[list[RequirementRelationRecord]] = relationship(
+        back_populates="consolidation", cascade="all, delete-orphan"
+    )
+
+
+class CanonicalRequirementRecord(Base):
+    """保存归并产生的跨JD标准要求项及其来源理由。"""
+
+    __tablename__ = "canonical_requirements"
+    __table_args__ = (
+        UniqueConstraint(
+            "consolidation_id",
+            "canonical_requirement_id",
+            name="uq_consolidation_canonical_id",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    consolidation_id: Mapped[int] = mapped_column(
+        ForeignKey("job_consolidations.id", ondelete="CASCADE"), index=True
+    )
+    canonical_requirement_id: Mapped[str] = mapped_column(String(100))
+    canonical_name: Mapped[str] = mapped_column(String(255), index=True)
+    rationale: Mapped[str] = mapped_column(Text)
+    confidence: Mapped[float] = mapped_column(Float)
+
+    consolidation: Mapped[JobConsolidation] = relationship(
+        back_populates="canonical_requirements"
+    )
+
+
+class RequirementMappingRecord(Base):
+    """保存要求实例到标准要求项的映射，requirement_id可回溯到原始要求。"""
+
+    __tablename__ = "requirement_mappings"
+    __table_args__ = (
+        UniqueConstraint(
+            "consolidation_id", "requirement_id", name="uq_consolidation_requirement"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    consolidation_id: Mapped[int] = mapped_column(
+        ForeignKey("job_consolidations.id", ondelete="CASCADE"), index=True
+    )
+    requirement_id: Mapped[int] = mapped_column(
+        ForeignKey("job_requirements.id", ondelete="CASCADE"), index=True
+    )
+    status: Mapped[str] = mapped_column(String(30), index=True)
+    canonical_requirement_id: Mapped[str | None] = mapped_column(
+        String(100), nullable=True
+    )
+    candidate_requirement_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    rationale: Mapped[str] = mapped_column(Text)
+    confidence: Mapped[float] = mapped_column(Float)
+
+    consolidation: Mapped[JobConsolidation] = relationship(
+        back_populates="mappings"
+    )
+    requirement: Mapped[JobRequirement] = relationship()
+
+
+class RequirementRelationRecord(Base):
+    """保存标准要求项之间的非同义语义关系及其来源理由。"""
+
+    __tablename__ = "requirement_relations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    consolidation_id: Mapped[int] = mapped_column(
+        ForeignKey("job_consolidations.id", ondelete="CASCADE"), index=True
+    )
+    source_requirement_id: Mapped[str] = mapped_column(String(100))
+    target_requirement_id: Mapped[str] = mapped_column(String(100))
+    relation_type: Mapped[str] = mapped_column(String(30))
+    rationale: Mapped[str] = mapped_column(Text)
+    confidence: Mapped[float] = mapped_column(Float)
+
+    consolidation: Mapped[JobConsolidation] = relationship(
+        back_populates="relations"
+    )
