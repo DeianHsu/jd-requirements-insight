@@ -11,7 +11,7 @@ import json
 import re
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.extraction import (
     ExtractionClient,
@@ -23,7 +23,7 @@ from app.extraction import (
 from app.models import JobDescription
 from app.schemas import JobExtractionResult, RoleFamily, Seniority
 
-TWO_STAGE_PROMPT_VERSION = "0.1"
+TWO_STAGE_PROMPT_VERSION = "0.5"
 
 # 发现段Prompt：只做全局扫描与分句归属，不做拆分与字段判断。
 DISCOVERY_SYSTEM_PROMPT = """你是招聘JD结构化分析的第一阶段：全局发现。通读用户提供的完整JD原文，只完成三件事，不做任何拆分、原子化或字段判断。
@@ -121,6 +121,22 @@ class CandidateBlock(BaseModel):
             raise ValueError("不能为空")
         return cleaned
 
+    @field_validator("sentence_indexes")
+    @classmethod
+    def sentence_indexes_must_be_ordered_contiguous_and_unique(
+        cls, values: list[int]
+    ) -> list[int]:
+        """拒绝负数、重复、乱序或跳跃索引，确保候选块对应连续原文。"""
+        if any(index < 0 for index in values):
+            raise ValueError("分句索引不能为负数")
+        if len(values) != len(set(values)):
+            raise ValueError("候选块内分句索引不能重复")
+        if values != sorted(values):
+            raise ValueError("候选块内分句索引必须升序")
+        if any(right - left != 1 for left, right in zip(values, values[1:])):
+            raise ValueError("候选块只能合并相邻连续分句")
+        return values
+
 
 class DiscoveryResult(BaseModel):
     """发现段输出：全文候选块列表与岗位信息。"""
@@ -130,6 +146,14 @@ class DiscoveryResult(BaseModel):
     role_family: RoleFamily
     seniority: Seniority
     blocks: list[CandidateBlock] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def block_ids_must_be_unique(self) -> "DiscoveryResult":
+        """拒绝重复候选块ID，保证发现段结果可以稳定定位。"""
+        block_ids = [block.block_id for block in self.blocks]
+        if len(block_ids) != len(set(block_ids)):
+            raise ValueError("候选块ID不能重复")
+        return self
 
 
 def split_sentences(raw_text: str) -> list[str]:
@@ -148,24 +172,26 @@ def validate_discovery_coverage(
 ) -> None:
     """确认发现段覆盖全部原文分句，阻止静默漏句进入判断段。"""
     sentences = split_sentences(raw_text)
-    covered_indexes = {
+    all_indexes = [
         index for block in discovery.blocks for index in block.sentence_indexes
-    }
-    if len(covered_indexes) != len(sentences):
-        missing = sorted(set(range(len(sentences))) - covered_indexes)
-        raise ExtractionError(f"发现段遗漏分句：{missing}")
-    source_sequence = _alnum_sequence(raw_text)
+    ]
+    covered_indexes = set(all_indexes)
+    if len(all_indexes) != len(covered_indexes):
+        raise ExtractionError("发现段存在重复覆盖的分句")
+    expected_indexes = set(range(len(sentences)))
+    missing = sorted(expected_indexes - covered_indexes)
+    unexpected = sorted(covered_indexes - expected_indexes)
+    if missing or unexpected:
+        raise ExtractionError(
+            f"发现段分句覆盖不完整：遗漏{missing}，未知{unexpected}"
+        )
     for block in discovery.blocks:
-        for index in block.sentence_indexes:
-            if index >= len(sentences):
-                raise ExtractionError(
-                    f"候选块引用不存在的分句：{index}"
-                )
-        # 按去标点字符序列校验：既能防编造原文（序列必须在原文中出现），
-        # 又容忍模型拼接多分句时丢失句号、逗号等分隔符的差异。
-        if _alnum_sequence(block.source_span) not in source_sequence:
+        claimed_sequence = "".join(
+            _alnum_sequence(sentences[index]) for index in block.sentence_indexes
+        )
+        if _alnum_sequence(block.source_span) != claimed_sequence:
             raise ExtractionError(
-                f"候选块{block.block_id}的原文片段不在JD原文中"
+                f"候选块{block.block_id}的原文片段与分句索引不对应"
             )
 
 
@@ -249,7 +275,7 @@ def extract_job_two_stage(
             correction = str(exc)
     if discovery is None:
         raise ExtractionError(
-            f"发现段经过{max_attempts}次尝试仍未通过覆盖校验"
+            f"发现段经过{max_attempts}次尝试仍未通过覆盖校验：{correction}"
         )
 
     # 判断段：局部语义判断，输出完整抽取数据合同并校验证据存在。

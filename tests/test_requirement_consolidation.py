@@ -44,12 +44,18 @@ def consolidation_input() -> RequirementConsolidationInput:
             RequirementOccurrence(
                 requirement_id=1,
                 job_id=101,
+                extraction_id=1001,
+                extractor_version="test-model|prompt:1.0|schema:2.0",
+                source_hash="a" * 64,
                 source_file="job-a.md",
                 requirement=requirement("能力甲使用经验", "具备能力甲使用经验"),
             ),
             RequirementOccurrence(
                 requirement_id=2,
                 job_id=102,
+                extraction_id=1002,
+                extractor_version="test-model|prompt:1.0|schema:2.0",
+                source_hash="b" * 64,
                 source_file="job-b.md",
                 requirement=requirement(
                     "具备能力甲的使用经验", "具备能力甲的使用经验"
@@ -81,6 +87,33 @@ def merged_result() -> RequirementConsolidationResult:
             for requirement_id in (1, 2)
         ],
     )
+
+
+def result_with_three_canonicals() -> dict:
+    """构造三个标准要求项及各自来源，供关系图约束测试使用。"""
+    return {
+        "canonical_requirements": [
+            {
+                "canonical_requirement_id": f"requirement-{index}",
+                "canonical_name": f"能力{index}",
+                "rationale": "独立要求",
+                "confidence": 0.9,
+            }
+            for index in range(3)
+        ],
+        "mappings": [
+            {
+                "requirement_id": index + 1,
+                "status": "mapped",
+                "canonical_requirement_id": f"requirement-{index}",
+                "candidate_requirement_ids": [],
+                "rationale": "来源映射",
+                "confidence": 0.9,
+            }
+            for index in range(3)
+        ],
+        "relations": [],
+    }
 
 
 def test_normalize_requirement_name_only_applies_generic_text_rules() -> None:
@@ -135,7 +168,10 @@ def test_result_rejects_normalized_duplicate_requirement_names() -> None:
         }
     )
 
-    with pytest.raises(ValidationError, match="标准要求项名称不能重复"):
+    with pytest.raises(
+        ValidationError,
+        match="标准要求项名称不能重复.*能力甲使用经验=requirement-a,requirement-b",
+    ):
         RequirementConsolidationResult.model_validate(result)
 
 
@@ -194,6 +230,73 @@ def test_result_treats_reverse_related_edges_as_duplicates() -> None:
 
     with pytest.raises(ValidationError, match="要求关系不能重复"):
         RequirementConsolidationResult.model_validate(result)
+
+
+def test_result_rejects_multiple_relation_types_for_same_pair() -> None:
+    """验证同一标准要求项对不能同时保存相关和上下位关系。"""
+    result = result_with_three_canonicals()
+    result["relations"] = [
+        {
+            "source_requirement_id": "requirement-0",
+            "target_requirement_id": "requirement-1",
+            "relation_type": "related_to",
+            "rationale": "相关",
+            "confidence": 0.8,
+        },
+        {
+            "source_requirement_id": "requirement-0",
+            "target_requirement_id": "requirement-1",
+            "relation_type": "is_a",
+            "rationale": "冲突的上下位关系",
+            "confidence": 0.8,
+        },
+    ]
+
+    with pytest.raises(
+        ValidationError,
+        match=(
+            "关系类型必须互斥.*requirement-0<->requirement-1="
+            "is_a,related_to"
+        ),
+    ):
+        RequirementConsolidationResult.model_validate(result)
+
+
+def test_result_rejects_directed_relation_cycle() -> None:
+    """验证is_a和part_of关系不能形成有向环。"""
+    result = result_with_three_canonicals()
+    result["relations"] = [
+        {
+            "source_requirement_id": f"requirement-{source}",
+            "target_requirement_id": f"requirement-{target}",
+            "relation_type": "is_a",
+            "rationale": "测试环",
+            "confidence": 0.8,
+        }
+        for source, target in ((0, 1), (1, 2), (2, 0))
+    ]
+
+    with pytest.raises(ValidationError, match="is_a关系不能形成环"):
+        RequirementConsolidationResult.model_validate(result)
+
+
+def test_result_accepts_directed_relation_chain() -> None:
+    """验证无环的同类型有向关系链仍可通过合同。"""
+    result = result_with_three_canonicals()
+    result["relations"] = [
+        {
+            "source_requirement_id": f"requirement-{source}",
+            "target_requirement_id": f"requirement-{target}",
+            "relation_type": "part_of",
+            "rationale": "合法关系链",
+            "confidence": 0.8,
+        }
+        for source, target in ((0, 1), (1, 2))
+    ]
+
+    validated = RequirementConsolidationResult.model_validate(result)
+
+    assert len(validated.relations) == 2
 
 
 def test_review_required_mapping_requires_candidates() -> None:

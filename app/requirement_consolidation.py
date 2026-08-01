@@ -40,13 +40,16 @@ class RequirementOccurrence(BaseModel):
 
     requirement_id: int = Field(gt=0)
     job_id: int = Field(gt=0)
+    extraction_id: int = Field(gt=0)
+    extractor_version: str = Field(min_length=1, max_length=255)
+    source_hash: str = Field(min_length=64, max_length=64)
     source_file: str = Field(min_length=1, max_length=500)
     requirement: RequirementItem
 
-    @field_validator("source_file")
+    @field_validator("source_file", "extractor_version", "source_hash")
     @classmethod
     def source_file_must_not_be_blank(cls, value: str) -> str:
-        """拒绝空白来源文件名，确保要求映射可以回到所属JD。"""
+        """拒绝空白来源定位字段，确保要求映射可以回到确定输入版本。"""
         cleaned = value.strip()
         if not cleaned:
             raise ValueError("不能为空")
@@ -186,6 +189,30 @@ class RequirementRelation(BaseModel):
         return self
 
 
+def _directed_edges_have_cycle(edges: set[tuple[str, str]]) -> bool:
+    """使用深度优先搜索判断一组有向要求关系是否形成环。"""
+    graph: dict[str, set[str]] = {}
+    for source, target in edges:
+        graph.setdefault(source, set()).add(target)
+        graph.setdefault(target, set())
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(node: str) -> bool:
+        if node in visiting:
+            return True
+        if node in visited:
+            return False
+        visiting.add(node)
+        if any(visit(target) for target in graph[node]):
+            return True
+        visiting.remove(node)
+        visited.add(node)
+        return False
+
+    return any(visit(node) for node in graph)
+
+
 class RequirementConsolidationResult(BaseModel):
     """保存跨JD归并产生的标准要求项、要求映射和非同义关系。"""
 
@@ -204,12 +231,27 @@ class RequirementConsolidationResult(BaseModel):
         if len(requirement_ids) != len(set(requirement_ids)):
             raise ValueError("标准要求项ID不能重复")
 
-        normalized_names = [
-            normalize_requirement_name(item.canonical_name)
-            for item in self.canonical_requirements
-        ]
-        if len(normalized_names) != len(set(normalized_names)):
-            raise ValueError("标准要求项名称不能重复")
+        normalized_name_items: dict[str, list[CanonicalRequirement]] = {}
+        for item in self.canonical_requirements:
+            normalized_name_items.setdefault(
+                normalize_requirement_name(item.canonical_name), []
+            ).append(item)
+        duplicate_names = {
+            name: items
+            for name, items in normalized_name_items.items()
+            if len(items) > 1
+        }
+        if duplicate_names:
+            details = "；".join(
+                f"{items[0].canonical_name}="
+                f"{','.join(item.canonical_requirement_id for item in items)}"
+                for items in duplicate_names.values()
+            )
+            raise ValueError(
+                "标准要求项名称不能重复；重复名称及ID："
+                f"{details}。同一招聘条件请合并并重定向引用；"
+                "不同条件请保留证据中的最小区分信息"
+            )
 
         occurrence_ids = [mapping.requirement_id for mapping in self.mappings]
         if len(occurrence_ids) != len(set(occurrence_ids)):
@@ -236,6 +278,15 @@ class RequirementConsolidationResult(BaseModel):
             )
 
         relation_keys: set[tuple[str, str, RequirementRelationType]] = set()
+        relation_types_by_pair: dict[
+            tuple[str, str], set[RequirementRelationType]
+        ] = {}
+        directed_edges: dict[
+            RequirementRelationType, set[tuple[str, str]]
+        ] = {
+            RequirementRelationType.IS_A: set(),
+            RequirementRelationType.PART_OF: set(),
+        }
         for relation in self.relations:
             if relation.source_requirement_id not in known_requirements:
                 raise ValueError(
@@ -253,6 +304,42 @@ class RequirementConsolidationResult(BaseModel):
             if key in relation_keys:
                 raise ValueError("要求关系不能重复")
             relation_keys.add(key)
+            pair = tuple(
+                sorted(
+                    (
+                        relation.source_requirement_id,
+                        relation.target_requirement_id,
+                    )
+                )
+            )
+            relation_types_by_pair.setdefault(pair, set()).add(
+                relation.relation_type
+            )
+            if relation.relation_type in directed_edges:
+                directed_edges[relation.relation_type].add(
+                    (
+                        relation.source_requirement_id,
+                        relation.target_requirement_id,
+                    )
+                )
+        conflicting_pairs = {
+            pair: types
+            for pair, types in relation_types_by_pair.items()
+            if len(types) > 1
+        }
+        if conflicting_pairs:
+            details = "；".join(
+                f"{source}<->{target}="
+                f"{','.join(sorted(relation_type.value for relation_type in types))}"
+                for (source, target), types in conflicting_pairs.items()
+            )
+            raise ValueError(
+                "同一标准要求项对的关系类型必须互斥；冲突项："
+                f"{details}。每对只保留语义最具体的一种关系"
+            )
+        for relation_type, edges in directed_edges.items():
+            if _directed_edges_have_cycle(edges):
+                raise ValueError(f"{relation_type.value}关系不能形成环")
         return self
 
 

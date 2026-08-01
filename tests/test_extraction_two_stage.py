@@ -127,7 +127,7 @@ def test_split_sentences_is_deterministic() -> None:
 
 def test_two_stage_prompts_are_domain_agnostic() -> None:
     """验证两段Prompt不绑定任何具体领域技能。"""
-    assert TWO_STAGE_PROMPT_VERSION == "0.1"
+    assert TWO_STAGE_PROMPT_VERSION == "0.5"
     for domain_word in ("Python", "RAG", "LangChain", "Agent", "大模型", "AI"):
         assert domain_word not in DISCOVERY_SYSTEM_PROMPT
         assert domain_word not in JUDGE_SYSTEM_PROMPT
@@ -155,7 +155,7 @@ def test_discovery_coverage_rejects_missing_sentence() -> None:
         json.dumps(payload, ensure_ascii=False)
     )
 
-    with pytest.raises(ExtractionError, match="遗漏分句"):
+    with pytest.raises(ExtractionError, match="覆盖不完整"):
         validate_discovery_coverage(discovery, job.raw_text)
 
 
@@ -168,20 +168,70 @@ def test_discovery_coverage_rejects_span_not_in_source() -> None:
         json.dumps(payload, ensure_ascii=False)
     )
 
-    with pytest.raises(ExtractionError, match="不在JD原文中"):
+    with pytest.raises(ExtractionError, match="与分句索引不对应"):
         validate_discovery_coverage(discovery, job.raw_text)
+
+
+def test_discovery_coverage_rejects_duplicate_sentence_assignment() -> None:
+    """验证同一分句不能同时归属两个候选块。"""
+    job = make_job()
+    payload = discovery_payload()
+    payload["blocks"][2]["sentence_indexes"] = [1]
+    payload["blocks"][2]["source_span"] = "负责能力甲体系建设"
+    discovery = parse_discovery_response(json.dumps(payload, ensure_ascii=False))
+
+    with pytest.raises(ExtractionError, match="重复覆盖"):
+        validate_discovery_coverage(discovery, job.raw_text)
+
+
+def test_discovery_contract_rejects_duplicate_block_ids() -> None:
+    """验证候选块ID必须唯一。"""
+    payload = discovery_payload()
+    payload["blocks"][2]["block_id"] = "b1"
+
+    with pytest.raises(ExtractionError, match="候选块ID不能重复"):
+        parse_discovery_response(json.dumps(payload, ensure_ascii=False))
+
+
+def test_discovery_contract_rejects_negative_sentence_index() -> None:
+    """验证候选块不能引用负分句索引。"""
+    payload = discovery_payload()
+    payload["blocks"][0]["sentence_indexes"] = [-1]
+
+    with pytest.raises(ExtractionError, match="分句索引不能为负数"):
+        parse_discovery_response(json.dumps(payload, ensure_ascii=False))
+
+
+def test_discovery_contract_rejects_noncontiguous_merge() -> None:
+    """验证单个候选块不能跨过中间分句进行拼接。"""
+    payload = discovery_payload()
+    payload["blocks"][0]["sentence_indexes"] = [0, 2]
+
+    with pytest.raises(ExtractionError, match="只能合并相邻连续分句"):
+        parse_discovery_response(json.dumps(payload, ensure_ascii=False))
 
 
 def test_discovery_allows_merged_adjacent_sentences() -> None:
     """验证相邻分句可合并为一个候选块（sentence_indexes列表）。"""
-    job = make_job()
-    payload = discovery_payload()
-    payload["blocks"][0]["sentence_indexes"] = [0]
+    raw_text = "甲负责能力建设；乙负责能力评测"
+    payload = {
+        "role_family": "other",
+        "seniority": "unknown",
+        "blocks": [
+            {
+                "block_id": "b0",
+                "sentence_indexes": [0, 1],
+                "kind": "responsibility",
+                "source_span": raw_text,
+                "note": "相邻工作内容",
+            }
+        ],
+    }
     discovery = parse_discovery_response(
         json.dumps(payload, ensure_ascii=False)
     )
 
-    validate_discovery_coverage(discovery, job.raw_text)
+    validate_discovery_coverage(discovery, raw_text)
 
 
 def test_two_stage_extraction_succeeds_with_fake_client() -> None:

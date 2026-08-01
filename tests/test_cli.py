@@ -1,5 +1,7 @@
 """该模块验证JD导入、列表查看和评测指标格式化的用户行为。"""
 
+import json
+from datetime import date
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -72,6 +74,7 @@ def test_cli_consolidate_help_exposes_scope_options() -> None:
     assert help_result.exit_code == 0
     assert "--job-id" in help_result.stdout
     assert "--all" in help_result.stdout
+    assert "--extractor-version" in help_result.stdout
     assert "--max-attempts" in help_result.stdout
 
 
@@ -82,7 +85,15 @@ def test_cli_consolidate_rejects_conflicting_options() -> None:
     )
 
     assert result.exit_code == 2
-    assert "--all不能与--job-id同时使用" in result.stdout
+    assert "必须且只能选择--all或--job-id之一" in result.stdout
+
+
+def test_cli_consolidate_requires_explicit_scope() -> None:
+    """验证归并命令不允许隐式选择全部JD。"""
+    result = runner.invoke(cli, ["consolidate-requirements"])
+
+    assert result.exit_code == 2
+    assert "必须且只能选择--all或--job-id之一" in result.stdout
 
 
 def test_cli_consolidate_reports_empty_pool_error(
@@ -98,10 +109,10 @@ def test_cli_consolidate_reports_empty_pool_error(
         lambda: LLMSettings(api_key="test-key", model="test-model"),
     )
 
-    result = runner.invoke(cli, ["consolidate-requirements"])
+    result = runner.invoke(cli, ["consolidate-requirements", "--all"])
 
     assert result.exit_code == 1
-    assert "没有可归并的要求实例" in result.stdout
+    assert "选定范围内没有JD" in result.stdout
 
 
 def test_cli_list_consolidations_empty_and_with_records(
@@ -116,6 +127,9 @@ def test_cli_list_consolidations_empty_and_with_records(
     from app.models import (
         CanonicalRequirementRecord,
         JobConsolidation,
+        JobDescription,
+        JobExtraction,
+        JobRequirement,
         RequirementMappingRecord,
     )
 
@@ -130,9 +144,54 @@ def test_cli_list_consolidations_empty_and_with_records(
     assert "还没有归并批次" in empty.stdout
 
     with session_factory() as session:
+        session.add(
+            JobDescription(
+                id=1,
+                source_hash="a" * 64,
+                source_file="job-a.md",
+                source_type="test",
+                collected_at=date(2026, 8, 1),
+                company="示例公司",
+                title="示例岗位",
+                company_type="medium_company",
+                tags=[],
+                extra_metadata={},
+                raw_text="具备能力甲",
+            )
+        )
+        session.add(
+            JobExtraction(
+                id=1,
+                job_id=1,
+                extractor_version="test-model|prompt:1.0|schema:2.0",
+                model_name="test-model",
+                prompt_version="1.0",
+                schema_version="2.0",
+                role_family="other",
+                seniority="unknown",
+                raw_response={},
+            )
+        )
+        session.add(
+            JobRequirement(
+                id=1,
+                extraction_id=1,
+                raw_name="能力甲",
+                category="other",
+                importance="must",
+                proficiency="unknown",
+                group_logic="standalone",
+                evidence="具备能力甲",
+                confidence=0.9,
+            )
+        )
         record = JobConsolidation(
             scope_key="all",
             consolidator_version="test-model|prompt:1.4|schema:1.0",
+            input_fingerprint="a" * 64,
+            extractor_version="test-model|prompt:1.0|schema:2.0",
+            selected_job_ids=[1],
+            extraction_ids=[1],
             model_name="test-model",
             prompt_version="1.4",
             schema_version="1.0",
@@ -167,3 +226,54 @@ def test_cli_list_consolidations_empty_and_with_records(
     assert "已持久化归并批次" in listed.stdout
     assert "all" in listed.stdout
     assert "标准项" in listed.stdout
+
+    cases_path = tmp_path / "consolidation_cases.json"
+    cases_path.write_text(
+        json.dumps(
+            {
+                "expected": {
+                    "canonical_requirements": [
+                        {
+                            "canonical_requirement_id": "expected-c1",
+                            "canonical_name": "能力甲",
+                        }
+                    ],
+                    "mappings": [
+                        {
+                            "requirement_id": 1,
+                            "status": "mapped",
+                            "canonical_requirement_id": "expected-c1",
+                        }
+                    ],
+                    "relations": [],
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    evaluated = runner.invoke(
+        cli,
+        [
+            "evaluate-consolidation",
+            str(cases_path),
+            "--consolidation-id",
+            "1",
+        ],
+    )
+    missing = runner.invoke(
+        cli,
+        [
+            "evaluate-consolidation",
+            str(cases_path),
+            "--consolidation-id",
+            "999",
+        ],
+    )
+
+    assert evaluated.exit_code == 0
+    assert "归并批次ID 1" in evaluated.stdout
+    assert "映射准确率 100.00% (1/1)" in evaluated.stdout
+    assert "关系Precision N/A" in evaluated.stdout
+    assert missing.exit_code == 1
+    assert "归并批次不存在：999" in missing.stdout

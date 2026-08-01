@@ -6,14 +6,17 @@ import pytest
 
 from app.consolidation import (
     CONSOLIDATION_PROMPT_VERSION,
+    CONSOLIDATION_READ_TIMEOUT_SECONDS,
     CONSOLIDATION_SCHEMA_VERSION,
     CONSOLIDATION_SYSTEM_PROMPT,
     ConsolidationError,
     ConsolidatorMetadata,
+    OpenAICompatibleConsolidationClient,
     build_consolidation_user_prompt,
     consolidate_with_correction,
     parse_consolidation_response,
 )
+from app.config import LLMSettings
 from app.requirement_consolidation import (
     RequirementConsolidationInput,
     RequirementOccurrence,
@@ -24,7 +27,9 @@ from app.schemas import RequirementItem
 class FakeConsolidationClient:
     """按预设顺序返回JSON文本，并记录用户提示，替代真实且有费用的LLM调用。"""
 
-    def __init__(self, responses: list[dict[str, object]]) -> None:
+    def __init__(
+        self, responses: list[dict[str, object] | ConsolidationError]
+    ) -> None:
         """保存待返回响应并初始化调用记录。"""
         self.responses = responses
         self.calls = 0
@@ -37,6 +42,8 @@ class FakeConsolidationClient:
         self.prompts.append(user_prompt)
         response = self.responses[self.calls]
         self.calls += 1
+        if isinstance(response, ConsolidationError):
+            raise response
         return json.dumps(response, ensure_ascii=False)
 
 
@@ -66,12 +73,18 @@ def consolidation_input() -> RequirementConsolidationInput:
             RequirementOccurrence(
                 requirement_id=1,
                 job_id=101,
+                extraction_id=1001,
+                extractor_version="test-model|prompt:1.0|schema:2.0",
+                source_hash="a" * 64,
                 source_file="job-a.md",
                 requirement=requirement("能力甲使用经验", "具备能力甲使用经验"),
             ),
             RequirementOccurrence(
                 requirement_id=2,
                 job_id=102,
+                extraction_id=1002,
+                extractor_version="test-model|prompt:1.0|schema:2.0",
+                source_hash="b" * 64,
                 source_file="job-b.md",
                 requirement=requirement(
                     "具备能力甲的使用经验", "具备能力甲的使用经验"
@@ -109,13 +122,16 @@ def valid_result_payload() -> dict[str, object]:
 
 def test_prompt_v1_is_domain_agnostic() -> None:
     """验证Prompt v1不绑定任何具体领域技能，只描述通用归并任务。"""
-    assert CONSOLIDATION_PROMPT_VERSION == "1.5"
+    assert CONSOLIDATION_PROMPT_VERSION == "1.7"
     assert CONSOLIDATION_SCHEMA_VERSION == "1.0"
     for domain_word in ("Python", "RAG", "LangChain", "Agent", "大模型", "AI"):
         assert domain_word not in CONSOLIDATION_SYSTEM_PROMPT
     assert "证据上下文" in CONSOLIDATION_SYSTEM_PROMPT
     assert "review_required" in CONSOLIDATION_SYSTEM_PROMPT
     assert "不得修改、覆盖或删除" in CONSOLIDATION_SYSTEM_PROMPT
+    assert "canonical_name都必须全局唯一" in CONSOLIDATION_SYSTEM_PROMPT
+    assert "三者互斥" in CONSOLIDATION_SYSTEM_PROMPT
+    assert "有向无环" in CONSOLIDATION_SYSTEM_PROMPT
 
 
 def test_metadata_combines_version_components() -> None:
@@ -123,8 +139,20 @@ def test_metadata_combines_version_components() -> None:
     metadata = ConsolidatorMetadata(model_name="test-model")
 
     assert metadata.consolidator_version == (
-        "test-model|prompt:1.5|schema:1.0"
+        "test-model|prompt:1.7|schema:1.0"
     )
+
+
+def test_real_client_uses_explicit_full_batch_timeout_and_retry_policy() -> None:
+    """验证全量归并使用显式读取超时，并由项目层而非SDK隐式控制重试。"""
+    client = OpenAICompatibleConsolidationClient(
+        LLMSettings(api_key="test-key", model="test-model")
+    )
+
+    assert client._client.timeout.connect == 5.0
+    assert client._client.timeout.read == CONSOLIDATION_READ_TIMEOUT_SECONDS
+    assert client._client.max_retries == 0
+    client._client.close()
 
 
 def test_user_prompt_contains_instances_and_output_schema() -> None:
@@ -141,6 +169,12 @@ def test_user_prompt_contains_instances_and_output_schema() -> None:
     assert "canonical_requirements" in payload["output_schema"]
     assert "mappings" in payload["output_schema"]
     assert "relations" in payload["output_schema"]
+    assert "全局唯一" in payload["output_schema"]["canonical_requirements"][0][
+        "canonical_name"
+    ]
+    assert "只能选择一种" in payload["output_schema"]["relations"][0][
+        "relation_type"
+    ]
 
 
 def test_valid_response_parses_and_passes_coverage() -> None:
@@ -197,6 +231,19 @@ def test_retry_feeds_correction_and_succeeds() -> None:
     assert client.calls == 2
     assert len(result.mappings) == 2
     assert "上次校验错误" in client.prompts[1]
+
+
+def test_retry_repeats_original_prompt_after_llm_call_error() -> None:
+    """验证LLM调用层失败会重试，且不会把网络错误写入业务修正提示。"""
+    client = FakeConsolidationClient(
+        [ConsolidationError("LLM调用失败：临时超时"), valid_result_payload()]
+    )
+
+    result, _ = consolidate_with_correction(consolidation_input(), client)
+
+    assert client.calls == 2
+    assert len(result.mappings) == 2
+    assert client.prompts[1] == client.prompts[0]
 
 
 def test_retry_exhausted_raises_final_error() -> None:

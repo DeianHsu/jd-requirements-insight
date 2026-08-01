@@ -35,9 +35,3 @@ reasonix.toml
 
 # 归并评测样例含真实JD证据，属人工标准答案类私有数据
 data/consolidation_cases.json
-trial_evaluate.py
-
-# P0-3两段式实验本地复现脚本与结果
-trial_two_stage.py
-eval_two_stage.py
-data/private/two_stage_results.json

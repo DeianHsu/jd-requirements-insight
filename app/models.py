@@ -138,13 +138,20 @@ class JobConsolidation(Base):
     __tablename__ = "job_consolidations"
     __table_args__ = (
         UniqueConstraint(
-            "scope_key", "consolidator_version", name="uq_scope_consolidator_version"
+            "scope_key",
+            "consolidator_version",
+            "input_fingerprint",
+            name="uq_scope_consolidator_input",
         ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     scope_key: Mapped[str] = mapped_column(String(255), index=True)
     consolidator_version: Mapped[str] = mapped_column(String(255))
+    input_fingerprint: Mapped[str] = mapped_column(String(64))
+    extractor_version: Mapped[str] = mapped_column(String(255))
+    selected_job_ids: Mapped[list[int]] = mapped_column(JSON)
+    extraction_ids: Mapped[list[int]] = mapped_column(JSON)
     model_name: Mapped[str] = mapped_column(String(255))
     prompt_version: Mapped[str] = mapped_column(String(50))
     schema_version: Mapped[str] = mapped_column(String(50))
@@ -224,6 +231,15 @@ class RequirementRelationRecord(Base):
     """保存标准要求项之间的非同义语义关系及其来源理由。"""
 
     __tablename__ = "requirement_relations"
+    __table_args__ = (
+        UniqueConstraint(
+            "consolidation_id",
+            "source_requirement_id",
+            "target_requirement_id",
+            "relation_type",
+            name="uq_consolidation_relation",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     consolidation_id: Mapped[int] = mapped_column(

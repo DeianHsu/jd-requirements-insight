@@ -4,8 +4,8 @@
 p0_id: "P0-11"
 plan_item: "演示与项目文档"
 status: "partial"
-baseline_commit: "b983db5"
-verified_revision: "working tree based on b983db5"
+baseline_commit: "e1a89f1"
+verified_revision: "development fixes based on e1a89f1"
 related_decisions: ["DEC-002", "DEC-003", "DEC-006"]
 glossary_terms: ["P0-N", "开发中", "部分完成", "公共CLI"]
 depends_on: ["P0-1", "P0-2", "P0-3", "P0-4", "P0-5", "P0-6", "P0-7", "P0-8", "P0-9", "P0-10"]
@@ -46,7 +46,7 @@ dependency_mode: "selective"
 
 # 测试与验证
 
-当前工作树43项测试和Ruff通过；Markdown相对链接及术语扫描通过。文档改动还需执行格式、忽略规则和敏感信息检查。
+当前工作树110项测试和Ruff通过；根目录临时Python脚本已清理，实验入口迁入`scripts/experiments/p0_3/`，P0-4离线评测进入正式CLI。AGENTS、文档规则、词典、README及受影响handoff已同步实验性脚本和临时验收规则。
 
 # 未完成事项与已知问题
 

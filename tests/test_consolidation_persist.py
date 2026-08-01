@@ -166,7 +166,7 @@ def consolidation_count(session_factory) -> int:
 
 
 def test_second_run_is_skipped_without_model_call(tmp_path: Path) -> None:
-    """验证同范围同版本重复执行时跳过模型调用且不新增记录。"""
+    """验证同范围、同版本且同输入时跳过模型调用且不新增记录。"""
     _, session_factory = make_database(tmp_path)
     seed_two_jobs(session_factory)
     client = FakeConsolidationClient([valid_result_payload()])
@@ -179,7 +179,55 @@ def test_second_run_is_skipped_without_model_call(tmp_path: Path) -> None:
     assert second.skipped == 2
     assert second.consolidated == 0
     assert client.calls == 1
+    assert first.consolidation_id == second.consolidation_id == 1
+    assert first.input_fingerprint == second.input_fingerprint
     assert consolidation_count(session_factory) == 1
+
+
+def test_changed_input_creates_new_batch_with_same_consolidator(
+    tmp_path: Path,
+) -> None:
+    """验证新增JD后同范围同归并器版本不会错误复用旧批次。"""
+    _, session_factory = make_database(tmp_path)
+    seed_two_jobs(session_factory)
+    updated_payload = valid_result_payload()
+    updated_payload["canonical_requirements"].append(
+        {
+            "canonical_requirement_id": "requirement-c",
+            "canonical_name": "能力丙",
+            "rationale": "新增独立条件",
+            "confidence": 0.9,
+        }
+    )
+    updated_payload["mappings"].append(
+        {
+            "requirement_id": 3,
+            "status": "mapped",
+            "canonical_requirement_id": "requirement-c",
+            "candidate_requirement_ids": [],
+            "rationale": "新增要求映射",
+            "confidence": 0.9,
+        }
+    )
+    client = FakeConsolidationClient([valid_result_payload(), updated_payload])
+    metadata = ConsolidatorMetadata(model_name="test-model")
+
+    first = consolidate_requirements(session_factory, client, metadata)
+    with session_factory() as session:
+        session.add(make_job(3, "job-c.md"))
+        session.add(make_extraction(3, 3))
+        session.add(make_requirement(3, 3, "能力丙"))
+        session.commit()
+    second = consolidate_requirements(session_factory, client, metadata)
+
+    assert first.consolidated == 2
+    assert second.consolidated == 3
+    assert second.skipped == 0
+    assert client.calls == 2
+    assert first.consolidation_id == 1
+    assert second.consolidation_id == 2
+    assert first.input_fingerprint != second.input_fingerprint
+    assert consolidation_count(session_factory) == 2
 
 
 def test_persisted_fields_match_contract(tmp_path: Path) -> None:
@@ -202,6 +250,12 @@ def test_persisted_fields_match_contract(tmp_path: Path) -> None:
         assert consolidation is not None
         assert consolidation.occurrence_count == 2
         assert consolidation.model_name == "test-model"
+        assert len(consolidation.input_fingerprint) == 64
+        assert consolidation.extractor_version == (
+            "test-model|prompt:1.0|schema:2.0"
+        )
+        assert consolidation.selected_job_ids == [1, 2]
+        assert consolidation.extraction_ids == [1, 2]
         assert len(consolidation.canonical_requirements) == 2
         assert len(consolidation.mappings) == 2
         assert len(consolidation.relations) == 1

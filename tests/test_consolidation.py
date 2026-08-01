@@ -5,7 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from app.consolidation import load_requirement_occurrences
+from app.consolidation import (
+    load_consolidation_selection,
+    load_requirement_occurrences,
+)
 from app.database import (
     create_database_engine,
     create_session_factory,
@@ -99,6 +102,9 @@ def test_loads_occurrences_from_multiple_jobs_without_field_loss(
     assert len(result.occurrences) == 3
     by_id = {occ.requirement_id: occ for occ in result.occurrences}
     assert by_id[1].job_id == 1
+    assert by_id[1].extraction_id == 1
+    assert by_id[1].extractor_version == "test-model|prompt:1.0|schema:2.0"
+    assert by_id[1].source_hash == f"{1:064x}"
     assert by_id[1].source_file == "job-a.md"
     assert by_id[1].requirement.raw_name == "能力甲"
     assert by_id[1].requirement.evidence == "具备能力甲使用经验。"
@@ -109,8 +115,8 @@ def test_loads_occurrences_from_multiple_jobs_without_field_loss(
     assert by_id[3].source_file == "job-b.md"
 
 
-def test_only_latest_extraction_version_is_loaded(tmp_path: Path) -> None:
-    """验证同一JD并存多个抽取器版本时只装配最新版本的要求实例。"""
+def test_explicit_extraction_version_is_loaded(tmp_path: Path) -> None:
+    """验证同一JD并存多个抽取器版本时按显式版本装配要求实例。"""
     engine, session_factory = make_database(tmp_path)
     with session_factory() as session:
         session.add(make_job(1, "job-a.md"))
@@ -120,9 +126,53 @@ def test_only_latest_extraction_version_is_loaded(tmp_path: Path) -> None:
         session.add(make_requirement(2, 2, "能力甲"))
         session.commit()
 
-        result = load_requirement_occurrences(session)
+        result = load_requirement_occurrences(
+            session,
+            extractor_version="test-model|prompt:2.0|schema:2.0",
+        )
 
     assert [occ.requirement_id for occ in result.occurrences] == [2]
+
+
+def test_multiple_common_versions_require_explicit_selection(tmp_path: Path) -> None:
+    """验证多个共同抽取器版本并存时拒绝隐式选择。"""
+    _, session_factory = make_database(tmp_path)
+    with session_factory() as session:
+        session.add(make_job(1, "job-a.md"))
+        session.add(make_extraction(1, 1, version="1.0"))
+        session.add(make_extraction(2, 1, version="2.0"))
+        session.add(make_requirement(1, 1, "能力甲"))
+        session.add(make_requirement(2, 2, "能力乙"))
+        session.commit()
+
+        with pytest.raises(ValueError, match="存在多个共同抽取器版本"):
+            load_consolidation_selection(session)
+
+
+def test_selection_fingerprint_is_stable_and_changes_with_input(
+    tmp_path: Path,
+) -> None:
+    """验证相同输入生成稳定指纹，要求字段变化会生成不同指纹。"""
+    _, session_factory = make_database(tmp_path)
+    with session_factory() as session:
+        session.add(make_job(1, "job-a.md"))
+        session.add(make_extraction(1, 1))
+        session.add(make_requirement(1, 1, "能力甲"))
+        session.commit()
+
+        first = load_consolidation_selection(session)
+        second = load_consolidation_selection(session)
+        assert first.input_fingerprint == second.input_fingerprint
+        assert first.selected_job_ids == (1,)
+        assert first.extraction_ids == (1,)
+
+        requirement = session.get(JobRequirement, 1)
+        assert requirement is not None
+        requirement.raw_name = "能力乙"
+        session.commit()
+        changed = load_consolidation_selection(session)
+
+    assert changed.input_fingerprint != first.input_fingerprint
 
 
 def test_job_ids_filter_selects_only_requested_jobs(tmp_path: Path) -> None:
@@ -162,7 +212,7 @@ def test_empty_database_raises_error(tmp_path: Path) -> None:
     """验证没有任何JD时抛出明确错误。"""
     engine, session_factory = make_database(tmp_path)
     with session_factory() as session:
-        with pytest.raises(ValueError, match="没有可归并的要求实例"):
+        with pytest.raises(ValueError, match="选定范围内没有JD"):
             load_requirement_occurrences(session)
 
 
@@ -173,8 +223,35 @@ def test_job_without_extraction_raises_error(tmp_path: Path) -> None:
         session.add(make_job(1, "job-a.md"))
         session.commit()
 
-        with pytest.raises(ValueError, match="没有可归并的要求实例"):
+        with pytest.raises(ValueError, match="JD缺少抽取结果"):
             load_requirement_occurrences(session)
+
+
+def test_partial_extraction_scope_is_rejected(tmp_path: Path) -> None:
+    """验证选定范围中任一JD缺少抽取结果时拒绝生成部分语料池。"""
+    _, session_factory = make_database(tmp_path)
+    with session_factory() as session:
+        session.add(make_job(1, "job-a.md"))
+        session.add(make_job(2, "job-b.md"))
+        session.add(make_extraction(1, 1))
+        session.add(make_requirement(1, 1, "能力甲"))
+        session.commit()
+
+        with pytest.raises(ValueError, match=r"JD缺少抽取结果：\[2\]"):
+            load_consolidation_selection(session)
+
+
+def test_unknown_requested_job_is_rejected(tmp_path: Path) -> None:
+    """验证显式范围包含不存在的JD时拒绝静默缩小范围。"""
+    _, session_factory = make_database(tmp_path)
+    with session_factory() as session:
+        session.add(make_job(1, "job-a.md"))
+        session.add(make_extraction(1, 1))
+        session.add(make_requirement(1, 1, "能力甲"))
+        session.commit()
+
+        with pytest.raises(ValueError, match=r"指定JD不存在：\[2\]"):
+            load_consolidation_selection(session, job_ids={1, 2})
 
 
 def test_empty_job_ids_set_raises_error(tmp_path: Path) -> None:

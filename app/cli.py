@@ -15,6 +15,11 @@ from app.consolidation import (
     consolidate_requirements,
     list_consolidations,
 )
+from app.consolidation_evaluation import (
+    evaluate_consolidation,
+    load_consolidation_cases,
+    load_persisted_consolidation_result,
+)
 from app.database import create_database_engine, create_session_factory, initialize_database
 from app.evaluation import (
     ItemMatchMetrics,
@@ -195,10 +200,15 @@ def consolidate_requirements_cmd(
     job_ids: list[int] | None = typer.Option(
         None, "--job-id", min=1, help="只归并指定JD，可重复传入"
     ),
+    extractor_version: str | None = typer.Option(
+        None,
+        "--extractor-version",
+        help="选择覆盖全部目标JD的抽取器版本；存在多个共同版本时必须指定",
+    ),
 ) -> None:
     """对选定JD范围内的要求实例执行跨JD原子要求归并并幂等保存。"""
-    if all_jobs and job_ids:
-        console.print("[red]--all不能与--job-id同时使用。[/red]")
+    if all_jobs == bool(job_ids):
+        console.print("[red]必须且只能选择--all或--job-id之一。[/red]")
         raise typer.Exit(code=2)
 
     settings = load_llm_settings()
@@ -219,6 +229,7 @@ def consolidate_requirements_cmd(
             metadata,
             max_attempts=max_attempts,
             job_ids=set(job_ids) if job_ids else None,
+            extractor_version=extractor_version,
         )
     finally:
         engine.dispose()
@@ -229,6 +240,10 @@ def consolidate_requirements_cmd(
     console.print(f"要求关系 [bold]{summary.relation_count}[/bold] 条")
     console.print(f"同版本跳过 [yellow]{summary.skipped}[/yellow]")
     console.print(f"失败 [red]{summary.failed}[/red]")
+    if summary.consolidation_id is not None:
+        console.print(f"归并批次ID [bold]{summary.consolidation_id}[/bold]")
+    if summary.input_fingerprint is not None:
+        console.print(f"输入指纹 [cyan]{summary.input_fingerprint[:12]}[/cyan]")
     for error in summary.errors:
         console.print(f"  [red]- {error.scope}: {error.message}[/red]")
     if summary.failed:
@@ -252,6 +267,8 @@ def show_consolidations() -> None:
     table.add_column("ID", justify="right")
     table.add_column("范围")
     table.add_column("归并器版本")
+    table.add_column("抽取器版本")
+    table.add_column("输入指纹")
     table.add_column("实例数", justify="right")
     table.add_column("标准项", justify="right")
     table.add_column("映射", justify="right")
@@ -262,12 +279,105 @@ def show_consolidations() -> None:
             str(record.id),
             record.scope_key,
             record.consolidator_version,
+            record.extractor_version,
+            record.input_fingerprint[:12],
             str(record.occurrence_count),
             str(len(record.canonical_requirements)),
             str(len(record.mappings)),
             str(len(record.relations)),
         )
     console.print(table)
+
+
+@cli.command("evaluate-consolidation")
+def evaluate_consolidation_cmd(
+    cases_path: Path = typer.Argument(
+        ...,
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        help="归并人工标准答案JSON文件",
+    ),
+    consolidation_id: int = typer.Option(
+        ...,
+        "--consolidation-id",
+        min=1,
+        help="显式指定要评测的持久化归并批次ID",
+    ),
+) -> None:
+    """离线评测一个已持久化归并批次，不调用LLM或隐式选择最新批次。"""
+    try:
+        cases = load_consolidation_cases(cases_path)
+    except (OSError, ValueError) as exc:
+        console.print(f"[red]无法读取归并评测文件：{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    engine, session_factory = database_resources()
+    try:
+        persisted = load_persisted_consolidation_result(
+            session_factory, consolidation_id
+        )
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+    finally:
+        engine.dispose()
+
+    try:
+        metrics = evaluate_consolidation(persisted.result, cases)
+    except (KeyError, ValueError) as exc:
+        console.print(f"[red]归并评测失败：{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    console.print(f"归并批次ID [bold]{persisted.consolidation_id}[/bold]")
+    console.print(f"范围 [bold]{persisted.scope_key}[/bold]")
+    console.print(f"归并器版本 [bold]{persisted.consolidator_version}[/bold]")
+    console.print(f"抽取器版本 [bold]{persisted.extractor_version}[/bold]")
+    console.print(f"输入指纹 [cyan]{persisted.input_fingerprint[:12]}[/cyan]")
+    console.print(
+        "映射准确率 "
+        + (
+            f"[green]{metrics.mapping_accuracy:.2%}[/green] "
+            f"({metrics.mapping_matched}/{metrics.mapping_total})"
+            if metrics.mapping_accuracy is not None
+            else "N/A"
+        )
+    )
+    console.print(
+        "关系Precision "
+        + (
+            f"[green]{metrics.relation_precision:.2%}[/green] "
+            f"({metrics.relation_matched}/{metrics.relation_predicted})"
+            if metrics.relation_precision is not None
+            else "N/A"
+        )
+    )
+    console.print(
+        "关系Recall "
+        + (
+            f"[green]{metrics.relation_recall:.2%}[/green] "
+            f"({metrics.relation_matched}/{metrics.relation_total})"
+            if metrics.relation_recall is not None
+            else "N/A"
+        )
+    )
+    console.print(
+        "关系F1 "
+        + (
+            f"[green]{metrics.relation_f1:.2%}[/green]"
+            if metrics.relation_f1 is not None
+            else "N/A"
+        )
+    )
+    console.print(
+        "未映射处理 "
+        + (
+            f"[green]{metrics.unmapped_accuracy:.2%}[/green]"
+            if metrics.unmapped_accuracy is not None
+            else "N/A"
+        )
+    )
 
 
 @cli.command("list-extractions")

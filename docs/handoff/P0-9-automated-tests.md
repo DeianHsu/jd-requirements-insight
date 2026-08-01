@@ -4,8 +4,8 @@
 p0_id: "P0-9"
 plan_item: "核心自动化测试"
 status: "partial"
-baseline_commit: "b983db5"
-verified_revision: "working tree based on b983db5"
+baseline_commit: "e1a89f1"
+verified_revision: "development fixes based on e1a89f1"
 related_decisions: ["DEC-004", "DEC-012"]
 glossary_terms: ["确定性校验", "小规模验证", "全量回归"]
 depends_on: []
@@ -19,7 +19,7 @@ dependency_mode: "task_scoped"
 
 # 当前状态
 
-部分完成。当前工作树共有43项测试并全部通过，Ruff通过；其中P0-4的9项测试仍随开发草稿存在。统计和统计结论证据查询尚无专项测试。
+部分完成。当前工作树共有110项测试并全部通过，Ruff通过。P0-4已覆盖输入变化、范围完整性、输入指纹、旧库迁移、SQLite外键、调用层重试、显式超时、关系假阳性、关系图冲突和指定批次离线评测；P0-3两段式实验已覆盖唯一分句归属及实验脚本安全边界。统计和统计结论证据查询尚无专项测试。
 
 # 稳定事实
 
@@ -32,10 +32,12 @@ dependency_mode: "task_scoped"
 
 - `tests/README.md`：测试文件职责索引。
 - `tests/test_ingestion.py`：导入。
-- `tests/test_schemas.py`、`tests/test_database.py`：抽取数据合同和数据库结构。
+- `tests/test_schemas.py`、`tests/test_database.py`：抽取数据合同、数据库结构、SQLite外键和旧批次迁移。
 - `tests/test_extraction.py`：Prompt、抽取、证据、重试和持久化。
 - `tests/test_evaluation.py`：人工标准答案和评测。
-- `tests/test_requirement_consolidation.py`：P0-4开发草稿。
+- `tests/test_requirement_consolidation.py`及`test_consolidation*.py`：P0-4合同、输入选择、执行、持久化与评测。
+- `tests/test_extraction_two_stage.py`：P0-3两段式实验中间合同和唯一覆盖。
+- `tests/test_experiment_scripts.py`：实验脚本私有输出边界、导入安全和真实调用显式确认。
 - `tests/test_cli.py`、`tests/test_health.py`：公共入口。
 
 # 数据合同与不变量
@@ -53,7 +55,7 @@ dependency_mode: "task_scoped"
 .venv\Scripts\python.exe -m ruff check --no-cache app tests
 ```
 
-当前结果：43项测试通过，Ruff通过；存在一个来自FastAPI TestClient依赖链的Starlette弃用警告，不影响现有行为。
+当前结果：110项测试通过，Ruff通过；存在一个来自FastAPI TestClient依赖链的Starlette弃用警告，不影响现有行为。
 
 # 未完成事项与已知问题
 

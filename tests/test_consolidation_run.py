@@ -174,7 +174,7 @@ def test_empty_database_reports_assembly_error(tmp_path: Path) -> None:
 
     assert summary.failed == 1
     assert summary.discovered == 0
-    assert "没有可归并的要求实例" in summary.errors[0].message
+    assert "选定范围内没有JD" in summary.errors[0].message
 
 
 def test_job_ids_filter_applies_to_scope(tmp_path: Path) -> None:
