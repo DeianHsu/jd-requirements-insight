@@ -6,7 +6,7 @@
 
 ## 当前状态
 
-已实现Markdown JD校验、SQLite导入、内容哈希去重、JD结构化抽取和跨JD原子要求归并的基础链路。当前抽取数据合同V2与正式Prompt V2.3.1已经完成5份真实JD抽取；P0-3两段式v0.6是尚未接入正式流程的候选实现，仍需未见验证集验收。P0-4已经完成输入版本身份、语料范围完整性、SQLite外键、关系Precision/Recall/F1和关系图冲突的确定性修复，Prompt v1.7小规模真实验证达到预设指标，但连续3次正式完整验收均未形成批次，现已暂停修复，不能作为下游统计的稳定数据源。
+已实现 Markdown JD 校验、SQLite 导入、内容哈希去重、JD 结构化抽取和跨 JD 原子要求归并的基础链路。当前抽取数据合同 V2 与正式 Prompt V2.3.1 已完成 5 份真实 JD 抽取。P0-3 两段式 v0.6 候选已完成第 1 次独立正式验收（validation 端到端 F1 96.30% 达标），待裁决开发集复现口径，通过前不替换正式版本。P0-4 已实现分阶段/分块输出边界并修复完整 JSON 截断问题，但 75 实例预检关系指标未达验收门槛（P=66.67%<80%），149 实例正式验收暂缓，不能作为下游统计的稳定数据源。各功能详细状态见 [docs/PROJECT_PLAN.md](docs/PROJECT_PLAN.md)。
 
 ## 环境
 
@@ -108,9 +108,9 @@ python -m app.cli evaluate-consolidation <consolidation_cases.json> `
 
 ## 方法文档
 
-- [全项目术语词典](docs/GLOSSARY.md)：统一数据单位、抽取数据合同、评测、要求归并和公共CLI的固定含义。
+- [全项目术语词典](docs/GLOSSARY.md)：核心业务术语与跨阶段不变量。
 - [人工标注规范](docs/annotation/README.md)：按职责、要求和数据集评测三个主题提供规则入口。
 - [项目路线图](docs/PROJECT_PLAN.md)：P0功能范围、硬依赖、验收输入和当前状态。
-- [项目决策](docs/DECISIONS.md)：长期产品与技术选择的理由和复审条件。
-- [Design](docs/design/README.md)、[Develop](docs/develop/README.md)、[Review](docs/review/README.md)：按P0查看目标、实际实现和验收结果。
+- [P0 工作文档](docs/work/)：每个已启动 P0 的目标、当前实现、验证、问题和结论。
+- [项目决策](docs/DECISIONS.md)：有面试价值的技术决策与重大问题复盘。
 - [实验报告](reports/README.md)：详细实验材料的分组与隐私边界。
