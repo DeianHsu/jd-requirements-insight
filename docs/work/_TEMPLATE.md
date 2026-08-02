@@ -1,9 +1,11 @@
 # P0-X 功能名称
 
 updated_at: YYYY-MM-DD
-current_revision: <commit 或 working-tree>
+implementation_revision: <commit>
 status: NOT_STARTED | IN_PROGRESS | BLOCKED | READY | APPROVED
 next_action: 一句话说明下一步
+
+> `implementation_revision` 表示当前文档中“当前实现”和“当前结论”所依据的最新相关代码或工具提交，而不是文档提交、仓库 HEAD 或本地工作树状态。历史验收基线可在“当前验证”或“当前结论”正文中注明。
 
 ## 1. 目标与边界
 
@@ -26,7 +28,7 @@ next_action: 一句话说明下一步
 | 验证项 | 命令或数据范围 | 结果 | 证据 |
 |---|---|---|---|
 
-只保留与当前 revision 对应的有效结果。
+只保留与 implementation_revision 对应的有效结果。
 
 ## 5. 当前问题
 
@@ -46,8 +48,8 @@ next_action: 一句话说明下一步
 
 ## 7. 当前结论
 
-说明当前能力是否正式可用、是否阻塞下游，以及结论适用的 revision。
+说明当前能力是否正式可用、是否阻塞下游，以及结论适用的 implementation_revision。
 
 ## 8. 参考
 
-只链接仍然有效的报告、决策和业务规范。
+只链接仍然有效的报告、决策和业务规范。引用被 Git 忽略的本地报告或数据时标注“本地私有，不随仓库分发”。
