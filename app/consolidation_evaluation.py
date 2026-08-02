@@ -1,4 +1,9 @@
-"""评测跨JD归并结果：要求映射准确率、关系Precision/Recall/F1与状态处理。"""
+"""评测跨JD归并结果：要求映射准确率、关系Precision/Recall/F1与状态处理。
+
+参考标注草案（data/consolidation_cases.json）已按用户裁决降级为参考材料，
+本模块指标只用于离线诊断与报告，不构成 P0-4 验收门槛；验收以规则合同、
+同输入多次运行一致性与人工抽样复核为准（docs/work/P0-4.md）。
+"""
 
 from __future__ import annotations
 
@@ -113,7 +118,7 @@ def load_persisted_consolidation_result(
 
 
 def load_consolidation_cases(path: Path) -> dict[str, Any]:
-    """读取人工标准答案评测文件并返回原始字典。"""
+    """读取参考标注评测文件并返回原始字典（草案已降级，仅作参考）。"""
     with open(path, encoding="utf-8") as handle:
         return json.load(handle)
 
@@ -162,9 +167,10 @@ def evaluate_consolidation(
     actual: RequirementConsolidationResult,
     cases: dict[str, Any],
 ) -> ConsolidationMetrics:
-    """把实际归并结果与人工标准答案对比，返回映射/关系/未映射指标。
+    """把实际归并结果与参考标注对比，返回映射/关系/未映射参考指标。
 
     匹配按规范化标准要求项名称进行，不依赖模型生成的标准项ID。
+    草案标注已降级为参考材料，本函数指标仅作诊断，不构成验收门槛。
     """
     expected = cases["expected"]
     expected_names = _name_map(

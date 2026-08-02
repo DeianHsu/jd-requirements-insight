@@ -1,9 +1,10 @@
 ﻿"""P0-4分阶段/分块归并：75实例小规模预检。
 
-从抽取器版本2.3.1的149条实例中，选取人工标准答案覆盖的全部实例并按
+从抽取器版本2.3.1的149条实例中，选取参考标注覆盖的全部实例并按
 requirement_id升序补齐至75条，调用`consolidate_with_correction`执行
 分阶段/受控分块归并，记录每阶段请求的实例数、输入输出字符数与耗时，
-并与13实例人工标准答案离线评测。必须显式`--execute`确认付费模型调用。
+并与13实例参考标注离线对比（草案已降级，指标仅作参考，不构成验收
+门槛）。必须显式`--execute`确认付费模型调用。
 
 输出：脱敏指标报告写入`reports/P0-4/`（仅统计数字，不含真实证据）；
 完整归并结果（含原始名称与证据）写入`data/private/experiments/P0-4/`。
@@ -68,7 +69,7 @@ class RecordingClient:
 def build_precheck_input(
     selection, cases: dict[str, object], target_size: int = 75
 ) -> RequirementConsolidationInput:
-    """构造覆盖全部人工标注实例并补齐到目标规模的预检输入。"""
+    """构造覆盖全部参考标注实例并补齐到目标规模的预检输入。"""
     occurrences = sorted(
         selection.consolidation_input.occurrences,
         key=lambda occurrence: occurrence.requirement_id,
@@ -101,7 +102,7 @@ def main() -> int:
         "--cases",
         type=Path,
         default=Path("data/consolidation_cases.json"),
-        help="人工标准答案JSON路径",
+        help="参考标注JSON路径（草案已降级，仅作参考）",
     )
     parser.add_argument(
         "--extractor-version",
@@ -167,7 +168,7 @@ def main() -> int:
     print(f"模型：{settings.model}")
     print(f"抽取器版本：{selection.extractor_version}")
     print(f"输入范围：{len(precheck_input.occurrences)}条实例"
-          f"（人工标注{sum(1 for _ in cases['expected']['mappings'])}条全覆盖）")
+          f"（参考标注{sum(1 for _ in cases['expected']['mappings'])}条全覆盖）")
     print(f"预计模型调用：1（标准项）+ {mapping_requests}（映射块）+ 1（关系）"
           f" = {mapping_requests + 2} 次")
     print("输出目标：仅统计指标（脱敏）；完整结果写入私有目录。")
@@ -232,9 +233,9 @@ def main() -> int:
         json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
-    print(f"映射准确率：{metrics.mapping_matched}/{metrics.mapping_total}"
+    print(f"参考映射准确率：{metrics.mapping_matched}/{metrics.mapping_total}"
           f" = {metrics.mapping_accuracy}")
-    print(f"关系 P/R/F1：{metrics.relation_precision} / "
+    print(f"参考关系 P/R/F1：{metrics.relation_precision} / "
           f"{metrics.relation_recall} / {metrics.relation_f1}")
     print(f"全图：标准项{len(result.canonical_requirements)}、"
           f"映射{len(result.mappings)}、关系{len(result.relations)}")
