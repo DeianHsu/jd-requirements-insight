@@ -21,5 +21,3 @@
 | `test_consolidation_evaluation.py` | 归并评测：映射准确率、关系Precision/Recall/F1和未映射状态。 |
 | `test_extraction_two_stage.py` | P0-3两段式实验的中间合同、唯一覆盖、证据与重试行为。 |
 | `test_experiment_scripts.py` | 实验脚本的导入安全、私有输出路径和真实调用显式确认。 |
-
-测试分级、隔离和验证要求集中在[测试规则](../docs/rules/testing.md)。

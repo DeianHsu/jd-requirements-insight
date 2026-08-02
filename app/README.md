@@ -34,5 +34,3 @@ Markdown JD
   → 跨JD要求归并与输入指纹批次持久化
   → 指定批次与人工标准答案离线分层评测
 ```
-
-代码质量与文档维护规则集中在[代码质量规则](../docs/rules/code-quality.md)和[文档规则](../docs/rules/documentation.md)。
