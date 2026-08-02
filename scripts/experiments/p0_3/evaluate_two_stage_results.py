@@ -63,7 +63,7 @@ def _failure_rows(
             predicted = metrics.responsibility_metrics.predicted
             matched = metrics.responsibility_metrics.matched
         exact = "是" if expected == predicted else "否"
-        if exact and matched == expected:
+        if exact == "是" and matched == expected:
             continue
         rows.append(
             [

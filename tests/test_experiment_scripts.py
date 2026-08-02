@@ -153,3 +153,12 @@ def test_two_stage_evaluation_omits_fully_matched_cases() -> None:
         {"jd_test.md": _prediction(["Python", "Go"])},
     )
     assert "case_test_001" not in report.split("### validation")[1]
+
+
+def test_two_stage_evaluation_reports_oversplit_cases() -> None:
+    """验证多拆case（数量不一致但预期项全部匹配）必须出现在失败案例表中。"""
+    report = evaluate_two_stage_results.build_report(
+        {"cases": [VALIDATION_CASE]},
+        {"jd_test.md": _prediction(["Python", "Go", "Rust"])},
+    )
+    assert "| case_test_001 | requirements | 2 | 3 | 否 | 0 | 1 | - |" in report
