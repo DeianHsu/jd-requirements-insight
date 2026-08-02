@@ -118,6 +118,15 @@ def valid_result_payload() -> dict[str, object]:
     }
 
 
+def stage_payloads(payload: dict[str, object]) -> list[dict[str, object]]:
+    """把完整归并结果拆成标准项、映射和关系三个阶段的独立响应。"""
+    return [
+        {"canonical_requirements": payload["canonical_requirements"]},
+        {"mappings": payload["mappings"]},
+        {"relations": payload["relations"]},
+    ]
+
+
 def seed_two_jobs(session_factory) -> None:
     """向数据库写入两份JD各一条要求实例。"""
     with session_factory() as session:
@@ -134,7 +143,7 @@ def test_successful_run_reports_counts(tmp_path: Path) -> None:
     """验证成功归并的摘要包含发现、归并、标准项和关系数量。"""
     _, session_factory = make_database(tmp_path)
     seed_two_jobs(session_factory)
-    client = FakeConsolidationClient([valid_result_payload()])
+    client = FakeConsolidationClient(stage_payloads(valid_result_payload()))
     metadata = ConsolidatorMetadata(model_name="test-model")
 
     summary = consolidate_requirements(session_factory, client, metadata)
@@ -144,11 +153,11 @@ def test_successful_run_reports_counts(tmp_path: Path) -> None:
     assert summary.canonical_count == 1
     assert summary.relation_count == 0
     assert summary.failed == 0
-    assert client.calls == 1
+    assert client.calls == 3
 
 
 def test_failed_run_isolates_error_without_raising(tmp_path: Path) -> None:
-    """验证模型调用失败被记录到摘要且不中断抛出。"""
+    """验证标准项阶段失败被记录到摘要且不中断抛出。"""
     _, session_factory = make_database(tmp_path)
     seed_two_jobs(session_factory)
     client = FakeConsolidationClient([{"bad": True}])
@@ -183,7 +192,7 @@ def test_job_ids_filter_applies_to_scope(tmp_path: Path) -> None:
     seed_two_jobs(session_factory)
     payload = valid_result_payload()
     payload["mappings"] = payload["mappings"][:1]
-    client = FakeConsolidationClient([payload])
+    client = FakeConsolidationClient(stage_payloads(payload))
     metadata = ConsolidatorMetadata(model_name="test-model")
 
     summary = consolidate_requirements(

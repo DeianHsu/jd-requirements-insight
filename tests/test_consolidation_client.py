@@ -9,12 +9,14 @@ from app.consolidation import (
     CONSOLIDATION_READ_TIMEOUT_SECONDS,
     CONSOLIDATION_SCHEMA_VERSION,
     CONSOLIDATION_SYSTEM_PROMPT,
+    RELATION_SYSTEM_PROMPT,
     ConsolidationError,
     ConsolidatorMetadata,
     OpenAICompatibleConsolidationClient,
     build_consolidation_user_prompt,
     consolidate_with_correction,
     parse_consolidation_response,
+    parse_mappings_response,
 )
 from app.config import LLMSettings
 from app.requirement_consolidation import (
@@ -37,7 +39,7 @@ class FakeConsolidationClient:
 
     def complete(self, system_prompt: str, user_prompt: str) -> str:
         """返回当前预设响应，并断言Prompt携带必要约束和实例数据。"""
-        assert "归并" in system_prompt
+        assert "要求项" in system_prompt
         assert "requirements" in user_prompt
         self.prompts.append(user_prompt)
         response = self.responses[self.calls]
@@ -120,18 +122,24 @@ def valid_result_payload() -> dict[str, object]:
     }
 
 
-def test_prompt_v1_is_domain_agnostic() -> None:
-    """验证Prompt v1不绑定任何具体领域技能，只描述通用归并任务。"""
-    assert CONSOLIDATION_PROMPT_VERSION == "1.7"
+def test_prompt_v21_is_domain_agnostic() -> None:
+    """验证Prompt v2.1不绑定任何具体领域技能，只描述通用归并任务。"""
+    assert CONSOLIDATION_PROMPT_VERSION == "2.1"
     assert CONSOLIDATION_SCHEMA_VERSION == "1.0"
     for domain_word in ("Python", "RAG", "LangChain", "Agent", "大模型", "AI"):
         assert domain_word not in CONSOLIDATION_SYSTEM_PROMPT
+        assert domain_word not in RELATION_SYSTEM_PROMPT
     assert "证据上下文" in CONSOLIDATION_SYSTEM_PROMPT
     assert "review_required" in CONSOLIDATION_SYSTEM_PROMPT
     assert "不得修改、覆盖或删除" in CONSOLIDATION_SYSTEM_PROMPT
     assert "canonical_name都必须全局唯一" in CONSOLIDATION_SYSTEM_PROMPT
+    assert "并列判断只依据同一实例的证据" in CONSOLIDATION_SYSTEM_PROMPT
+    assert "不得合并使用" in CONSOLIDATION_SYSTEM_PROMPT
+    assert "不同层级" in CONSOLIDATION_SYSTEM_PROMPT
     assert "三者互斥" in CONSOLIDATION_SYSTEM_PROMPT
     assert "有向无环" in CONSOLIDATION_SYSTEM_PROMPT
+    assert "必须输出part_of" in RELATION_SYSTEM_PROMPT
+    assert "只输出用户提示指定的relations数组" in RELATION_SYSTEM_PROMPT
 
 
 def test_metadata_combines_version_components() -> None:
@@ -139,7 +147,7 @@ def test_metadata_combines_version_components() -> None:
     metadata = ConsolidatorMetadata(model_name="test-model")
 
     assert metadata.consolidator_version == (
-        "test-model|prompt:1.7|schema:1.0"
+        "test-model|prompt:2.1|schema:1.0"
     )
 
 
@@ -177,13 +185,22 @@ def test_user_prompt_contains_instances_and_output_schema() -> None:
     ]
 
 
+def stage_payloads(payload: dict[str, object]) -> list[dict[str, object]]:
+    """把完整归并结果拆成标准项、映射和关系三个阶段的独立响应。"""
+    return [
+        {"canonical_requirements": payload["canonical_requirements"]},
+        {"mappings": payload["mappings"]},
+        {"relations": payload["relations"]},
+    ]
+
+
 def test_valid_response_parses_and_passes_coverage() -> None:
-    """验证合法响应解析成功并通过覆盖检查，返回结果与原始JSON。"""
-    client = FakeConsolidationClient([valid_result_payload()])
+    """验证三阶段响应合成后解析成功并通过覆盖检查，返回完整结果。"""
+    client = FakeConsolidationClient(stage_payloads(valid_result_payload()))
 
     result, raw = consolidate_with_correction(consolidation_input(), client)
 
-    assert client.calls == 1
+    assert client.calls == 3
     assert len(result.canonical_requirements) == 1
     assert result.canonical_requirements[0].canonical_name == "能力甲使用经验"
     assert len(result.mappings) == 2
@@ -196,52 +213,76 @@ def test_invalid_json_raises_consolidation_error() -> None:
         parse_consolidation_response("这不是JSON")
 
 
+def test_mappings_response_normalizes_null_candidate_ids() -> None:
+    """验证模型用null表达无候选时被规范化为空列表，语义不变。"""
+    payload = {
+        "mappings": [
+            {
+                "requirement_id": 1,
+                "status": "mapped",
+                "canonical_requirement_id": "requirement-a",
+                "candidate_requirement_ids": None,
+                "rationale": "表述不同但招聘条件相同",
+                "confidence": 0.95,
+            }
+        ]
+    }
+
+    mappings = parse_mappings_response(json.dumps(payload, ensure_ascii=False))
+
+    assert len(mappings) == 1
+    assert mappings[0].candidate_requirement_ids == []
+
+
 def test_contract_violation_raises_consolidation_error() -> None:
-    """验证映射引用未知标准要求项时被合同校验拒绝。"""
+    """验证映射引用未知标准要求项时被合成阶段的全局校验拒绝。"""
     payload = valid_result_payload()
     payload["mappings"][0]["canonical_requirement_id"] = "missing"
 
     with pytest.raises(ConsolidationError, match="映射引用未知标准要求项"):
         consolidate_with_correction(
             consolidation_input(),
-            FakeConsolidationClient([payload]),
+            FakeConsolidationClient(stage_payloads(payload)),
             max_attempts=1,
         )
 
 
 def test_coverage_gap_raises_consolidation_error() -> None:
-    """验证遗漏要求实例时即使合同合法也被覆盖检查拒绝。"""
+    """验证映射块遗漏要求实例时被块级覆盖检查拒绝。"""
     payload = valid_result_payload()
     payload["mappings"].pop()
 
     with pytest.raises(ConsolidationError, match="遗漏要求实例"):
         consolidate_with_correction(
             consolidation_input(),
-            FakeConsolidationClient([payload]),
+            FakeConsolidationClient(stage_payloads(payload)),
             max_attempts=1,
         )
 
 
 def test_retry_feeds_correction_and_succeeds() -> None:
-    """验证首次输出非法JSON后，第二次带修正提示重试并成功。"""
-    client = FakeConsolidationClient([{"bad": True}, valid_result_payload()])
+    """验证标准项阶段首次输出非法JSON后，第二次带修正提示重试并成功。"""
+    client = FakeConsolidationClient(
+        [{"bad": True}] + stage_payloads(valid_result_payload())
+    )
 
     result, _ = consolidate_with_correction(consolidation_input(), client)
 
-    assert client.calls == 2
+    assert client.calls == 4
     assert len(result.mappings) == 2
     assert "上次校验错误" in client.prompts[1]
 
 
 def test_retry_repeats_original_prompt_after_llm_call_error() -> None:
-    """验证LLM调用层失败会重试，且不会把网络错误写入业务修正提示。"""
+    """验证标准项阶段调用层失败会重试，且不把网络错误写入业务修正提示。"""
     client = FakeConsolidationClient(
-        [ConsolidationError("LLM调用失败：临时超时"), valid_result_payload()]
+        [ConsolidationError("LLM调用失败：临时超时")]
+        + stage_payloads(valid_result_payload())
     )
 
     result, _ = consolidate_with_correction(consolidation_input(), client)
 
-    assert client.calls == 2
+    assert client.calls == 4
     assert len(result.mappings) == 2
     assert client.prompts[1] == client.prompts[0]
 

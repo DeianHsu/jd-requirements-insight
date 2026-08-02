@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Callable, Protocol, TypeVar
 
 import httpx
 from openai import OpenAI
@@ -28,16 +28,37 @@ from app.models import (
     RequirementRelationRecord,
 )
 from app.requirement_consolidation import (
+    CanonicalRequirement,
     RequirementConsolidationInput,
     RequirementConsolidationResult,
+    RequirementMapping,
     RequirementOccurrence,
+    RequirementRelation,
     validate_requirement_coverage,
 )
 from app.schemas import RequirementItem
 
-CONSOLIDATION_PROMPT_VERSION = "1.7"
+CONSOLIDATION_PROMPT_VERSION = "2.1"
 CONSOLIDATION_SCHEMA_VERSION = "1.0"
 CONSOLIDATION_READ_TIMEOUT_SECONDS = 900.0
+# 单次完整请求在149实例规模下曾出现约50KB响应截断；映射阶段按此上限
+# 受控分块，使任何单次映射请求的实例数与输出规模都远离截断边界。
+CONSOLIDATION_MAPPING_CHUNK_SIZE = 50
+
+# 关系轮专用系统提示：只聚焦关系判定，避免映射/标准项规则干扰，并强化
+# part_of优先与跨层级不建关系，缓解模型对"并列即related_to"的过度倾向。
+RELATION_SYSTEM_PROMPT = """你是跨JD标准要求项关系判断器。输入一批标准要求项与它们来源的实例证据，请只判断标准要求项之间的语义关系，并严格只输出relations数组。
+
+【关系判定】
+1. related_to仅用于同一实例证据中以同级并列方式出现的招聘条件（例如"任务分解、工具调用、协同执行等机制"中的并列机制）；同组同级并列必须全部两两建立related_to关系，不得遗漏任意一对。并列判断只依据同一实例的证据，不同实例的证据不得合并使用。
+2. 组成部分与上下位关系优先于related_to：若一个条件的具体活动或组成部分是另一个条件的整体或上位活动（例如"能力甲实施经验"是"能力甲落地经验"的一部分），必须输出part_of，不得用related_to代替。
+3. 两个条件虽然在同一证据中出现，但属于不同层级（大类与其包含的具体概念）时，不建立任何关系。
+4. 关系不是可选项：只要符合上述情形就必须输出关系，不能只输出空数组。
+5. 同一对标准要求项最多输出一条关系，is_a、part_of和related_to三者互斥。若is_a或part_of成立，不得再为同一对输出related_to；is_a只表示类型上下位，part_of只表示组成部分到整体，必须选择语义最具体且唯一的一种。
+6. is_a和part_of分别都必须保持有向无环；不要输出自环、反向重复或可由环路返回起点的关系。
+
+【输出要求】
+严格按照用户提示要求的JSON结构输出，只输出用户提示指定的relations数组，不要输出Markdown代码块或额外说明。"""
 
 # Prompt V1只定义通用归并任务：同义归并、关系判断和未映射处理，不出现任何具体领域技能。
 CONSOLIDATION_SYSTEM_PROMPT = """你是跨JD岗位要求归并器。输入是一批来自不同JD的原子要求实例，你需要判断哪些实例指向同一招聘条件，并为无法确定或需要人工判断的实例标注状态。只能依据每个实例提供的原始名称和证据上下文判断，不得补充任何领域知识或行业常识。
@@ -66,14 +87,15 @@ CONSOLIDATION_SYSTEM_PROMPT = """你是跨JD岗位要求归并器。输入是一
 4. 示例：实例"能力甲"（属于"至少掌握一门主流能力"任选组）与实例"能力甲基础"（硬性条件）不得归并，必须分别映射到不同标准要求项。
 
 【关系生成】
-1. 同一证据中并列出现的多个机制、能力或组件（例如"任务分解、工具调用、协同执行等机制"）彼此必须全部两两建立related_to关系，不得遗漏任意一对。
-2. 明显属于整体组成部分的具体活动与上位活动（例如"能力甲实施经验"是"能力甲落地经验"的一部分）必须建立part_of关系，不能用related_to代替。
-3. 关系不是可选项：只要符合上述情形就必须输出关系，不能只输出映射。
-4. 同一对标准要求项最多输出一条关系，is_a、part_of和related_to三者互斥。若is_a或part_of成立，不得再为同一对输出related_to；is_a只表示类型上下位，part_of只表示组成部分到整体，必须选择语义最具体且唯一的一种。
-5. is_a和part_of分别都必须保持有向无环；不要输出自环、反向重复或可由环路返回起点的关系。
+1. 同一证据中并列出现的多个机制、能力或组件（例如"任务分解、工具调用、协同执行等机制"）彼此必须全部两两建立related_to关系，不得遗漏任意一对；并列判断只依据同一实例的证据，不同实例的证据不得合并使用。
+2. 上下位或整体-部分关系不得使用related_to：具体活动或组成部分与整体/上位活动（例如"能力甲实施经验"是"能力甲落地经验"的一部分）必须建立part_of关系，不得用related_to代替。
+3. 两个条件虽然在同一证据中出现，但属于不同层级（大类与其包含的具体概念）时，不建立related_to。
+4. 关系不是可选项：只要符合上述情形就必须输出关系，不能只输出映射。
+5. 同一对标准要求项最多输出一条关系，is_a、part_of和related_to三者互斥。若is_a或part_of成立，不得再为同一对输出related_to；is_a只表示类型上下位，part_of只表示组成部分到整体，必须选择语义最具体且唯一的一种。
+6. is_a和part_of分别都必须保持有向无环；不要输出自环、反向重复或可由环路返回起点的关系。
 
 【输出要求】
-严格按照用户提供的JSON结构输出一个JSON对象，包含canonical_requirements、mappings和relations三个数组。不要输出Markdown代码块或额外说明。"""
+严格按照用户提示要求的JSON结构输出，只输出用户提示指定的数组，不要输出Markdown代码块或额外说明。"""
 
 
 class ConsolidationError(ValueError):
@@ -322,11 +344,11 @@ def load_requirement_occurrences(
     ).consolidation_input
 
 
-def build_consolidation_user_prompt(
-    consolidation_input: RequirementConsolidationInput,
-) -> str:
-    """把要求实例列表序列化为归并调用输入，并说明期望的输出结构。"""
-    instances = [
+def _serialize_occurrences(
+    occurrences: list[RequirementOccurrence],
+) -> list[dict[str, object]]:
+    """把要求实例序列化为提示中的JSON对象列表，完整保留数据合同字段。"""
+    return [
         {
             "id": occurrence.requirement_id,
             "job_id": occurrence.job_id,
@@ -345,8 +367,14 @@ def build_consolidation_user_prompt(
             "max_years": occurrence.requirement.max_years,
             "years_text": occurrence.requirement.years_text,
         }
-        for occurrence in consolidation_input.occurrences
+        for occurrence in occurrences
     ]
+
+
+def build_consolidation_user_prompt(
+    consolidation_input: RequirementConsolidationInput,
+) -> str:
+    """把要求实例列表序列化为归并调用输入，并说明期望的输出结构。"""
     payload = {
         "task": "请对以下要求实例执行跨JD原子要求归并，输出canonical_requirements、mappings和relations三个数组。",
         "output_schema": {
@@ -378,7 +406,108 @@ def build_consolidation_user_prompt(
                 }
             ],
         },
-        "requirements": instances,
+        "requirements": _serialize_occurrences(
+            consolidation_input.occurrences
+        ),
+    }
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def build_canonical_requirements_prompt(
+    consolidation_input: RequirementConsolidationInput,
+) -> str:
+    """构建只要求模型提出标准要求项的阶段提示，输出规模与实例数解耦。"""
+    payload = {
+        "task": (
+            "请仅根据每个实例提供的原始名称和证据判断哪些实例指向同一"
+            "招聘条件，并提出标准要求项。只输出canonical_requirements，"
+            "不要输出mappings和relations。"
+        ),
+        "output_schema": {
+            "canonical_requirements": [
+                {
+                    "canonical_requirement_id": "string，唯一标识",
+                    "canonical_name": "string，规范化后全局唯一",
+                    "rationale": "string",
+                    "confidence": "0到1",
+                }
+            ]
+        },
+        "requirements": _serialize_occurrences(
+            consolidation_input.occurrences
+        ),
+    }
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def build_mappings_prompt(
+    chunk_input: RequirementConsolidationInput,
+    canonical_requirements: list[CanonicalRequirement],
+) -> str:
+    """构建只要求模型输出本块实例映射的阶段提示，携带标准项清单供引用。"""
+    payload = {
+        "task": (
+            "请把每条要求实例映射到给定的标准要求项；证据不足的实例使用"
+            "unmapped，需要人工判断的使用review_required。只输出mappings，"
+            "不要输出canonical_requirements和relations。"
+        ),
+        "output_schema": {
+            "mappings": [
+                {
+                    "requirement_id": "int，本块输入实例的id",
+                    "status": "mapped|unmapped|review_required",
+                    "canonical_requirement_id": (
+                        "string或null，必须来自给定的标准要求项"
+                    ),
+                    "candidate_requirement_ids": ["string，review_required时使用"],
+                    "rationale": "string",
+                    "confidence": "0到1",
+                }
+            ]
+        },
+        "canonical_requirements": [
+            {
+                "canonical_requirement_id": item.canonical_requirement_id,
+                "canonical_name": item.canonical_name,
+            }
+            for item in canonical_requirements
+        ],
+        "requirements": _serialize_occurrences(chunk_input.occurrences),
+    }
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def build_relations_prompt(
+    consolidation_input: RequirementConsolidationInput,
+    canonical_requirements: list[CanonicalRequirement],
+) -> str:
+    """构建只要求模型生成标准要求项关系的阶段提示，输出规模与实例数解耦。"""
+    payload = {
+        "task": (
+            "请结合实例证据判断标准要求项之间的语义关系。只输出relations，"
+            "不要输出canonical_requirements和mappings。"
+        ),
+        "output_schema": {
+            "relations": [
+                {
+                    "source_requirement_id": "string",
+                    "target_requirement_id": "string",
+                    "relation_type": "is_a|part_of|related_to；同一无序项对只能选择一种",
+                    "rationale": "string",
+                    "confidence": "0到1",
+                }
+            ]
+        },
+        "canonical_requirements": [
+            {
+                "canonical_requirement_id": item.canonical_requirement_id,
+                "canonical_name": item.canonical_name,
+            }
+            for item in canonical_requirements
+        ],
+        "requirements": _serialize_occurrences(
+            consolidation_input.occurrences
+        ),
     }
     return json.dumps(payload, ensure_ascii=False)
 
@@ -396,27 +525,117 @@ def parse_consolidation_response(response_text: str) -> RequirementConsolidation
         raise ConsolidationError(f"模型输出不符合归并合同：{exc}") from exc
 
 
-def consolidate_with_correction(
+def _parse_json_object(response_text: str) -> dict[str, object]:
+    """把模型JSON文本解析为顶层JSON对象，并统一包装解析错误。"""
+    try:
+        payload = json.loads(response_text)
+    except json.JSONDecodeError as exc:
+        raise ConsolidationError(f"模型返回的内容不是合法JSON：{exc}") from exc
+    if not isinstance(payload, dict):
+        raise ConsolidationError("模型输出不符合归并合同：顶层必须是JSON对象")
+    return payload
+
+
+def parse_canonical_requirements_response(
+    response_text: str,
+) -> list[CanonicalRequirement]:
+    """解析标准项阶段响应，校验每条标准要求项符合合同结构。"""
+    payload = _parse_json_object(response_text)
+    items = payload.get("canonical_requirements")
+    if not isinstance(items, list) or not items:
+        raise ConsolidationError(
+            "模型输出不符合归并合同：缺少canonical_requirements"
+        )
+    try:
+        return [CanonicalRequirement.model_validate(item) for item in items]
+    except ValidationError as exc:
+        raise ConsolidationError(f"模型输出不符合归并合同：{exc}") from exc
+
+
+def parse_mappings_response(response_text: str) -> list[RequirementMapping]:
+    """解析映射阶段响应，校验每条映射符合合同结构。"""
+    payload = _parse_json_object(response_text)
+    items = payload.get("mappings")
+    if not isinstance(items, list):
+        raise ConsolidationError("模型输出不符合归并合同：缺少mappings")
+    normalized = []
+    for item in items:
+        if isinstance(item, dict) and item.get("candidate_requirement_ids") is None:
+            # 模型常用null表达"无候选"，与空列表语义等价；仅做表达规范化，
+            # review_required缺候选仍由合同校验拒绝。
+            item["candidate_requirement_ids"] = []
+        normalized.append(item)
+    try:
+        return [RequirementMapping.model_validate(item) for item in normalized]
+    except ValidationError as exc:
+        raise ConsolidationError(f"模型输出不符合归并合同：{exc}") from exc
+
+
+def parse_relations_response(response_text: str) -> list[RequirementRelation]:
+    """解析关系阶段响应，校验每条关系符合合同结构。"""
+    payload = _parse_json_object(response_text)
+    items = payload.get("relations")
+    if not isinstance(items, list):
+        raise ConsolidationError("模型输出不符合归并合同：缺少relations")
+    try:
+        return [RequirementRelation.model_validate(item) for item in items]
+    except ValidationError as exc:
+        raise ConsolidationError(f"模型输出不符合归并合同：{exc}") from exc
+
+
+def _chunk_consolidation_input(
     consolidation_input: RequirementConsolidationInput,
+    chunk_size: int,
+) -> list[RequirementConsolidationInput]:
+    """按固定上限把语料池切成互不重叠的映射输入块。"""
+    occurrences = consolidation_input.occurrences
+    return [
+        RequirementConsolidationInput(
+            occurrences=occurrences[start : start + chunk_size]
+        )
+        for start in range(0, len(occurrences), chunk_size)
+    ]
+
+
+def _validate_chunk_coverage(
+    chunk_input: RequirementConsolidationInput,
+    mappings: list[RequirementMapping],
+) -> None:
+    """确认映射块为本块每条实例且仅生成一条结果，缺漏可反馈模型修正。"""
+    expected_ids = {item.requirement_id for item in chunk_input.occurrences}
+    actual_ids = {mapping.requirement_id for mapping in mappings}
+    errors = []
+    missing_ids = sorted(expected_ids - actual_ids)
+    if missing_ids:
+        errors.append(f"遗漏要求实例：{missing_ids}")
+    unexpected_ids = sorted(actual_ids - expected_ids)
+    if unexpected_ids:
+        errors.append(f"包含未知要求实例：{unexpected_ids}")
+    if errors:
+        raise ConsolidationError("；".join(errors))
+
+
+T = TypeVar("T")
+
+
+def _retry_stage(
     client: ConsolidationClient,
-    system_prompt: str = CONSOLIDATION_SYSTEM_PROMPT,
-    max_attempts: int = 2,
-) -> tuple[RequirementConsolidationResult, dict[str, object]]:
-    """执行跨JD归并调用，并在JSON解析、合同校验或覆盖检查失败时有限重试。"""
+    system_prompt: str,
+    stage_name: str,
+    max_attempts: int,
+    build_prompt: Callable[[str | None], str],
+    parse: Callable[[str], T],
+) -> T:
+    """执行单个归并阶段，并在解析或校验失败时带修正提示有限重试。"""
     correction = None
     last_error: ConsolidationError | ValueError | None = None
 
     for _ in range(max_attempts):
-        prompt = build_consolidation_user_prompt(consolidation_input)
-        if correction is not None:
-            # 将校验错误反馈给下一次请求，让模型只修正具体结构或覆盖问题。
-            prompt = f"{prompt}\n\n【上次校验错误，请修正后重新输出】\n{correction}"
+        prompt = build_prompt(correction)
         response_text: str | None = None
         try:
             response_text = client.complete(system_prompt, prompt)
-            result = parse_consolidation_response(response_text)
-            validate_requirement_coverage(consolidation_input, result)
-            return result, result.model_dump(mode="json")
+            return parse(response_text)
         except (ConsolidationError, ValueError) as exc:
             last_error = exc
             # 只有模型已经返回但内容不合同时才把错误反馈给下一次提示；
@@ -424,8 +643,133 @@ def consolidate_with_correction(
             correction = None if response_text is None else str(exc)
 
     raise ConsolidationError(
-        f"经过{max_attempts}次尝试仍未通过归并校验：{last_error}"
+        f"经过{max_attempts}次尝试仍未通过归并校验"
+        f"（{stage_name}）：{last_error}"
     )
+
+
+def _with_correction_suffix(
+    prompt: str, correction: str | None
+) -> str:
+    """为阶段提示追加上次校验错误，供模型定向修正。"""
+    if correction is None:
+        return prompt
+    return f"{prompt}\n\n【上次校验错误，请修正后重新输出】\n{correction}"
+
+
+def _request_canonical_requirements(
+    consolidation_input: RequirementConsolidationInput,
+    client: ConsolidationClient,
+    system_prompt: str,
+    max_attempts: int,
+) -> list[CanonicalRequirement]:
+    """阶段1：请求模型基于全部实例提出标准要求项。"""
+    return _retry_stage(
+        client,
+        system_prompt,
+        "标准项生成",
+        max_attempts,
+        lambda correction: _with_correction_suffix(
+            build_canonical_requirements_prompt(consolidation_input), correction
+        ),
+        parse_canonical_requirements_response,
+    )
+
+
+def _request_mappings_for_chunk(
+    chunk_input: RequirementConsolidationInput,
+    canonical_requirements: list[CanonicalRequirement],
+    client: ConsolidationClient,
+    system_prompt: str,
+    max_attempts: int,
+) -> list[RequirementMapping]:
+    """请求模型输出单个映射块的结果，并校验本块实例恰好全部覆盖。"""
+    def parse_chunk_mappings(response_text: str) -> list[RequirementMapping]:
+        mappings = parse_mappings_response(response_text)
+        _validate_chunk_coverage(chunk_input, mappings)
+        return mappings
+
+    return _retry_stage(
+        client,
+        system_prompt,
+        "映射生成",
+        max_attempts,
+        lambda correction: _with_correction_suffix(
+            build_mappings_prompt(chunk_input, canonical_requirements), correction
+        ),
+        parse_chunk_mappings,
+    )
+
+
+def _request_relations(
+    consolidation_input: RequirementConsolidationInput,
+    canonical_requirements: list[CanonicalRequirement],
+    client: ConsolidationClient,
+    max_attempts: int,
+) -> list[RequirementRelation]:
+    """阶段3：请求模型基于全部实例证据生成标准要求项关系。
+
+    关系轮使用专用系统提示，聚焦关系判定并强化part_of优先与层级限制。
+    """
+    return _retry_stage(
+        client,
+        RELATION_SYSTEM_PROMPT,
+        "关系生成",
+        max_attempts,
+        lambda correction: _with_correction_suffix(
+            build_relations_prompt(consolidation_input, canonical_requirements),
+            correction,
+        ),
+        parse_relations_response,
+    )
+
+
+def consolidate_with_correction(
+    consolidation_input: RequirementConsolidationInput,
+    client: ConsolidationClient,
+    system_prompt: str = CONSOLIDATION_SYSTEM_PROMPT,
+    max_attempts: int = 2,
+    mapping_chunk_size: int = CONSOLIDATION_MAPPING_CHUNK_SIZE,
+) -> tuple[RequirementConsolidationResult, dict[str, object]]:
+    """分阶段执行跨JD归并，并在内存合成完整结果后统一校验。
+
+    阶段1提出标准要求项，阶段2按块完成实例映射，阶段3生成标准项关系；
+    每个阶段请求的输出规模都远离单次完整请求的截断边界。各阶段结果
+    先在内存合成为完整结果，再统一执行合同、冲突、完整覆盖和关系图
+    校验，成功后返回；任何阶段失败都不产生可持久化的部分批次。
+    """
+    if mapping_chunk_size <= 0:
+        raise ValueError("mapping_chunk_size必须大于0")
+
+    canonical_requirements = _request_canonical_requirements(
+        consolidation_input, client, system_prompt, max_attempts
+    )
+    mappings: list[RequirementMapping] = []
+    for chunk in _chunk_consolidation_input(
+        consolidation_input, mapping_chunk_size
+    ):
+        mappings.extend(
+            _request_mappings_for_chunk(
+                chunk, canonical_requirements, client, system_prompt, max_attempts
+            )
+        )
+    relations = _request_relations(
+        consolidation_input,
+        canonical_requirements,
+        client,
+        max_attempts,
+    )
+
+    try:
+        result = RequirementConsolidationResult(
+            canonical_requirements=canonical_requirements,
+            mappings=mappings,
+            relations=relations,
+        )
+        validate_requirement_coverage(consolidation_input, result)
+    except ValueError as exc:
+        raise ConsolidationError(f"模型输出不符合归并合同：{exc}") from exc
+    return result, result.model_dump(mode="json")
 
 
 @dataclass
@@ -541,12 +885,15 @@ def consolidate_requirements(
     max_attempts: int = 2,
     job_ids: set[int] | None = None,
     extractor_version: str | None = None,
+    mapping_chunk_size: int = CONSOLIDATION_MAPPING_CHUNK_SIZE,
 ) -> ConsolidationSummary:
     """对选定JD范围执行一次跨JD归并并幂等持久化，失败隔离不中断。
 
-    当前语料规模（约150条实例）已验证可单次调用完成，不做分批；
-    批次边界待P0-8数据扩充后再评估。同范围同归并器版本已有结果时
-    跳过模型调用并计入skipped。
+    模型调用采用分阶段/受控分块输出边界：标准项生成、按块映射和关系
+    生成分多轮请求，各阶段先在内存合成完整结果并统一执行合同、冲突、
+    完整覆盖和关系图校验，通过后一次性原子持久化；任一阶段失败不写入
+    部分批次。同范围同归并器版本同输入指纹已有结果时跳过模型调用并
+    计入skipped。
     """
     scope = scope_key_for(job_ids)
     summary = ConsolidationSummary()
@@ -585,7 +932,10 @@ def consolidate_requirements(
 
     try:
         result, raw_response = consolidate_with_correction(
-            pool, client, max_attempts=max_attempts
+            pool,
+            client,
+            max_attempts=max_attempts,
+            mapping_chunk_size=mapping_chunk_size,
         )
     except (ConsolidationError, ValueError) as exc:
         summary.errors.append(ConsolidationFailure(scope, str(exc)))
