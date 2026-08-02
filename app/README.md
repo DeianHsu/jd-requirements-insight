@@ -35,6 +35,4 @@ Markdown JD
   → 指定批次与人工标准答案离线分层评测
 ```
 
-## 维护要求
-
-新增或修改本目录代码文件时，必须同步更新上面的文件职责和数据流说明。
+代码质量与文档维护规则集中在[代码质量规则](../docs/rules/code-quality.md)和[文档规则](../docs/rules/documentation.md)。

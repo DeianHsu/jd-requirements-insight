@@ -22,9 +22,4 @@
 | `test_extraction_two_stage.py` | P0-3两段式实验的中间合同、唯一覆盖、证据与重试行为。 |
 | `test_experiment_scripts.py` | 实验脚本的导入安全、私有输出路径和真实调用显式确认。 |
 
-## 测试原则
-
-- 每个测试只验证一个清晰行为；
-- 数据库测试使用 `tmp_path` 隔离，避免污染 `data/jd_skill_insight.db`；
-- 修复缺陷时应先增加能够复现问题的测试；
-- 新增功能代码文件时，应同步增加或更新对应测试，并维护本README。
+测试分级、隔离和验证要求集中在[测试规则](../docs/rules/testing.md)。

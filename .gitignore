@@ -2,9 +2,6 @@
 .uv-python/
 .uv-cache*/
 .env
-docs/PROJECT_PLAN.md
-docs/DECISIONS.md
-docs/CONTEXT_ROUTING.md
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -24,7 +21,8 @@ data/golden/jd_extractions/*
 data/private/
 
 # 本地生成的分析报告不默认上传。
-reports/
+reports/*
+!reports/README.md
 
 # Reasonix本地会话、记忆与配置，不上传
 .reasonix/

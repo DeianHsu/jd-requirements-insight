@@ -26,5 +26,6 @@ python -m scripts.experiments.p0_3.evaluate_two_stage_results
 ```
 
 - 参数：`--use-project-database` 与 `--database-url` 必须二选一；`--job-id` 可重复、缺省为全部JD；真实调用必须 `--execute`。
-- 默认原始结果写入`data/private/experiments/p0_3/`，默认评测报告写入`reports/experiments/p0_3/`。
-- 实验版本号在`app/extraction_two_stage.py`的`TWO_STAGE_PROMPT_VERSION`（当前v0.6）；判断段Prompt规则修改后必须同步版本号，并在`reports/P0_3_TWO_STAGE_EXPERIMENT.md`记录版本、范围、指标与失败原因。
+- 默认原始结果写入`data/private/experiments/p0_3/`，脚本当前生成的本地评测草稿写入`reports/experiments/p0_3/`。
+- 脱敏后的P0-3详细分析统一整理到`reports/P0-3/`；当前两段式实验主报告为`reports/P0-3/two-stage-experiment.md`。
+- 实验版本号位于`app/extraction_two_stage.py`的`TWO_STAGE_PROMPT_VERSION`（当前v0.6）。

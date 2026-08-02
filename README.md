@@ -6,7 +6,7 @@
 
 ## 当前状态
 
-已实现Markdown JD校验、SQLite导入、内容哈希去重、JD结构化抽取和跨JD原子要求归并的基础链路。当前抽取数据合同V2与正式Prompt V2.3.1已经完成5份真实JD抽取；P0-3的两段式抽取仍是未接入正式流程的归档实验。P0-4已经完成输入版本身份、语料范围完整性、SQLite外键、关系Precision/Recall/F1和关系图冲突的确定性修复，Prompt v1.7小规模真实验证达到预设指标，但连续3次正式完整验收均未形成批次，现已暂停修复，不能作为下游统计的稳定数据源。
+已实现Markdown JD校验、SQLite导入、内容哈希去重、JD结构化抽取和跨JD原子要求归并的基础链路。当前抽取数据合同V2与正式Prompt V2.3.1已经完成5份真实JD抽取；P0-3两段式v0.6是尚未接入正式流程的候选实现，仍需未见验证集验收。P0-4已经完成输入版本身份、语料范围完整性、SQLite外键、关系Precision/Recall/F1和关系图冲突的确定性修复，Prompt v1.7小规模真实验证达到预设指标，但连续3次正式完整验收均未形成批次，现已暂停修复，不能作为下游统计的稳定数据源。
 
 ## 环境
 
@@ -104,10 +104,13 @@ python -m app.cli evaluate-consolidation <consolidation_cases.json> `
 
 ## 实验性脚本
 
-开发期实验和临时验收脚本统一放在`scripts/experiments/p0_x/`，不得放在项目根目录。脚本以`python -m ...`运行；真实外部调用必须显式传入`--execute`并选择数据库目标。目录和输出规则见[scripts/experiments/README.md](scripts/experiments/README.md)。
+开发期实验和临时验收脚本位于`scripts/experiments/p0_x/`，并以`python -m ...`运行；真实外部调用使用`--execute`并选择数据库目标。目录和输出说明见[scripts/experiments/README.md](scripts/experiments/README.md)。
 
 ## 方法文档
 
 - [全项目术语词典](docs/GLOSSARY.md)：统一数据单位、抽取数据合同、评测、要求归并和公共CLI的固定含义。
 - [人工标注规范](docs/annotation/README.md)：按职责、要求和数据集评测三个主题提供规则入口。
-- [DeepSeek冷启动续开发指南](docs/DEEPSEEK_CONTINUATION.md)：在无历史聊天上下文时恢复Codex对P0-3/P0-4的审计补充、实验结论、后续步骤和验收边界。
+- [项目路线图](docs/PROJECT_PLAN.md)：P0功能范围、硬依赖、验收输入和当前状态。
+- [项目决策](docs/DECISIONS.md)：长期产品与技术选择的理由和复审条件。
+- [Design](docs/design/README.md)、[Develop](docs/develop/README.md)、[Review](docs/review/README.md)：按P0查看目标、实际实现和验收结果。
+- [实验报告](reports/README.md)：详细实验材料的分组与隐私边界。
