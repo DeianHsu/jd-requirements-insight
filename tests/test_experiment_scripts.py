@@ -5,8 +5,63 @@ from pathlib import Path
 
 import pytest
 
+from app.schemas import (
+    JobExtractionResult,
+    RequirementCategory,
+    RequirementImportance,
+    RequirementItem,
+    RoleFamily,
+    Seniority,
+)
 from scripts.experiments.p0_3 import evaluate_two_stage_results
 from scripts.experiments.p0_3 import run_two_stage_extraction
+
+VALIDATION_CASE = {
+    "case_id": "case_test_001",
+    "dataset_split": "validation",
+    "source_file": "jd_test.md",
+    "sentence": "需要熟悉Python与Go语言",
+    "annotation_target": "requirements",
+    "expected": {
+        "requirements": [
+            {
+                "raw_name": "Python",
+                "category": "programming_language",
+                "importance": "must",
+                "evidence": "需要熟悉Python与Go语言",
+                "confidence": 1.0,
+            },
+            {
+                "raw_name": "Go",
+                "category": "programming_language",
+                "importance": "must",
+                "evidence": "需要熟悉Python与Go语言",
+                "confidence": 1.0,
+            },
+        ]
+    },
+}
+
+
+def _prediction(
+    names: list[str],
+) -> JobExtractionResult:
+    """按给定要求名称构造最小合法的两段式预测结果。"""
+    return JobExtractionResult(
+        role_family=RoleFamily.LLM_APPLICATION,
+        seniority=Seniority.MID,
+        responsibilities=[],
+        requirements=[
+            RequirementItem(
+                raw_name=name,
+                category=RequirementCategory.PROGRAMMING_LANGUAGE,
+                importance=RequirementImportance.MUST,
+                evidence="需要熟悉Python与Go语言",
+                confidence=1.0,
+            )
+            for name in names
+        ],
+    )
 
 
 def test_two_stage_experiment_requires_explicit_execute(
@@ -59,3 +114,42 @@ def test_two_stage_run_supports_job_id_selection(monkeypatch) -> None:
         ["run_two_stage_extraction", "--use-project-database"],
     )
     assert run_two_stage_extraction.parse_args().job_id is None
+
+
+def test_two_stage_evaluation_covers_all_splits() -> None:
+    """验证离线评测报告覆盖开发、回归和未见验证三个数据分组。"""
+    report = evaluate_two_stage_results.build_report(
+        {"cases": [VALIDATION_CASE]},
+        {"jd_test.md": _prediction(["Python", "Go"])},
+    )
+    for split in ("development", "regression", "validation"):
+        assert f"## {split}" in report
+    assert "## V2.3.1 基线对比" in report
+
+
+def test_two_stage_evaluation_reports_failures_without_private_names() -> None:
+    """验证失败案例表只输出case_id与计数，不复制私有名称内容。"""
+    report = evaluate_two_stage_results.build_report(
+        {"cases": [VALIDATION_CASE]},
+        {"jd_test.md": _prediction(["Python"])},
+    )
+    assert "| case_test_001 | requirements | 2 | 1 | 否 | 1 | 0 | - |" in report
+    assert "Python" not in report
+    assert "Go" not in report
+
+
+def test_two_stage_evaluation_marks_missing_prediction_source() -> None:
+    """验证预测缺失来源的case在失败案例表中标记为缺失来源。"""
+    report = evaluate_two_stage_results.build_report(
+        {"cases": [VALIDATION_CASE]}, {}
+    )
+    assert "| case_test_001 | requirements | - | - | 否 | - | - | 缺失来源 |" in report
+
+
+def test_two_stage_evaluation_omits_fully_matched_cases() -> None:
+    """验证全部匹配的case不出现在失败案例表中。"""
+    report = evaluate_two_stage_results.build_report(
+        {"cases": [VALIDATION_CASE]},
+        {"jd_test.md": _prediction(["Python", "Go"])},
+    )
+    assert "case_test_001" not in report.split("### validation")[1]
