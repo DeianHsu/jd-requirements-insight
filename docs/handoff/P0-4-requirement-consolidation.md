@@ -4,8 +4,8 @@
 p0_id: "P0-4"
 plan_item: "跨JD原子要求归并与映射"
 status: "partial"
-baseline_commit: "e1a89f1"
-verified_revision: "development fixes based on e1a89f1"
+baseline_commit: "78facdd"
+verified_revision: "working tree based on 78facdd"
 related_decisions: ["DEC-009", "DEC-018", "DEC-019"]
 glossary_terms: ["要求实例", "标准要求项", "要求归并", "要求映射", "要求关系", "归并输入指纹"]
 depends_on: ["P0-1", "P0-3", "P0-5"]

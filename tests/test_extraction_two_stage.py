@@ -127,7 +127,7 @@ def test_split_sentences_is_deterministic() -> None:
 
 def test_two_stage_prompts_are_domain_agnostic() -> None:
     """验证两段Prompt不绑定任何具体领域技能。"""
-    assert TWO_STAGE_PROMPT_VERSION == "0.5"
+    assert TWO_STAGE_PROMPT_VERSION == "0.6"
     for domain_word in ("Python", "RAG", "LangChain", "Agent", "大模型", "AI"):
         assert domain_word not in DISCOVERY_SYSTEM_PROMPT
         assert domain_word not in JUDGE_SYSTEM_PROMPT

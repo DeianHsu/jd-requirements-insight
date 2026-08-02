@@ -37,6 +37,12 @@ def parse_args() -> argparse.Namespace:
         help="显式指定实验数据库URL，建议使用临时SQLite副本",
     )
     parser.add_argument(
+        "--job-id",
+        type=int,
+        action="append",
+        help="只处理指定JD id（可重复），缺省处理全部JD",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         default=DEFAULT_OUTPUT_PATH,
@@ -67,15 +73,18 @@ def main() -> None:
         initialize_database(engine)
         session_factory = create_session_factory(engine)
         with session_factory() as session:
-            jobs = list(
-                session.scalars(
-                    select(JobDescription).order_by(JobDescription.id)
+            jobs_query = select(JobDescription).order_by(JobDescription.id)
+            if args.job_id:
+                jobs_query = jobs_query.where(
+                    JobDescription.id.in_(args.job_id)
                 )
-            )
+            jobs = list(session.scalars(jobs_query))
 
         target = "项目默认数据库" if args.use_project_database else "自定义数据库"
+        job_scope = args.job_id or "全部"
         print(
-            f"实验确认: database={target} jobs={len(jobs)} model={settings.model}",
+            f"实验确认: database={target} jobs={job_scope} "
+            f"model={settings.model}",
             flush=True,
         )
         client = OpenAICompatibleExtractionClient(settings)

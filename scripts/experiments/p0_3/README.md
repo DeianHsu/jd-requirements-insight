@@ -17,8 +17,14 @@
 python -m scripts.experiments.p0_3.run_two_stage_extraction `
   --use-project-database --execute
 
+# 只处理单份JD（可重复指定），用于单份先验证
+python -m scripts.experiments.p0_3.run_two_stage_extraction `
+  --use-project-database --job-id 1 --execute
+
 # 离线评测，不产生模型费用
 python -m scripts.experiments.p0_3.evaluate_two_stage_results
 ```
 
-默认原始结果写入`data/private/experiments/p0_3/`，默认评测报告写入`reports/experiments/p0_3/`。
+- 参数：`--use-project-database` 与 `--database-url` 必须二选一；`--job-id` 可重复、缺省为全部JD；真实调用必须 `--execute`。
+- 默认原始结果写入`data/private/experiments/p0_3/`，默认评测报告写入`reports/experiments/p0_3/`。
+- 实验版本号在`app/extraction_two_stage.py`的`TWO_STAGE_PROMPT_VERSION`（当前v0.6）；判断段Prompt规则修改后必须同步版本号，并在`reports/P0_3_TWO_STAGE_EXPERIMENT.md`记录版本、范围、指标与失败原因。

@@ -34,3 +34,28 @@ def test_experiment_defaults_keep_raw_results_private() -> None:
     assert evaluate_two_stage_results.DEFAULT_OUTPUT_PATH.is_relative_to(
         Path("reports/experiments")
     )
+
+
+def test_two_stage_run_supports_job_id_selection(monkeypatch) -> None:
+    """验证--job-id可重复指定并限制实验范围，缺省为空代表全部JD。"""
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_two_stage_extraction",
+            "--use-project-database",
+            "--job-id",
+            "1",
+            "--job-id",
+            "3",
+        ],
+    )
+    args = run_two_stage_extraction.parse_args()
+    assert args.job_id == [1, 3]
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_two_stage_extraction", "--use-project-database"],
+    )
+    assert run_two_stage_extraction.parse_args().job_id is None
