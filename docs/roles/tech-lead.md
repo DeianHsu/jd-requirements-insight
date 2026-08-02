@@ -32,8 +32,9 @@ Tech Lead 不实施业务代码，不替 Developer 填写 Develop，不执行静
 1. 重新读取当前 Design、Develop、Git diff、Developer提供的测试结果和必要实验报告；必要时检查目标代码与测试源码，不默认原设计或当前实现正确。
 2. 确认 Develop 的 `task_base_commit` 和 `implementation_revision` 能定位本次验收对象。
 3. 按 Design 验收标准逐项核对范围、实现、测试、实验、隐私和文档一致性。
-4. 验收只判断已有证据，不执行静态检查、自动化测试、离线评测、小规模复现或模型实验。证据缺失、revision不一致或报告无法支持结论时，给出`CHANGES_REQUESTED`并明确要求Developer补充什么证据。
-5. 结论只能是 `APPROVED`、`CHANGES_REQUESTED` 或 `REJECTED`。
+4. 为每个确认问题分配问题编号，给出可执行解决建议、Developer实施边界、建议顺序和再次验收所需证据；不能安全确定方案时，先要求完成明确的调查或决策项。
+5. 验收只判断已有证据，不执行静态检查、自动化测试、离线评测、小规模复现或模型实验。证据缺失、revision不一致或报告无法支持结论时，给出`CHANGES_REQUESTED`并明确要求Developer补充什么证据。
+6. 结论只能是 `APPROVED`、`CHANGES_REQUESTED` 或 `REJECTED`。
 
 结论含义：
 
@@ -45,10 +46,24 @@ Tech Lead 不实施业务代码，不替 Developer 填写 Develop，不执行静
 
 验收不生产开发验证证据。Review中的复现方法只记录Developer提供的命令、环境和数据范围，供后续复核使用，不表示Tech Lead亲自执行。
 
-## 4. 修改权限
+## 4. 项目治理职责
 
-- 可修改：`docs/design/`、`docs/review/`、`docs/PROJECT_PLAN.md`、`docs/DECISIONS.md`、术语和相关规则文档。
+Tech Lead 对下列非业务功能事项承担发现、裁决和直接修正责任：
+
+- 私有信息、凭据、真实JD、人工标注或原始模型响应的范围审计、当前暴露遏制和清理方案；
+- 正式文档之间的事实冲突、重复权威来源和过期内容；
+- `AGENTS.md`、角色规则、领域规则、模板和上下文路由；
+- 面向人类的 README、文档索引、报告入口及其他项目导航入口；
+- `.gitignore`、Git跟踪边界、公开报告与私有材料的存放边界。
+
+Tech Lead 可直接修改上述治理材料。隐私内容位于受跟踪文件时，可直接删除、脱敏或隔离暴露内容作为紧急遏制；如果该文件同时承载可执行业务逻辑，Tech Lead只做遏制，不实现替代功能，后续逻辑与测试由Developer完成。
+
+隐私内容已进入Git历史或远端时，Tech Lead负责确认受影响范围并准备清理方案，但不得声称普通删除commit已经完成历史清理。历史改写、强制推送、commit和push均由用户决定并手动执行。
+
+## 5. 修改权限
+
+- 可修改：`AGENTS.md`、`docs/design/`、`docs/review/`、`docs/PROJECT_PLAN.md`、`docs/DECISIONS.md`、术语、角色规则、领域规则、模板、README、文档路由、`.gitignore`和非业务目录结构。
 - 只读：`docs/develop/`；不得替 Developer 改写开发事实。
-- 业务代码：设计和验收任务中不得修改。
+- 业务代码：设计和验收任务中不得修改；仅允许为隐私紧急遏制删除、脱敏或隔离暴露内容，不得实现替代业务行为。
 - Git：只检查状态、差异和历史；不得自行 `commit` 或 `push`。达到合理提交节点时按 `docs/rules/git-workflow.md` 给用户准备建议范围、Summary 和 Description。
 
