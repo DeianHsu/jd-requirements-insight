@@ -132,10 +132,14 @@ def show_jds() -> None:
 
 @cli.command("validate-golden")
 def validate_golden(
-    golden_directory: Path = typer.Argument(..., help="人工标准答案JSON所在目录"),
+    golden_directory: Path = typer.Argument(..., help="人工标准答案JSON所在目录（legacy Gold 数据）"),
     raw_jd_directory: Path = typer.Argument(..., help="原始Markdown JD所在目录"),
 ) -> None:
-    """验证人工标准答案的抽取数据合同、来源文件和原文证据是否有效。"""
+    """[legacy] 验证人工标准答案的抽取数据合同、来源文件和原文证据是否有效。
+
+    legacy protocol（DEC-015）：仅用于历史数据管理与案例分析，不属于
+    当前正式验收。
+    """
     summary = validate_golden_directory(golden_directory, raw_jd_directory)
     console.print(f"发现 [bold]{summary.discovered}[/bold] 个人工标准答案文件")
     console.print(f"校验通过 [green]{summary.valid}[/green]")
@@ -398,9 +402,13 @@ def show_extractions() -> None:
 
 @cli.command("evaluate-extractions")
 def evaluate_extractions(
-    golden_directory: Path = typer.Argument(..., help="人工标准答案JSON所在目录"),
+    golden_directory: Path = typer.Argument(..., help="人工标准答案JSON所在目录（legacy Gold 数据）"),
 ) -> None:
-    """把数据库中每份JD的最新抽取结果与人工标准答案进行对比评测。"""
+    """[legacy] 把数据库中每份JD的最新抽取结果与人工标准答案进行对比评测。
+
+    legacy protocol（DEC-015）：仅用于历史比较和案例分析，不属于当前
+    正式验收，不得用于批准新的 Prompt。
+    """
     engine, session_factory = database_resources()
     try:
         persisted = list_extractions(session_factory)
@@ -439,8 +447,8 @@ def evaluate_extractions(
 
 @cli.command("evaluate-cases")
 def evaluate_cases(
-    cases_file: Path = typer.Argument(..., help="困难样例annotation_cases.json路径"),
-    prompt_version: str = typer.Option(..., "--prompt-version", help="待评测Prompt版本"),
+    cases_file: Path = typer.Argument(..., help="困难样例annotation_cases.json路径（legacy Gold 数据）"),
+    prompt_version: str = typer.Option(..., "--prompt-version", help="待评测Prompt版本（历史版本）"),
     schema_version: str = typer.Option("2.0", "--schema-version"),
     model_name: str | None = typer.Option(None, "--model", help="待评测模型名称"),
     dataset_split: str | None = typer.Option(
@@ -450,7 +458,12 @@ def evaluate_cases(
         10, "--max-issues", min=0, help="最多显示的错误摘要条数"
     ),
 ) -> None:
-    """对指定抽取版本运行困难样例的原子项和字段级分层评测。"""
+    """[legacy] 对指定抽取版本运行困难样例的原子项和字段级分层评测。
+
+    legacy protocol：仅用于历史比较和案例分析，不属于当前正式验收
+    （DEC-015），不得用于批准新的 Prompt。当前正式验收见
+    scripts/experiments/p0_3/run_acceptance.py。
+    """
     engine, session_factory = database_resources()
     try:
         persisted = list_extractions(session_factory)

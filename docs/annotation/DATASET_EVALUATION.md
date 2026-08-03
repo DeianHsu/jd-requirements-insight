@@ -1,18 +1,19 @@
-# 证据、人工标准答案与评测规范
+# 证据、规则场景与抽取验证协议
 
-> 只在处理证据、人工样例、数据集划分或评测指标时读取本文。
+> 只在处理证据、规则场景、变形测试、多次运行稳定性或人工违规审计时读取本文。
+> 方法依据：`docs/DECISIONS.md` DEC-015（抽取层取消完整人工 Gold）。
 
-## 1. 证据规则
+## 1. 证据规则（EVID）
 
 每条证据必须：
 
-1. 是JD中的连续原文；
-2. 足以支持职责或要求名称；
-3. 足以支持重要程度、熟练度和年限判断；
-4. 尽量是最短但信息完整的片段；
-5. 不得改写、概括或拼接不连续文本。
+1. 是 JD 中的连续原文（`EVID-01`）；
+2. 足以支持职责或要求名称（`EVID-02`）；
+3. 足以支持重要程度、熟练度和年限判断（`EVID-02`）；
+4. 尽量是最短但信息完整的片段（`EVID-01`）；
+5. 不得改写、概括或拼接不连续文本（`EVID-01`）。
 
-多个原子项可以共享同一句证据。
+多个原子项可以共享同一句证据（`EVID-03`）。
 
 ```text
 熟悉LangChain，有RAG项目经验者优先。
@@ -25,71 +26,104 @@ LangChain → 熟悉LangChain
 RAG       → 有RAG项目经验者优先
 ```
 
-只引用`RAG`不足以支持`preferred`判断。
+只引用 `RAG` 不足以支持 `preferred` 判断。
 
-## 2. 人工标注流程
+**证据存在性 ≠ 证据支持性（`EVID-04`）**：自动校验只能确认证据文本存在于原文（证据存在性）；证据是否确实足以支持名称和字段判断（证据支持性）仍需人工复核。
 
-1. 区分职责、任职要求、加分项和公司介绍；
-2. 按职责规范提取可独立验收的工作；
-3. 找出全部候选要求；
-4. 按要求规范进行原子化和逻辑组标注；
-5. 标注类别、重要程度、熟练度和年限；
-6. 复制最小充分的连续证据；
-7. 检查漏拆、多拆、错误合并和无依据推断；
-8. 通过Pydantic结构校验和证据存在性校验。
+## 2. 抽取验证协议总览
 
-职责规则见[RESPONSIBILITIES.md](RESPONSIBILITIES.md)，要求规则见[REQUIREMENTS.md](REQUIREMENTS.md)。
+验证材料分为六类，用途和地位各不相同：
 
-## 3. 人工标准答案
+| 类别 | 是什么 | 地位 | 存放位置 |
+|---|---|---|---|
+| legacy Gold 数据 | 旧人工完整标注（`annotation_cases.json`）与 F1 报告 | 历史材料，不属于当前正式验收；不得用于批准新 Prompt | `data/private/`（本地私有） |
+| 确定性测试 expected output | 测试解析器、Schema、证据校验等确定性代码时使用的完整精确期望输出 | 正式（仅限确定性代码） | `tests/` 内嵌或 fixture |
+| 规则场景 | 领域中性的基础输入 + 变换 + 期望属性（不保存完整 expected extraction） | 正式 | `data/rule_scenarios/` |
+| 变形测试 | 对同一基础输入应用确定性变换后比较两次抽取 | 正式（hard gate 依据） | `data/rule_scenarios/` + 验收脚本 |
+| 多次运行稳定性 | 相同输入独立运行 ≥3 次，比较候选块与原子事实漂移 | 正式（第一版为 warning，阈值待用户裁决） | 验收脚本 |
+| 人工违规审计 | 按规则 ID 检查输出是否违规、证据是否支持结论 | 正式（人工职责） | 审计报告 |
 
-- 每条人工标准答案必须通过Pydantic校验；
-- 每条证据必须存在于对应JD原文；
-- 人工确认后的`confidence`统一为`1.0`；
-- 有争议的标注记录判断理由，不修改答案迎合模型；
-- 真实JD和人工标准答案只保存在本地，不上传公开仓库。
+**只有测试解析器、Schema、证据校验等确定性代码时，才允许完整精确 expected output。** 规则场景不得保存完整 expected extraction，模型验收不读取人工完整答案决定通过或失败。
 
-## 4. 开发集、回归集与验证集
+## 3. 人工违规审计
 
-- 用于调整Prompt、抽取数据合同或规则的样例标记为开发集（`development`）；
-- 已经暴露给设计或调参过程、保留下来检查已知能力是否回退的样例标记为回归集（`regression`）；
-- 已经用于调参的样例不能事后改名为验证集；
-- 验证集（`validation`）必须按预先确定的规则选择，不能根据模型表现挑选；
-- 验证集在人工批准后冻结，只用于报告泛化结果；
-- 如果根据验证集错误修改Prompt，该批数据不再承担下一轮正式验证职责，必须另建未见样例。
+人工审计不再对照唯一完整 JSON 答案，而是按规则 ID 检查输出是否违反规则（规则见 [README.md](README.md) 规则 ID 总表）。审计记录格式：
 
-具体样例数量、`split`和审核状态以本地`annotation_cases.json`为准，避免在多份文档中重复维护易变化的项目状态。
-
-## 5. 分层评测
-
-不能用一个总分代表系统质量。至少分别检查：
-
-| 层级 | 指标或检查方式 |
+| 字段 | 含义 |
 |---|---|
-| 要求和职责发现 | 名称代理Precision、Recall、F1 |
-| 原子化 | 样例预测数量与期望数量是否一致 |
-| 逻辑组 | `any_of`组完整性 |
-| 字段 | category、importance、proficiency、年限准确率 |
-| 证据存在性 | 自动原文包含校验；聚合后报告证据存在率 |
-| 证据支持性和最小性 | 人工复核；聚合后报告证据支持率 |
+| `rule_id` | 被违反或被检查的规则 ID |
+| `violation` | 违规描述 |
+| `severity` | 严重度（如 high / medium / low） |
+| `evidence` | 定位到原文或输出的证据 |
+| `reason` | 判断理由 |
+| `recommended_action` | 建议动作（改规则 / 改 Prompt / 改代码 / 接受合理差异） |
 
-名称代理指标先用证据包含关系定位句内输出，再使用保留专有英文技术词边界的确定性相似度一对一匹配。它只用于稳定比较版本，不能替代人工语义判断。
+人工职责：检查规则是否合理、审计是否违反规则、检查证据支持性、记录风险类型和严重度、决定应修改规则、Prompt、代码还是接受合理差异。不得因为模型输出与某个人工答案不同就修改 Prompt。
 
-无适用样本的指标必须显示`N/A`，不能显示为0%。
+## 4. 规则场景与变形测试
 
-## 6. 运行方式
+规则场景文件（`data/rule_scenarios/extraction_metamorphic_cases.json`）每个场景至少包含：
 
-```powershell
-python -m app.cli evaluate-cases <annotation_cases.json> `
-  --prompt-version 2.3.1 `
-  --schema-version 2.0 `
-  --model <模型名称> `
-  --split development
-```
+| 字段 | 含义 |
+|---|---|
+| `scenario_id` | 稳定场景 ID |
+| `rule_ids` | 场景检查的规则 ID 列表 |
+| `base_input` | 领域中性基础输入（合成 JD 文本，不含真实 JD 内容） |
+| `transformation` | 确定性文本变换（如格式变化、加无关段落、措辞变化） |
+| `expected_properties` | 变换后必须保持的属性（如事实集保留、字段不变性） |
+| `forbidden_violations` | 禁止出现的违规（引用规则 ID，人工审计复核） |
+| `severity` | 场景严重度 |
 
-评测真实验证集时把`--split`改为`validation`。
+场景类别至少覆盖：
 
-## 7. 当前限制
+1. 项目符号、编号、空格和换行变化（格式不变性）；
+2. 互不相关段落顺序变化（顺序不变性）；
+3. 增加福利、地址、公司介绍等无关内容（无关输入隔离）；
+4. 精确重复条件（不产生新事实）；
+5. “熟悉”改为“精通”（显式字段变化只影响目标字段）；
+6. 普通要求改为“优先”（`FIELD-02`）；
+7. “和”改为明确“至少一种”（`GROUP-01`）；
+8. Python、LangChain 等替换为技术甲、框架乙（改名不变性）；
+9. 将一句拆成两句（原子事实不丢失）；
+10. 加入相关但没有明确要求的技术，禁止补充成条件（`REQ-06`）。
 
-- 验证集已按预定义规则选取并经人工批准冻结（10 条样例，`split_status=approved_frozen`）；冻结前草案结果不作为正式验收证据；
-- 证据存在率不等于证据边界最小或真正支持结论，证据支持性仍需人工复核；
-- 跨 JD 原子要求归并判定由模型自主提出，不设人工金标准；来源无法确认的旧评测夹具（`data/consolidation_cases.json`）已删除；验收以合同 + 完整覆盖 + 变形测试 + 多次运行稳定性 + 关系图稀疏度 + 下游统计不变性为准（DEC-012/DEC-013），真实模型验收尚未运行。
+三种使用方式：
+
+- **deterministic fixture**：单元测试用假客户端或手工构造结果验证检查器逻辑，不调用真实模型；
+- **model metamorphic experiment**：真实验收（`--execute`）对基础输入与变换输入各抽取一次并比较；
+- **human audit scenario**：人工按 `forbidden_violations` 复核输出是否违反规则。
+
+## 5. 多次运行稳定性
+
+相同输入（固定模型、Prompt 版本、Schema 版本、输入指纹、temperature）独立运行至少 3 次，以候选块为锚点比较：
+
+- discovery kind agreement；
+- candidate block alignment rate；
+- atomic item count agreement；
+- evidence span agreement；
+- category / importance / proficiency / group logic agreement；
+- unmatched item count 与 drifted block identifiers。
+
+第一版多次运行 agreement 作为 warning 报告实际基线，不预设迎合当前模型的阈值；阈值待用户裁决后生效。
+
+## 6. 抽取验收分级
+
+验收报告分为三档：
+
+| 档位 | 含义 | 示例 |
+|---|---|---|
+| hard gates | 必须全部通过 | Schema 违规 0、证据违规 0、discovery 覆盖 100%、重复覆盖 0、judge 候选覆盖 100%、非法逻辑组 0、无依据明确事实 0、版本身份完整、格式变换无实质事实丢失、无关输入不改变原有候选块和原子事实 |
+| warnings | 记录但不作否决 | 多次运行 agreement、数量漂移、名称漂移 |
+| diagnostics | 仅供分析 | 名称相似度、逐场景明细 |
+
+名称相似度只能作为 diagnostic，不得成为唯一 hard gate；不得调用另一个 LLM 作为比较器。验收报告必须记录 model、prompt version、schema version、input fingerprint、run identifier 和 timestamp，且不得输出完整私有 JD。
+
+## 7. legacy Gold 数据
+
+- 旧 `annotation_cases.json`（development/regression/validation 分组）标记为 `protocol = legacy_gold`、`status = historical`、`official_gate = false`；
+- 旧 `evaluate-cases` 命令和相关实验脚本标记为 legacy：命令仍可复现历史结果，但 CLI 帮助与文档明确其不属于当前正式验收、不得用于批准新的 Prompt，只用于历史比较和案例分析；
+- 旧 F1 数字不得删除，统一标记为 legacy protocol 结果。
+
+## 8. 确定性代码的 expected output
+
+对解析器、Schema 校验、证据校验、覆盖检查、运行间比较等确定性代码，单元测试必须使用完整精确的 expected output（如 `JobExtractionResult`、`DiscoveryResult` 的期望值），与规则场景（不保存完整 expected extraction）严格区分。

@@ -1,4 +1,9 @@
-"""该模块离线评测P0-3两段式抽取结果，并生成开发集、回归集与验证集对照报告。"""
+"""[legacy] 该模块离线评测P0-3两段式抽取结果，并生成开发集、回归集与验证集对照报告。
+
+legacy protocol（DEC-015）：仅用于历史比较和案例分析，不属于当前正式
+验收，不得用于批准新的 Prompt。当前正式验收见
+scripts/experiments/p0_3/run_acceptance.py。
+"""
 
 from __future__ import annotations
 
