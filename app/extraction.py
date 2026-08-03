@@ -29,6 +29,30 @@ class ExtractionError(ValueError):
     """表示结构化抽取在模型调用、JSON校验或证据校验阶段失败。"""
 
 
+def assert_current_extractor_version(extractor_version: str) -> None:
+    """严格校验抽取器版本为 v0.8 + Schema V3；旧版本明确拒绝。
+
+    版本身份按 `prompt:` / `schema:` 段解析校验，不能只做子串包含检查。
+    当前主线只消费 v0.8 + Schema V3 的抽取结果；旧版本要求用当前
+    抽取器重新生成对应范围的数据，不做兼容、转换或迁移。
+    """
+    parts = extractor_version.split("|")
+    prompt_part = next(
+        (part for part in parts if part.startswith("prompt:")), None
+    )
+    schema_part = next(
+        (part for part in parts if part.startswith("schema:")), None
+    )
+    if (
+        prompt_part != f"prompt:{PROMPT_VERSION}"
+        or schema_part != f"schema:{SCHEMA_VERSION}"
+    ):
+        raise ValueError(
+            f"当前只支持 v0.8 + Schema V3：{extractor_version}。"
+            "请使用当前抽取器重新生成该范围的数据。"
+        )
+
+
 class ExtractionClient(Protocol):
     """定义抽取服务依赖的最小LLM客户端接口，便于测试时注入假客户端。"""
 

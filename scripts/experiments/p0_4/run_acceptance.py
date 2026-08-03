@@ -38,7 +38,7 @@ from app.consolidation_validation import (
     write_acceptance_report,
 )
 from app.database import create_database_engine, create_session_factory
-from app.extraction import PROMPT_VERSION, SCHEMA_VERSION
+from app.extraction import assert_current_extractor_version
 from app.requirement_consolidation import RequirementConsolidationInput
 
 
@@ -54,14 +54,15 @@ def build_input(selection, job_ids: set[int] | None = None):
 def resolve_extractor_version(
     args_extractor_version: str | None, model_name: str
 ) -> str:
-    """默认使用当前唯一抽取配置 v0.8 + Schema V3；显式输入拒绝非 Schema V3。"""
+    """默认使用当前唯一抽取配置 v0.8 + Schema V3；显式输入严格校验版本身份。"""
     if args_extractor_version is None:
+        from app.extraction import PROMPT_VERSION, SCHEMA_VERSION
+
         return f"{model_name}|prompt:{PROMPT_VERSION}|schema:{SCHEMA_VERSION}"
-    if "schema:3.0" not in args_extractor_version:
-        raise SystemExit(
-            f"拒绝非 Schema V3 数据：{args_extractor_version}；"
-            "当前只支持 v0.8 + Schema V3，请用 v0.8 重新抽取后再验收"
-        )
+    try:
+        assert_current_extractor_version(args_extractor_version)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     return args_extractor_version
 
 

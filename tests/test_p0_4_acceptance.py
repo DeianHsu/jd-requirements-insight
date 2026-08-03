@@ -32,7 +32,7 @@ def test_resolve_extractor_version_rejects_legacy_schema() -> None:
         "deepseek-v4-flash|prompt:2.3.1|schema:2.0",
         "test-model|prompt:0.6|schema:2.0",
     ):
-        with pytest.raises(SystemExit, match="重新抽取"):
+        with pytest.raises(SystemExit, match="重新生成"):
             resolve_extractor_version(legacy, "test-model")
 
 
@@ -48,11 +48,12 @@ def _mapping(
     }
 
 
-def _canonical(canonical_id: str, name: str) -> dict:
+def _canonical(canonical_id: str, name: str, source_ids: list[int]) -> dict:
     """构造一个标准要求项。"""
     return {
         "canonical_requirement_id": canonical_id,
         "canonical_name": name,
+        "source_requirement_ids": source_ids,
         "rationale": "测试归并",
         "confidence": 0.95,
     }
@@ -65,7 +66,9 @@ def _result_from_clusters(clusters: list[list[int]], names: list[str]):
     canonical_requirements = []
     mappings = []
     for cluster_index, cluster in enumerate(clusters):
-        canonical_requirements.append(_canonical(f"cr-{cluster_index}", names[cluster[0]]))
+        canonical_requirements.append(
+            _canonical(f"cr-{cluster_index}", names[cluster[0]], list(cluster))
+        )
         for requirement_id in cluster:
             mappings.append(
                 _mapping(requirement_id, f"cr-{cluster_index}")
@@ -201,10 +204,12 @@ class FakeConsolidationClient:
                     "canonical_requirements": [
                         {"canonical_requirement_id": "cr-0",
                          "canonical_name": "技术甲",
+                         "source_requirement_ids": [1, 3],
                          "rationale": "测试",
                          "confidence": 0.95},
                         {"canonical_requirement_id": "cr-1",
                          "canonical_name": "能力乙",
+                         "source_requirement_ids": [2],
                          "rationale": "测试",
                          "confidence": 0.95},
                     ]
