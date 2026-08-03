@@ -14,6 +14,7 @@ from app.consolidation import (
     OpenAICompatibleConsolidationClient,
     consolidate_requirements,
     list_consolidations,
+    load_consolidation_selection,
 )
 from app.consolidation_validation import (
     load_persisted_consolidation_result,
@@ -26,6 +27,8 @@ from app.extraction import (
     extract_jobs,
     list_extractions,
 )
+from app.models import JobDescription
+from sqlalchemy import select
 from app.ingestion import import_directory, list_jobs
 
 cli = typer.Typer(no_args_is_help=True, help="JD Skill Insight 本地数据工具")
@@ -103,19 +106,44 @@ def show_jds() -> None:
 
 @cli.command("extract-jds")
 def extract_jds(
+    execute: bool = typer.Option(
+        False, "--execute", help="确认发起付费模型调用（必需）"
+    ),
     max_attempts: int = typer.Option(2, min=1, max=5),
-    limit: int = typer.Option(3, min=1, help="开发模式最多抽取的JD数量"),
+    limit: int = typer.Option(3, min=1, help="默认最多抽取的JD数量"),
     all_jobs: bool = typer.Option(False, "--all", help="显式抽取全部JD"),
     job_ids: list[int] | None = typer.Option(
         None, "--job-id", min=1, help="只抽取指定JD，可重复传入"
     ),
 ) -> None:
-    """默认小批量抽取JD，也可显式选择全部或指定ID。"""
+    """对选定JD执行v0.8抽取；付费调用必须显式--execute确认。"""
     if all_jobs and job_ids:
         console.print("[red]--all不能与--job-id同时使用。[/red]")
         raise typer.Exit(code=2)
 
     settings = load_llm_settings()
+
+    # 只读计划：计算选择范围并展示，不初始化LLM客户端、不发起调用。
+    engine, session_factory = database_resources()
+    try:
+        with session_factory() as session:
+            jobs = list(session.scalars(select(JobDescription).order_by(JobDescription.id)))
+        if job_ids is not None:
+            selected = [job for job in jobs if job.id in job_ids]
+        elif all_jobs:
+            selected = jobs
+        else:
+            selected = jobs[:limit]
+    finally:
+        engine.dispose()
+
+    console.print(f"模型：[bold]{settings.model}[/bold]")
+    console.print("抽取配置：[bold]v0.8 + Schema V3[/bold]")
+    console.print(f"本次选择 [bold]{len(selected)}[/bold] 份JD（付费抽取）")
+    if not execute:
+        console.print("[yellow]未执行：付费模型调用需要显式 --execute 确认。[/yellow]")
+        raise typer.Exit(code=2)
+
     missing = settings.missing_fields()
     if missing:
         console.print(f"[red]缺少LLM配置：{', '.join(missing)}[/red]")
@@ -150,6 +178,9 @@ def extract_jds(
 
 @cli.command("consolidate-requirements")
 def consolidate_requirements_cmd(
+    execute: bool = typer.Option(
+        False, "--execute", help="确认发起付费模型调用（必需）"
+    ),
     max_attempts: int = typer.Option(2, min=1, max=5),
     all_jobs: bool = typer.Option(False, "--all", help="显式归并全部JD"),
     job_ids: list[int] | None = typer.Option(
@@ -164,13 +195,43 @@ def consolidate_requirements_cmd(
     """对选定JD范围内的要求实例执行跨JD原子要求归并并幂等保存。
 
     只完成 canonical requirements 与 instance mappings：每个实例必须
-    且只能映射到一个标准要求项，不确定时创建 singleton。
+    且只能映射到一个标准要求项；无法合并的实例由阶段1创建 singleton。
+    付费调用必须显式--execute确认。
     """
     if all_jobs == bool(job_ids):
         console.print("[red]必须且只能选择--all或--job-id之一。[/red]")
         raise typer.Exit(code=2)
 
     settings = load_llm_settings()
+
+    # 只读计划：装配语料池并展示，不初始化LLM客户端、不发起调用。
+    engine, session_factory = database_resources()
+    try:
+        try:
+            with session_factory() as session:
+                selection = load_consolidation_selection(
+                    session,
+                    job_ids=set(job_ids) if job_ids else None,
+                    extractor_version=extractor_version,
+                )
+            instance_count = len(selection.consolidation_input.occurrences)
+            job_count = len(selection.selected_job_ids)
+        except ValueError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=1) from exc
+    finally:
+        engine.dispose()
+
+    console.print(f"模型：[bold]{settings.model}[/bold]")
+    console.print(f"抽取器版本：[bold]{selection.extractor_version}[/bold]")
+    console.print(
+        f"本次归并 [bold]{instance_count}[/bold] 条要求实例"
+        f" / {job_count} 份JD（付费调用）"
+    )
+    if not execute:
+        console.print("[yellow]未执行：付费模型调用需要显式 --execute 确认。[/yellow]")
+        raise typer.Exit(code=2)
+
     missing = settings.missing_fields()
     if missing:
         console.print(f"[red]缺少LLM配置：{', '.join(missing)}[/red]")
