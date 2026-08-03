@@ -41,11 +41,11 @@ uv run ruff check app scripts tests
 # 导入 JD（Markdown 目录）
 python -m app.cli import-jds data/raw_jds
 
-# 抽取（默认小批量；--all 全部；付费调用）
-python -m app.cli extract-jds --all
+# 抽取（付费调用必须 --execute 确认）
+python -m app.cli extract-jds --all --execute
 
-# 归并（付费调用）
-python -m app.cli consolidate-requirements --all
+# 归并（付费调用必须 --execute 确认）
+python -m app.cli consolidate-requirements --all --execute
 
 # 查看与验证
 python -m app.cli list-jds
@@ -61,8 +61,11 @@ python -m app.cli validate-consolidation --consolidation-id 1
 python -m scripts.experiments.p0_3.run_acceptance --dry-run
 python -m scripts.experiments.p0_3.run_acceptance --execute
 
-# P0-3B 真实 JD 验证
-python -m scripts.experiments.p0_3.run_real_jd_acceptance --all --execute
+# P0-3B 真实 JD 验证（默认项目数据库）
+python -m scripts.experiments.p0_3.run_real_jd_acceptance --use-project-database --all --execute
+
+# P0-3B 临时数据库示例
+python -m scripts.experiments.p0_3.run_real_jd_acceptance --database-url sqlite:///data/private/p0_3_validation.db --all --execute
 
 # P0-4 归并验收 / 小规模预检
 python -m scripts.experiments.p0_4.run_acceptance --execute

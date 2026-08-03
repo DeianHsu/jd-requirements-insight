@@ -47,7 +47,8 @@ AGENTS.md
 1. 修改后运行：`uv run pytest`（系统 Temp 被锁定时加 `--basetemp .pytest-tmp`）
    与 `uv run ruff check app scripts tests`；
 2. 自动化测试不得调用付费外部服务；测试使用临时文件和临时数据库；
-3. 付费模型调用必须显式触发（如 `--execute`），并先说明模型、数据范围
+3. 付费模型调用必须显式 `--execute` 确认（extract-jds /
+   consolidate-requirements / 验证脚本均如此），并先说明模型、数据范围
    和目标；数据库操作必须显式选择目标，不得隐式写入项目数据库；
 4. 遇到旧抽取数据或旧数据库结构：不兼容、不迁移、不自动删除，给出
    提示"备份原始 JD，删除旧派生数据库并重新生成"。

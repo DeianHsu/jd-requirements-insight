@@ -1,7 +1,7 @@
 # 当前状态
 
-updated_at: 2026-08-03（仓库收缩后）
-current HEAD: 6abd505（仓库收缩完成：删除 P0-4B、职责支线、旧兼容与脚手架）
+updated_at: 2026-08-03
+implementation_baseline: 5c3255e（仓库收缩完成；Git 是当前 HEAD 的唯一事实来源）
 
 ## 当前可运行功能
 
@@ -9,9 +9,9 @@ current HEAD: 6abd505（仓库收缩完成：删除 P0-4B、职责支线、旧�
 |---|---|
 | `python -m app.cli import-jds <目录>` | 导入 Markdown JD（frontmatter + 正文） |
 | `python -m app.cli list-jds` | 列出 JD 摘要 |
-| `python -m app.cli extract-jds [--all|--job-id N]` | v0.8 + Schema V3 两段式抽取（付费，需 .env 配置） |
+| `python -m app.cli extract-jds [--all|--job-id N] --execute` | v0.8 + Schema V3 两段式抽取（付费，需 .env 配置与 --execute） |
 | `python -m app.cli list-extractions` | 列出抽取结果 |
-| `python -m app.cli consolidate-requirements --all|--job-id N` | 跨 JD 归并为 canonical requirement（付费） |
+| `python -m app.cli consolidate-requirements --all|--job-id N --execute` | 跨 JD 归并为 canonical requirement（付费，需 --execute） |
 | `python -m app.cli list-consolidations` | 列出归并批次 |
 | `python -m app.cli validate-consolidation --consolidation-id N` | 离线合同验证（不付费） |
 | `app/market_analysis.py` | 市场统计（实例数、独立 JD 数、importance 分布、来源证据、稳定排序），供下一阶段 `generate-report` 消费 |
@@ -19,7 +19,7 @@ current HEAD: 6abd505（仓库收缩完成：删除 P0-4B、职责支线、旧�
 验证脚本（均需 `--execute` 才调用付费模型，`--dry-run` 预检不付费）：
 
 - P0-3A 规则场景：`python -m scripts.experiments.p0_3.run_acceptance --execute`
-- P0-3B 真实 JD：`python -m scripts.experiments.p0_3.run_real_jd_acceptance --all --execute`
+- P0-3B 真实 JD：`python -m scripts.experiments.p0_3.run_real_jd_acceptance --use-project-database --all --execute`
 - P0-4 归并验收：`python -m scripts.experiments.p0_4.run_acceptance --execute`
 - P0-4 小规模预检：`python -m scripts.experiments.p0_4.run_small_scale_precheck --execute`
 

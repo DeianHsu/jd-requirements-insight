@@ -60,8 +60,9 @@ RAG       → 有RAG项目经验者优先
   run count、contract failures、transformation failures、stability
   warnings、manual review notes。
 - **P0-3B 真实 JD 验证**（`scripts/experiments/p0_3/run_real_jd_acceptance.py`）：
-  显式选择 JD、每份 JD 支持重复运行、Schema/coverage/evidence/逻辑组合同
-  检查、项目数量与字段漂移、异常项索引供人工复核。
+  显式选择数据库（`--use-project-database` 或 `--database-url`）与 JD、
+  每份 JD 支持重复运行、Schema/coverage/evidence/逻辑组合同检查、项目
+  数量与字段漂移、异常项索引供人工复核。
   人工直接根据验证报告判断当前抽取方案是否可以进入下游，不开发额外
   批准系统。
 

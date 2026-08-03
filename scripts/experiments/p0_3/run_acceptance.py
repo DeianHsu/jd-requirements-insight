@@ -1,4 +1,4 @@
-"""P0-3 抽取验收脚本（DEC-015 新协议，Track A：合成规则场景）。
+"""P0-3 规则场景验证脚本（Track A：合成规则场景；协议见 docs/annotation/VALIDATION.md）。
 
 默认不调用外部模型；验证必须显式`--execute`，预检使用`--dry-run`。
 抽取配置固定为当前唯一方案 v0.8 + Schema V3。执行流程（真实模型）：

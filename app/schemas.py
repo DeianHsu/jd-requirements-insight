@@ -111,7 +111,7 @@ class ProficiencyLevel(StrEnum):
     原始程度词保留在 evidence 与 raw_name，枚举只表达粗粒度岗位门槛；
     `none`（完全不会）属于未来候选人个人能力层，不属于岗位要求。
     旧 Schema V2 五级值（understand/familiar/proficient/expert）不再兼容，
-    读取时明确拒绝并要求用 v0.8 重新抽取（DEC-016）。
+    读取时明确拒绝并要求用 v0.8 重新抽取。
     """
 
     UNKNOWN = "unknown"

@@ -1,9 +1,8 @@
-"""P0-3 真实 JD 验收脚本（Track B，DEC-015 新协议）。
+"""P0-3 真实 JD 验证脚本（Track B；协议见 docs/annotation/VALIDATION.md）。
 
 与 Track A（`run_acceptance.py`，合成规则场景）分离的两条独立轨道。
-本脚本验收候选 profile：v0.8 + Schema V3（三级熟练度），显式指定，不依赖
-active 全局常量。默认不调用外部模型；完整验收必须显式`--execute`，
-预检使用`--dry-run`。
+抽取配置为当前唯一方案 v0.8 + Schema V3（三级熟练度）。默认不调用
+外部模型；完整验证必须显式`--execute`，预检使用`--dry-run`。
 
 执行流程（真实模型）：
 
@@ -14,11 +13,8 @@ active 全局常量。默认不调用外部模型；完整验收必须显式`--e
 4. 同 JD 多次运行稳定性比较（candidate block alignment、item count drift、
    field agreement、group membership agreement）；
 5. 报告 proficiency distribution（basic/advanced/unknown）与 requirement 总数；
-6. 与 v0.6 结果只做 diagnostic 对比（不把 v0.6 当标准答案）：
-   requirement 总数变化、三级分布变化、P0-4 输入实例数量变化（只读统计，
-   不自动执行 P0-4 付费归并）；
-7. 输出供人工规则审计的脱敏样本索引（不含原文）；
-8. 真实原文与完整模型响应只写入 `data/private/`。
+6. 输出供人工规则审计的脱敏样本索引（不含原文）；
+7. 真实原文与完整模型响应只写入 `data/private/`。
 
 返回码：参数错误非零；`--dry-run` 返回 0（预检，不是验收）；
 验收 hard gate 失败返回 1，通过返回 0。
