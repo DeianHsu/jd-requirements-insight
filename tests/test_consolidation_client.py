@@ -181,7 +181,7 @@ def test_valid_response_parses_and_generates_mappings() -> None:
         mapping.canonical_requirement_id == "requirement-a"
         for mapping in result.mappings
     )
-    assert raw["canonical_requirements"][0]["canonical_requirement_id"] == "requirement-a"
+    assert raw["model_response"]["canonical_requirements"][0]["canonical_requirement_id"] == "requirement-a"
 
 
 def test_invalid_json_raises_consolidation_error() -> None:

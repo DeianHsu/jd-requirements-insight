@@ -138,6 +138,9 @@ class JobConsolidation(Base):
     prompt_version: Mapped[str] = mapped_column(String(50))
     schema_version: Mapped[str] = mapped_column(String(50))
     occurrence_count: Mapped[int] = mapped_column(default=0)
+    # 成功归并的结构化记录：{"model_response": <模型原始响应>,
+    # "normalized_result": <规范化结果含确定性 mappings>,
+    # "attempt_count": <成功尝试次数>}。不是网络层完整对象。
     raw_response: Mapped[dict[str, Any]] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 

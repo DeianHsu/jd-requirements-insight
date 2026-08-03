@@ -422,17 +422,20 @@ def _retry_stage(
     max_attempts: int,
     build_prompt: Callable[[str | None], str],
     parse: Callable[[str], T],
-) -> T:
-    """执行归并任务，并在解析或分区校验失败时带修正提示有限重试。"""
+) -> tuple[T, int, str]:
+    """执行归并任务，并在解析或分区校验失败时带修正提示有限重试。
+
+    返回（解析结果, 成功尝试次数, 成功那次模型的原始响应文本）。
+    """
     correction = None
     last_error: ConsolidationError | ValueError | None = None
 
-    for _ in range(max_attempts):
+    for attempt in range(1, max_attempts + 1):
         prompt = build_prompt(correction)
         response_text: str | None = None
         try:
             response_text = client.complete(system_prompt, prompt)
-            return parse(response_text)
+            return parse(response_text), attempt, response_text
         except (ConsolidationError, ValueError) as exc:
             last_error = exc
             # 只有模型已经返回但内容不合同时才把错误反馈给下一次提示；
@@ -459,19 +462,21 @@ def _request_canonical_partition(
     client: ConsolidationClient,
     system_prompt: str,
     max_attempts: int,
-) -> list[CanonicalRequirement]:
+) -> tuple[list[CanonicalRequirement], int, dict[str, object]]:
     """请求模型输出 canonical 聚类，并在模型输出后立即校验来源分区。
 
     分区校验（validate_canonical_partition）在重试循环内执行：任何
     遗漏/重复归属/未知ID/空来源/名称重复都会作为具体错误反馈给下一次
     提示，不会进入后续处理或持久化。
+
+    返回（canonical 列表, 成功尝试次数, 成功那次模型响应的 JSON 对象）。
     """
     def parse_partition(response_text: str) -> list[CanonicalRequirement]:
         canonical_requirements = parse_canonical_requirements_response(response_text)
         validate_canonical_partition(consolidation_input, canonical_requirements)
         return canonical_requirements
 
-    return _retry_stage(
+    canonical_requirements, attempt_count, response_text = _retry_stage(
         client,
         system_prompt,
         "canonical 聚类",
@@ -481,6 +486,11 @@ def _request_canonical_partition(
         ),
         parse_partition,
     )
+    try:
+        model_response = json.loads(response_text)
+    except json.JSONDecodeError:
+        model_response = {}
+    return canonical_requirements, attempt_count, model_response
 
 
 def consolidate_with_correction(
@@ -495,8 +505,10 @@ def consolidate_with_correction(
     验证分区完整唯一 → 确定性生成 mappings → 最终合同校验 → 返回。
     任何合同失败都通过有限重试反馈模型修正，不产生部分结果。
     """
-    canonical_requirements = _request_canonical_partition(
-        consolidation_input, client, system_prompt, max_attempts
+    canonical_requirements, attempt_count, model_response = (
+        _request_canonical_partition(
+            consolidation_input, client, system_prompt, max_attempts
+        )
     )
     mappings = build_mappings_from_canonical_partition(canonical_requirements)
     result = RequirementConsolidationResult(
@@ -504,7 +516,17 @@ def consolidate_with_correction(
         mappings=mappings,
     )
     validate_requirement_coverage(consolidation_input, result)
-    return result, result.model_dump(mode="json")
+
+    # raw_response 同时保存成功那次的模型响应与规范化结果：
+    # model_response 是模型原始输出（不含确定性 mappings）；
+    # normalized_result 是通过校验并确定性生成 mappings 后的结果。
+    normalized_result = result.model_dump(mode="json")
+    raw_response: dict[str, object] = {
+        "model_response": model_response,
+        "normalized_result": normalized_result,
+        "attempt_count": attempt_count,
+    }
+    return result, raw_response
 
 
 @dataclass
