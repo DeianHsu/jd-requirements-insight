@@ -101,13 +101,45 @@ class RequirementImportance(StrEnum):
 
 
 class ProficiencyLevel(StrEnum):
-    """限定JD表达的掌握程度，无法判断时必须使用unknown而不是猜测。"""
+    """限定JD表达粗粒度的掌握程度（Schema V3 三级）。
 
-    UNDERSTAND = "understand"
-    FAMILIAR = "familiar"
-    PROFICIENT = "proficient"
-    EXPERT = "expert"
+    - `unknown`：JD 没有明确熟练程度，或只写项目经验、使用经验、有经验、
+      参与过；不得推断程度。
+    - `basic`：了解、理解、熟悉、能够使用、具备基础使用能力。
+    - `advanced`：掌握、熟练、扎实、精通、专家级。
+
+    原始程度词保留在 evidence 与 raw_name，枚举只表达粗粒度岗位门槛；
+    `none`（完全不会）属于未来候选人个人能力层，不属于岗位要求。
+    """
+
     UNKNOWN = "unknown"
+    BASIC = "basic"
+    ADVANCED = "advanced"
+
+
+# V2 五级熟练度到 V3 三级的确定性映射（旧数据读取兼容，不重写物理数据）。
+LEGACY_PROFICIENCY_MAP: dict[str, ProficiencyLevel] = {
+    "understand": ProficiencyLevel.BASIC,
+    "familiar": ProficiencyLevel.BASIC,
+    "proficient": ProficiencyLevel.ADVANCED,
+    "expert": ProficiencyLevel.ADVANCED,
+}
+
+
+def map_legacy_proficiency(value: str) -> ProficiencyLevel:
+    """把任意版本熟练度值映射为 Schema V3 三级；未知非法值明确失败。
+
+    旧 Schema V2 五级值按确定性映射转换；未知值抛 ValueError，
+    不允许静默归入 unknown。
+    """
+    try:
+        return ProficiencyLevel(value)
+    except ValueError:
+        pass
+    mapped = LEGACY_PROFICIENCY_MAP.get(value)
+    if mapped is None:
+        raise ValueError(f"未知熟练度值：{value!r}（不允许静默归入 unknown）")
+    return mapped
 
 
 class RequirementGroupLogic(StrEnum):
@@ -156,6 +188,20 @@ class RequirementItem(BaseModel):
     years_text: str | None = Field(default=None, max_length=100)
     evidence: str
     confidence: float = Field(ge=0, le=1)
+
+    @field_validator("proficiency", mode="before")
+    @classmethod
+    def coerce_proficiency(cls, value: object) -> object:
+        """读取兼容：旧 Schema V2 五级值确定性映射为三级，未知值明确失败。
+
+        数据库与历史 raw_response 只保存字符串，Schema 版本由抽取器版本
+        隔离；本校验让旧结果无需重写物理数据即可按当前合同读取。
+        """
+        if isinstance(value, ProficiencyLevel):
+            return value
+        if isinstance(value, str):
+            return map_legacy_proficiency(value)
+        raise ValueError(f"熟练度必须是字符串或 ProficiencyLevel：{value!r}")
 
     @field_validator("raw_name", "evidence")
     @classmethod
