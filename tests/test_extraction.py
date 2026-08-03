@@ -63,6 +63,26 @@ class RecordingExperimentClient:
         return json.dumps(self.response, ensure_ascii=False)
 
 
+class FakeTwoStageExtractionClient:
+    """按预设顺序返回发现段与判断段JSON，用于正式两段式抽取测试。"""
+
+    def __init__(self, responses: list[dict[str, object]]) -> None:
+        """保存按调用顺序排列的发现/判断段响应并初始化调用次数。"""
+        self.responses = responses
+        self.calls = 0
+
+    def complete(self, system_prompt: str, user_prompt: str) -> str:
+        """按调用轮次返回发现段或判断段响应，并校验两段式提示结构。"""
+        if "全局发现" in system_prompt:
+            assert "sentences" in user_prompt
+        else:
+            assert "精细判断" in system_prompt
+            assert "blocks" in user_prompt
+        response = self.responses[self.calls]
+        self.calls += 1
+        return json.dumps(response, ensure_ascii=False)
+
+
 def valid_payload(evidence: str = "熟悉 Python 和 RAG。") -> dict[str, object]:
     """生成一份符合抽取数据合同且可按需替换证据的测试响应。"""
     return {
@@ -102,6 +122,37 @@ def valid_payload(evidence: str = "熟悉 Python 和 RAG。") -> dict[str, objec
     }
 
 
+def discovery_payload() -> dict[str, object]:
+    """生成与make_job三句原文对应的合法发现段响应。"""
+    return {
+        "role_family": "rag_application",
+        "seniority": "junior",
+        "blocks": [
+            {
+                "block_id": "b0",
+                "sentence_indexes": [0],
+                "kind": "excluded",
+                "source_span": "# RAG工程师",
+                "note": "标题，非条件内容",
+            },
+            {
+                "block_id": "b1",
+                "sentence_indexes": [1],
+                "kind": "responsibility",
+                "source_span": "负责知识库问答系统开发",
+                "note": "工作内容",
+            },
+            {
+                "block_id": "b2",
+                "sentence_indexes": [2],
+                "kind": "requirement",
+                "source_span": "熟悉 Python 和 RAG",
+                "note": "候选人条件",
+            },
+        ],
+    }
+
+
 def make_job() -> JobDescription:
     """创建一份包含连续证据文本的内存JD对象供抽取测试使用。"""
     return JobDescription(
@@ -127,10 +178,11 @@ def make_database(tmp_path: Path):
     return engine, create_session_factory(engine)
 
 
-def test_prompt_v2_3_1_contains_atomic_extraction_boundaries() -> None:
-    """验证Prompt V2.3.1保留要求原子化、任选关系、示例边界和原始要求规则。"""
-    assert PROMPT_VERSION == "2.3.1"
+def test_formal_prompt_version_is_two_stage_v0_6() -> None:
+    """验证正式版本号已切换为两段式v0.6，历史V2.3.1规则仍被锁定保留。"""
+    assert PROMPT_VERSION == "0.6"
     assert SCHEMA_VERSION == "2.0"
+    # SYSTEM_PROMPT 是已替换的历史版本 V2.3.1，保留规则锁定以便复现历史结果。
     assert "熟悉Python和RAG" in SYSTEM_PROMPT
     assert "LangChain使用经验" in SYSTEM_PROMPT
     assert "Llama和ChatGLM只是模型示例" in SYSTEM_PROMPT
@@ -211,27 +263,27 @@ def test_compact_json_schema_keeps_constraints_without_explanatory_fields() -> N
 
 
 def test_extract_job_returns_validated_result() -> None:
-    """验证合法模型JSON能够通过抽取数据合同和原文证据检查。"""
-    client = FakeExtractionClient([valid_payload()])
+    """验证正式两段式流程（发现段+判断段）通过合同和原文证据检查。"""
+    client = FakeTwoStageExtractionClient([discovery_payload(), valid_payload()])
 
     result, raw_response = extract_job(make_job(), client)
 
     assert result.role_family.value == "rag_application"
     assert [item.raw_name for item in result.requirements] == ["Python", "RAG"]
     assert raw_response["seniority"] == "junior"
-    assert client.calls == 1
+    assert client.calls == 2
 
 
 def test_extract_job_retries_after_invalid_evidence() -> None:
-    """验证第一次证据不存在时会把错误反馈给第二次模型请求。"""
-    client = FakeExtractionClient(
-        [valid_payload("JD中不存在的证据"), valid_payload()]
+    """验证判断段证据不存在时会把错误反馈给下一次判断段请求。"""
+    client = FakeTwoStageExtractionClient(
+        [discovery_payload(), valid_payload("JD中不存在的证据"), valid_payload()]
     )
 
     result, _ = extract_job(make_job(), client, max_attempts=2)
 
     assert result.requirements[0].evidence == "熟悉 Python 和 RAG。"
-    assert client.calls == 2
+    assert client.calls == 3
 
 
 def test_reordered_experiment_keeps_single_complete_extraction_call() -> None:
@@ -326,7 +378,14 @@ def test_extract_jobs_limits_development_batch(tmp_path: Path) -> None:
             session.add(job)
         session.commit()
 
-    client = FakeExtractionClient([valid_payload(), valid_payload()])
+    client = FakeTwoStageExtractionClient(
+        [
+            discovery_payload(),
+            valid_payload(),
+            discovery_payload(),
+            valid_payload(),
+        ]
+    )
     summary = extract_jobs(
         session_factory,
         client,
@@ -337,5 +396,5 @@ def test_extract_jobs_limits_development_batch(tmp_path: Path) -> None:
     assert summary.discovered == 2
     assert summary.extracted == 2
     assert summary.failed == 0
-    assert client.calls == 2
+    assert client.calls == 4
     engine.dispose()

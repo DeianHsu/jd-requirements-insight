@@ -23,6 +23,8 @@ from app.extraction import (
 from app.models import JobDescription
 from app.schemas import JobExtractionResult, RoleFamily, Seniority
 
+# 两段式正式版本号（P0-3 验收 APPROVED 后已替换 V2.3.1 成为正式版本）。
+# 必须与 app/extraction.py 的 PROMPT_VERSION 保持同步。
 TWO_STAGE_PROMPT_VERSION = "0.6"
 
 # 发现段Prompt：只做全局扫描与分句归属，不做拆分与字段判断。

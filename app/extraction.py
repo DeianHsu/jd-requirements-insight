@@ -17,10 +17,12 @@ from app.config import LLMSettings
 from app.models import JobDescription, JobExtraction, JobRequirement, JobResponsibility
 from app.schemas import JobExtractionResult, ResponsibilityItem
 
-PROMPT_VERSION = "2.3.1"
+PROMPT_VERSION = "0.6"
 SCHEMA_VERSION = "2.0"
 
-# Prompt V2.3.1补充要求示例边界，并保留V2.3的两阶段职责判断。
+# 正式版本已切换为两段式 v0.6（见 app/extraction_two_stage.py 的
+# TWO_STAGE_PROMPT_VERSION，两者必须保持同步）；下方 SYSTEM_PROMPT 为
+# 被替换的历史版本 V2.3.1，仅保留用于实验对比与历史结果复现。
 SYSTEM_PROMPT = """你是招聘JD结构化抽取器，只能依据用户提供的JD原文输出JSON。
 
 【任务边界】
@@ -324,8 +326,13 @@ def extract_job_with_system_prompt(
 def extract_job(
     job: JobDescription, client: ExtractionClient, max_attempts: int = 2
 ) -> tuple[JobExtractionResult, dict[str, object]]:
-    """使用当前正式Prompt抽取单份JD，并在校验失败时有限重试。"""
-    return extract_job_with_system_prompt(job, client, SYSTEM_PROMPT, max_attempts)
+    """使用当前正式抽取流程（两段式 v0.6）抽取单份JD，并在校验失败时有限重试。
+
+    延迟导入两段式实现以避免与 app/extraction_two_stage.py 的模块级循环依赖。
+    """
+    from app.extraction_two_stage import extract_job_two_stage
+
+    return extract_job_two_stage(job, client, max_attempts)
 
 
 def extract_responsibilities_for_experiment(

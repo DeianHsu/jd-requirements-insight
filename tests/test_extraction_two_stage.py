@@ -5,7 +5,7 @@ from datetime import date
 
 import pytest
 
-from app.extraction import ExtractionError
+from app.extraction import PROMPT_VERSION, ExtractionError
 from app.extraction_two_stage import (
     DISCOVERY_SYSTEM_PROMPT,
     JUDGE_SYSTEM_PROMPT,
@@ -126,8 +126,9 @@ def test_split_sentences_is_deterministic() -> None:
 
 
 def test_two_stage_prompts_are_domain_agnostic() -> None:
-    """验证两段Prompt不绑定任何具体领域技能。"""
+    """验证两段Prompt不绑定任何具体领域技能，且正式版本号与抽取器一致。"""
     assert TWO_STAGE_PROMPT_VERSION == "0.6"
+    assert PROMPT_VERSION == TWO_STAGE_PROMPT_VERSION
     for domain_word in ("Python", "RAG", "LangChain", "Agent", "大模型", "AI"):
         assert domain_word not in DISCOVERY_SYSTEM_PROMPT
         assert domain_word not in JUDGE_SYSTEM_PROMPT
