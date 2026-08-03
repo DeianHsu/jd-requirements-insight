@@ -167,6 +167,9 @@ class CanonicalRequirementRecord(Base):
     )
     canonical_requirement_id: Mapped[str] = mapped_column(String(100))
     canonical_name: Mapped[str] = mapped_column(String(255), index=True)
+    source_requirement_ids: Mapped[list[int]] = mapped_column(
+        JSON, default=list
+    )
     rationale: Mapped[str] = mapped_column(Text)
     confidence: Mapped[float] = mapped_column(Float)
 

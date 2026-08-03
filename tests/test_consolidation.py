@@ -44,16 +44,22 @@ def make_job(job_id: int, source_file: str) -> JobDescription:
 
 
 def make_extraction(
-    extraction_id: int, job_id: int, version: str = "1.0"
+    extraction_id: int, job_id: int, version: str = "0.8"
 ) -> JobExtraction:
     """创建一份带抽取器版本身份的抽取主记录。"""
+    if version == "0.8":
+        extractor_version = "test-model|prompt:0.8|schema:3.0"
+        schema_version = "3.0"
+    else:
+        extractor_version = f"test-model|prompt:{version}|schema:2.0"
+        schema_version = "2.0"
     return JobExtraction(
         id=extraction_id,
         job_id=job_id,
-        extractor_version=f"test-model|prompt:{version}|schema:2.0",
+        extractor_version=extractor_version,
         model_name="test-model",
         prompt_version=version,
-        schema_version="2.0",
+        schema_version=schema_version,
         role_family="other",
         seniority="unknown",
         raw_response={},
@@ -103,7 +109,7 @@ def test_loads_occurrences_from_multiple_jobs_without_field_loss(
     by_id = {occ.requirement_id: occ for occ in result.occurrences}
     assert by_id[1].job_id == 1
     assert by_id[1].extraction_id == 1
-    assert by_id[1].extractor_version == "test-model|prompt:1.0|schema:2.0"
+    assert by_id[1].extractor_version == "test-model|prompt:0.8|schema:3.0"
     assert by_id[1].source_hash == f"{1:064x}"
     assert by_id[1].source_file == "job-a.md"
     assert by_id[1].requirement.raw_name == "能力甲"
@@ -116,11 +122,11 @@ def test_loads_occurrences_from_multiple_jobs_without_field_loss(
 
 
 def test_explicit_extraction_version_is_loaded(tmp_path: Path) -> None:
-    """验证同一JD并存多个抽取器版本时按显式版本装配要求实例。"""
+    """验证同一JD并存多个版本时显式指定 v0.8 装配；旧版本被拒绝。"""
     engine, session_factory = make_database(tmp_path)
     with session_factory() as session:
         session.add(make_job(1, "job-a.md"))
-        session.add(make_extraction(1, 1, version="1.0"))
+        session.add(make_extraction(1, 1, version="0.8"))
         session.add(make_extraction(2, 1, version="2.0"))
         session.add(make_requirement(1, 1, "能力甲"))
         session.add(make_requirement(2, 2, "能力甲"))
@@ -128,18 +134,25 @@ def test_explicit_extraction_version_is_loaded(tmp_path: Path) -> None:
 
         result = load_requirement_occurrences(
             session,
-            extractor_version="test-model|prompt:2.0|schema:2.0",
+            extractor_version="test-model|prompt:0.8|schema:3.0",
         )
 
-    assert [occ.requirement_id for occ in result.occurrences] == [2]
+        # 显式指定旧版本被当前主线拒绝。
+        with pytest.raises(ValueError, match="当前只支持 v0.8"):
+            load_requirement_occurrences(
+                session,
+                extractor_version="test-model|prompt:2.0|schema:2.0",
+            )
+
+    assert [occ.requirement_id for occ in result.occurrences] == [1]
 
 
 def test_multiple_common_versions_require_explicit_selection(tmp_path: Path) -> None:
-    """验证多个共同抽取器版本并存时拒绝隐式选择。"""
+    """验证 v0.8 与旧版本并存时拒绝隐式选择（须显式指定 v0.8）。"""
     _, session_factory = make_database(tmp_path)
     with session_factory() as session:
         session.add(make_job(1, "job-a.md"))
-        session.add(make_extraction(1, 1, version="1.0"))
+        session.add(make_extraction(1, 1, version="0.8"))
         session.add(make_extraction(2, 1, version="2.0"))
         session.add(make_requirement(1, 1, "能力甲"))
         session.add(make_requirement(2, 2, "能力乙"))

@@ -50,7 +50,7 @@ def consolidation_input(
                 requirement_id=index + 1,
                 job_id=101 + index,
                 extraction_id=1001 + index,
-                extractor_version="test-model|prompt:1.0|schema:3.0",
+                extractor_version="test-model|prompt:0.8|schema:3.0",
                 source_hash=f"{index + 1:064x}",
                 source_file=f"job-{index + 1}.md",
                 requirement=requirement(name, f"具备{name}。"),
@@ -78,6 +78,7 @@ def result_payload(
             CanonicalRequirement(
                 canonical_requirement_id=f"cr-{cluster_index}",
                 canonical_name=names[cluster[0]],
+                source_requirement_ids=list(cluster),
                 rationale="测试归并",
                 confidence=0.95,
             )
@@ -144,12 +145,14 @@ def test_contract_detects_empty_cluster() -> None:
             CanonicalRequirement(
                 canonical_requirement_id="cr-0",
                 canonical_name="能力甲",
+                source_requirement_ids=[1],
                 rationale="独立要求",
                 confidence=0.9,
             ),
             CanonicalRequirement(
                 canonical_requirement_id="cr-empty",
                 canonical_name="空cluster",
+                source_requirement_ids=[],
                 rationale="无来源",
                 confidence=0.9,
             ),
@@ -245,12 +248,14 @@ def test_order_invariance_framework_pairs_are_stable() -> None:
             {
                 "canonical_requirement_id": "cr-a",
                 "canonical_name": "能力甲使用经验",
+                "source_requirement_ids": [1, 2],
                 "rationale": "同一条件",
                 "confidence": 0.95,
             },
             {
                 "canonical_requirement_id": "cr-b",
                 "canonical_name": "能力乙",
+                "source_requirement_ids": [3],
                 "rationale": "独立条件",
                 "confidence": 0.95,
             },
@@ -305,12 +310,14 @@ def test_metamorphic_conservative_fallback_keeps_singletons() -> None:
                             {
                                 "canonical_requirement_id": "cr-0",
                                 "canonical_name": "能力甲",
+                                "source_requirement_ids": [1],
                                 "rationale": "独立要求",
                                 "confidence": 0.8,
                             },
                             {
                                 "canonical_requirement_id": "cr-1",
                                 "canonical_name": "能力乙",
+                                "source_requirement_ids": [2],
                                 "rationale": "无法确认等价，保持独立",
                                 "confidence": 0.8,
                             },
@@ -366,12 +373,14 @@ def test_unreferenced_canonical_is_dropped_deterministically() -> None:
                             {
                                 "canonical_requirement_id": "cr-0",
                                 "canonical_name": "能力甲",
+                                "source_requirement_ids": [1, 2],
                                 "rationale": "独立要求",
                                 "confidence": 0.8,
                             },
                             {
                                 "canonical_requirement_id": "cr-noise",
                                 "canonical_name": "无人引用的噪声条件",
+                                "source_requirement_ids": [],
                                 "rationale": "模型幻觉",
                                 "confidence": 0.5,
                             },
@@ -424,6 +433,7 @@ def test_mapping_reference_to_unknown_canonical_is_rejected_and_retried() -> Non
                             {
                                 "canonical_requirement_id": "cr-0",
                                 "canonical_name": "能力甲",
+                                "source_requirement_ids": [1, 2],
                                 "rationale": "独立要求",
                                 "confidence": 0.8,
                             }

@@ -62,6 +62,9 @@ def load_persisted_consolidation_result(
                 CanonicalRequirement(
                     canonical_requirement_id=item.canonical_requirement_id,
                     canonical_name=item.canonical_name,
+                    source_requirement_ids=list(
+                        item.source_requirement_ids or []
+                    ),
                     rationale=item.rationale,
                     confidence=item.confidence,
                 )

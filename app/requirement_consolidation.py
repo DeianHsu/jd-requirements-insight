@@ -56,12 +56,19 @@ class RequirementConsolidationInput(BaseModel):
 
 
 class CanonicalRequirement(BaseModel):
-    """表示多个同义要求实例共同指向的跨JD标准要求项。"""
+    """表示多个同义要求实例共同指向的跨JD标准要求项。
+
+    `source_requirement_ids` 是阶段 1（标准项生成轮）声明的来源实例
+    归属：每个实例必须且只能归属一个标准要求项；无法合并的实例由阶段 1
+    创建包含它的 singleton 标准项。阶段 2（映射轮）只能引用阶段 1
+    给出的 canonical requirement，不得创建新的 canonical。
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     canonical_requirement_id: str = Field(min_length=1, max_length=100)
     canonical_name: str = Field(min_length=1, max_length=255)
+    source_requirement_ids: list[int] = Field(default_factory=list)
     rationale: str = Field(min_length=1)
     confidence: float = Field(ge=0, le=1)
 
@@ -73,6 +80,14 @@ class CanonicalRequirement(BaseModel):
         if not cleaned:
             raise ValueError("不能为空")
         return cleaned
+
+    @field_validator("source_requirement_ids")
+    @classmethod
+    def source_ids_must_be_unique(cls, values: list[int]) -> list[int]:
+        """拒绝同一标准项内部重复声明同一来源实例。"""
+        if len(values) != len(set(values)):
+            raise ValueError("标准要求项来源实例ID不能重复")
+        return values
 
 
 class RequirementMapping(BaseModel):
@@ -173,7 +188,17 @@ def validate_requirement_coverage(
     consolidation_input: RequirementConsolidationInput,
     result: RequirementConsolidationResult,
 ) -> None:
-    """确认P0-4为语料池中的每条要求且仅生成一条处理结果。"""
+    """确认P0-4为语料池中的每条要求且仅生成一条处理结果。
+
+    同时校验阶段 1 的来源归属声明与阶段 2 的映射完全一致：
+
+    - 每个 canonical 至少声明一个来源实例；
+    - 每个来源实例必须来自输入语料池；
+    - 同一个实例不得属于多个 canonical；
+    - 每个输入实例都必须出现在某个 canonical 的来源声明中（无法合并
+      的实例由阶段 1 创建 singleton）；
+    - 阶段 2 每条 mapping 的目标 canonical 必须与阶段 1 的归属声明一致。
+    """
     expected_ids = {item.requirement_id for item in consolidation_input.occurrences}
     actual_ids = {mapping.requirement_id for mapping in result.mappings}
     missing_ids = sorted(expected_ids - actual_ids)
@@ -185,3 +210,41 @@ def validate_requirement_coverage(
         errors.append(f"包含未知要求实例：{unexpected_ids}")
     if errors:
         raise ValueError("；".join(errors))
+
+    # 阶段 1 来源归属声明一致性（与输入对照）。
+    declared: dict[int, str] = {}
+    for canonical in result.canonical_requirements:
+        if not canonical.source_requirement_ids:
+            raise ValueError(
+                f"标准要求项没有来源实例：{canonical.canonical_requirement_id}"
+            )
+        source_ids = list(canonical.source_requirement_ids)
+        unknown_source_ids = sorted(set(source_ids) - expected_ids)
+        if unknown_source_ids:
+            raise ValueError(
+                f"标准要求项来源引用未知实例：{unknown_source_ids}"
+            )
+        for requirement_id in source_ids:
+            if requirement_id in declared:
+                raise ValueError(
+                    f"同一要求实例不能属于多个标准要求项："
+                    f"{requirement_id}（{declared[requirement_id]} 与 "
+                    f"{canonical.canonical_requirement_id}）"
+                )
+            declared[requirement_id] = canonical.canonical_requirement_id
+    missing_source_ids = sorted(expected_ids - set(declared))
+    if missing_source_ids:
+        raise ValueError(
+            "标准要求项来源声明遗漏实例（无法合并的实例必须由阶段1创建"
+            f"singleton）：{missing_source_ids}"
+        )
+
+    # 阶段 2 映射必须与阶段 1 来源归属一致。
+    for mapping in result.mappings:
+        declared_canonical = declared.get(mapping.requirement_id)
+        if mapping.canonical_requirement_id != declared_canonical:
+            raise ValueError(
+                f"映射与阶段1来源归属冲突：实例{mapping.requirement_id} "
+                f"阶段1归属{declared_canonical}，阶段2映射到"
+                f"{mapping.canonical_requirement_id}"
+            )

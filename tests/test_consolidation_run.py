@@ -61,7 +61,7 @@ def make_extraction(extraction_id: int, job_id: int) -> JobExtraction:
     return JobExtraction(
         id=extraction_id,
         job_id=job_id,
-        extractor_version="test-model|prompt:1.0|schema:3.0",
+        extractor_version="test-model|prompt:0.8|schema:3.0",
         model_name="test-model",
         prompt_version="1.0",
         schema_version="3.0",
@@ -99,6 +99,7 @@ def valid_result_payload() -> dict[str, object]:
             {
                 "canonical_requirement_id": "requirement-a",
                 "canonical_name": "能力甲使用经验",
+                "source_requirement_ids": [1, 2],
                 "rationale": "两条要求在各自证据中指向同一招聘条件",
                 "confidence": 0.95,
             }
@@ -187,6 +188,7 @@ def test_job_ids_filter_applies_to_scope(tmp_path: Path) -> None:
     seed_two_jobs(session_factory)
     payload = valid_result_payload()
     payload["mappings"] = payload["mappings"][:1]
+    payload["canonical_requirements"][0]["source_requirement_ids"] = [1]
     client = FakeConsolidationClient(stage_payloads(payload))
     metadata = ConsolidatorMetadata(model_name="test-model")
 

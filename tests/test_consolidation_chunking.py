@@ -98,6 +98,9 @@ class TruncationSimulatingClient:
                         {
                             "canonical_requirement_id": "cr-1",
                             "canonical_name": "统一测试条件",
+                            "source_requirement_ids": [
+                                item["id"] for item in payload["requirements"]
+                            ],
                             "rationale": "测试归并",
                             "confidence": 0.9,
                         }

@@ -65,7 +65,7 @@ def make_extraction(extraction_id: int, job_id: int) -> JobExtraction:
     return JobExtraction(
         id=extraction_id,
         job_id=job_id,
-        extractor_version="test-model|prompt:1.0|schema:3.0",
+        extractor_version="test-model|prompt:0.8|schema:3.0",
         model_name="test-model",
         prompt_version="1.0",
         schema_version="3.0",
@@ -103,12 +103,14 @@ def valid_result_payload() -> dict[str, object]:
             {
                 "canonical_requirement_id": "requirement-a",
                 "canonical_name": "能力甲使用经验",
+                "source_requirement_ids": [1],
                 "rationale": "两条要求在各自证据中指向同一招聘条件",
                 "confidence": 0.95,
             },
             {
                 "canonical_requirement_id": "requirement-b",
                 "canonical_name": "能力乙",
+                "source_requirement_ids": [2],
                 "rationale": "另一项独立能力",
                 "confidence": 0.9,
             },
@@ -186,6 +188,7 @@ def test_changed_input_creates_new_batch_with_same_consolidator(
         {
             "canonical_requirement_id": "requirement-c",
             "canonical_name": "能力丙",
+            "source_requirement_ids": [3],
             "rationale": "新增独立条件",
             "confidence": 0.9,
         }
@@ -243,7 +246,7 @@ def test_persisted_fields_match_contract(tmp_path: Path) -> None:
         assert consolidation.model_name == "test-model"
         assert len(consolidation.input_fingerprint) == 64
         assert consolidation.extractor_version == (
-            "test-model|prompt:1.0|schema:3.0"
+            "test-model|prompt:0.8|schema:3.0"
         )
         assert consolidation.selected_job_ids == [1, 2]
         assert consolidation.extraction_ids == [1, 2]
@@ -373,6 +376,7 @@ def test_mapping_chunk_failure_persists_nothing(tmp_path: Path) -> None:
             {
                 "canonical_requirement_id": "cr-1",
                 "canonical_name": "统一测试条件",
+                "source_requirement_ids": list(range(1, 52)),
                 "rationale": "测试归并",
                 "confidence": 0.9,
             }

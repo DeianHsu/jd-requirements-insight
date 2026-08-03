@@ -18,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
 from app.config import LLMSettings
+from app.extraction import assert_current_extractor_version
 from app.models import (
     CanonicalRequirementRecord,
     JobConsolidation,
@@ -49,10 +50,11 @@ CONSOLIDATION_SYSTEM_PROMPT = """你是跨JD岗位要求归并器。输入是一
 
 【任务边界】
 1. 每个输入实例必须且只能产生一条映射结果，不得遗漏任何实例，也不得为不存在的实例生成结果。
-2. 每个标准要求项必须至少有一个实例作为来源；标准要求项数量不超过输入实例数量，只为有实例依据的条件创建标准项，不得提出无人引用的标准项。
+2. 每个标准要求项必须至少有一个实例作为来源，并声明其来源实例ID（source_requirement_ids）；标准要求项数量不超过输入实例数量，只为有实例依据的条件创建标准项，不得提出无人引用的标准项。
 3. 同义归并：只有表面名称不同但结合证据上下文后指向同一招聘条件（达到可以合并统计的程度）的实例才归并到同一标准要求项。例如实例A（raw_name="能力甲使用经验"，evidence="具备能力甲使用经验"）与实例B（raw_name="具备能力甲的使用经验"，evidence="具备能力甲的使用经验"）应归并到同一标准要求项"能力甲使用经验"。
 4. 保守归并：无法确认是否等价的实例保持为不同标准要求项，每个实例至少可以形成自己的singleton标准要求项；不允许因为名称中出现相同关键词或属于同一技术领域就强制合并。
 4. 同一表面词可以因证据上下文不同而映射到不同标准要求项；不能只因为名称文本相同就自动归并，必须结合证据判断。
+5. 每个输入实例必须且只能归属一个标准要求项：实例的归属在其来源标准项的source_requirement_ids中声明；无法与其他实例合并的实例必须创建包含它的singleton标准项，不得遗漏任何实例。
 5. 不得修改、覆盖或删除任何输入实例的原始名称、证据和属性；归并只产生标准要求项和映射，不改写输入。
 6. 每条mapping都必须给出理由：说明依据了哪些证据和名称线索，不能只写"语义相同"或"相关"。
 
@@ -222,6 +224,9 @@ def load_consolidation_selection(
             raise ValueError(f"存在多个共同抽取器版本，请明确指定：{versions}")
         extractor_version = next(iter(common_versions))
 
+    # 当前主线只消费 v0.8 + Schema V3：显式指定或自动选中的旧版本都拒绝。
+    assert_current_extractor_version(extractor_version)
+
     selected_extractions = sorted(
         (
             extraction
@@ -357,6 +362,7 @@ def build_consolidation_user_prompt(
                 {
                     "canonical_requirement_id": "string，唯一标识",
                     "canonical_name": "string，规范化后全局唯一",
+                    "source_requirement_ids": ["int，本标准项来源实例的id；每个实例必须且只能归属一个标准项"],
                     "rationale": "string",
                     "confidence": "0到1",
                 }
@@ -384,14 +390,17 @@ def build_canonical_requirements_prompt(
     payload = {
         "task": (
             "请仅根据每个实例提供的原始名称和证据判断哪些实例指向同一"
-            "招聘条件，并提出标准要求项。只输出canonical_requirements，"
-            "不要输出mappings。"
+            "招聘条件，并提出标准要求项；每个实例必须且只能归属一个"
+            "标准要求项（在其source_requirement_ids中声明），无法与其他"
+            "实例合并的实例必须创建包含它的singleton标准项。"
+            "只输出canonical_requirements，不要输出mappings。"
         ),
         "output_schema": {
             "canonical_requirements": [
                 {
                     "canonical_requirement_id": "string，唯一标识",
                     "canonical_name": "string，规范化后全局唯一",
+                    "source_requirement_ids": ["int，本标准项来源实例的id；覆盖全部输入实例且不重复"],
                     "rationale": "string",
                     "confidence": "0到1",
                 }
@@ -412,16 +421,17 @@ def build_mappings_prompt(
     payload = {
         "task": (
             "请把每条要求实例映射到给定的标准要求项；每个实例必须且只能"
-            "产生一条映射，无法确认等价时为该实例创建独立的singleton"
-            "标准要求项。只输出mappings。"
+            "产生一条映射。只能引用给定的canonical_requirement_id；"
+            "本阶段不得创建新的canonical requirement或新的canonical ID，"
+            "若某实例不能与其他实例合并，阶段1应已为其创建singleton标准项。"
+            "只输出mappings。"
         ),
         "output_schema": {
             "mappings": [
                 {
                     "requirement_id": "int，本块输入实例的id",
                     "canonical_requirement_id": (
-                        "string，必须来自给定的标准要求项；无法确认等价时"
-                        "新建singleton标准要求项并引用它"
+                        "string，必须来自给定的标准要求项；不得新建或改写"
                     ),
                     "rationale": "string",
                     "confidence": "0到1",
@@ -692,18 +702,17 @@ def _drop_unreferenced_canonicals(
     canonical_requirements: list[CanonicalRequirement],
     mappings: list[RequirementMapping],
 ) -> RequirementConsolidationResult | None:
-    """剔除没有实例来源的标准项并重建结果；无法安全剔除时返回None。
+    """剔除没有来源声明的噪声标准项并重建结果；无法安全剔除时返回None。
 
-    只剔除未被任何 mapping 引用的标准项。若剔除后没有剩余标准项
-    （输出完全自相矛盾）则返回None交由上层报错。
+    只剔除 `source_requirement_ids` 为空的标准项（阶段 1 未声明任何
+    来源实例，剔除不会丢失实例归属）。若剔除后没有剩余标准项
+    （输出完全自相矛盾）则返回None交由上层报错。声明了来源但映射轮
+    不认可的项不在此剔除，交由校验失败反馈模型修正。
     """
-    referenced_by_mapping = {
-        mapping.canonical_requirement_id for mapping in mappings
-    }
     dropped = [
         item.canonical_requirement_id
         for item in canonical_requirements
-        if item.canonical_requirement_id not in referenced_by_mapping
+        if not item.source_requirement_ids
     ]
     if not dropped:
         return None
@@ -799,6 +808,7 @@ def persist_consolidation(
         CanonicalRequirementRecord(
             canonical_requirement_id=item.canonical_requirement_id,
             canonical_name=item.canonical_name,
+            source_requirement_ids=list(item.source_requirement_ids),
             rationale=item.rationale,
             confidence=item.confidence,
         )

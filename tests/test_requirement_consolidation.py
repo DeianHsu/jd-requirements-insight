@@ -42,7 +42,7 @@ def consolidation_input() -> RequirementConsolidationInput:
                 requirement_id=1,
                 job_id=101,
                 extraction_id=1001,
-                extractor_version="test-model|prompt:1.0|schema:3.0",
+                extractor_version="test-model|prompt:0.8|schema:3.0",
                 source_hash="a" * 64,
                 source_file="job-a.md",
                 requirement=requirement("能力甲使用经验", "具备能力甲使用经验"),
@@ -51,7 +51,7 @@ def consolidation_input() -> RequirementConsolidationInput:
                 requirement_id=2,
                 job_id=102,
                 extraction_id=1002,
-                extractor_version="test-model|prompt:1.0|schema:3.0",
+                extractor_version="test-model|prompt:0.8|schema:3.0",
                 source_hash="b" * 64,
                 source_file="job-b.md",
                 requirement=requirement(
@@ -69,6 +69,7 @@ def merged_result() -> RequirementConsolidationResult:
             CanonicalRequirement(
                 canonical_requirement_id="requirement-a",
                 canonical_name="能力甲使用经验",
+                source_requirement_ids=[1, 2],
                 rationale="两条要求在各自证据中指向同一招聘条件",
                 confidence=0.95,
             )
@@ -122,6 +123,7 @@ def test_result_rejects_normalized_duplicate_requirement_names() -> None:
         {
             "canonical_requirement_id": "requirement-b",
             "canonical_name": " 能力甲使用经验 ",
+            "source_requirement_ids": [3],
             "rationale": "重复标准要求项",
             "confidence": 0.8,
         }
@@ -163,6 +165,7 @@ def test_result_rejects_unreferenced_canonical_requirement() -> None:
         {
             "canonical_requirement_id": "requirement-b",
             "canonical_name": "能力乙",
+            "source_requirement_ids": [3],
             "rationale": "无人引用的标准项",
             "confidence": 0.8,
         }
@@ -230,3 +233,146 @@ def test_coverage_rejects_unexpected_requirement_occurrence() -> None:
 
     with pytest.raises(ValueError, match="包含未知要求实例"):
         validate_requirement_coverage(source, result)
+
+
+def test_stage1_missing_source_instance_is_rejected() -> None:
+    """阶段1来源声明遗漏某个输入实例时被拒绝（须由阶段1创建singleton）。"""
+    source = consolidation_input()
+    result = merged_result()
+    result.canonical_requirements[0].source_requirement_ids = [1]
+
+    with pytest.raises(ValueError, match="来源声明遗漏实例"):
+        validate_requirement_coverage(source, result)
+
+
+def test_instance_declared_in_two_canonicals_is_rejected() -> None:
+    """同一个实例被声明属于两个 canonical 时被拒绝。"""
+    source = consolidation_input()
+    result = merged_result()
+    result.canonical_requirements.append(
+        CanonicalRequirement(
+            canonical_requirement_id="requirement-b",
+            canonical_name="能力乙",
+            source_requirement_ids=[2],
+            rationale="另一个标准项",
+            confidence=0.8,
+        )
+    )
+    # 绕过 Result validator（b 无 mapping 引用会被 validator 拒绝），
+    # 直接验证来源归属检查：实例 2 同时声明在 requirement-a 与 requirement-b。
+    result = RequirementConsolidationResult.model_construct(
+        canonical_requirements=result.canonical_requirements,
+        mappings=result.mappings,
+    )
+
+    with pytest.raises(ValueError, match="不能属于多个标准要求项"):
+        validate_requirement_coverage(source, result)
+
+
+def test_canonical_without_source_instance_is_rejected() -> None:
+    """阶段1声明了来源为空的标准项被拒绝（每个 canonical 至少一个来源）。"""
+    source = consolidation_input()
+    result = merged_result().model_dump(mode="json")
+    result["canonical_requirements"].append(
+        {
+            "canonical_requirement_id": "requirement-b",
+            "canonical_name": "能力乙",
+            "source_requirement_ids": [],
+            "rationale": "无来源标准项",
+            "confidence": 0.8,
+        }
+    )
+    result["mappings"][1]["canonical_requirement_id"] = "requirement-b"
+
+    with pytest.raises(ValueError, match="没有来源实例"):
+        validate_requirement_coverage(
+            source, RequirementConsolidationResult.model_validate(result)
+        )
+
+
+def test_mapping_conflicts_with_stage1_source_declaration() -> None:
+    """阶段2 mapping 与阶段1来源归属冲突时被拒绝。"""
+    source = consolidation_input()
+    # 绕过 Result validator（b 无 mapping 引用会被 validator 拒绝），
+    # 直接验证映射与来源归属的一致性检查。
+    result = RequirementConsolidationResult.model_construct(
+        canonical_requirements=[
+            CanonicalRequirement(
+                canonical_requirement_id="requirement-a",
+                canonical_name="能力甲使用经验",
+                source_requirement_ids=[1],
+                rationale="阶段1归属",
+                confidence=0.95,
+            ),
+            CanonicalRequirement(
+                canonical_requirement_id="requirement-b",
+                canonical_name="能力乙",
+                source_requirement_ids=[2],
+                rationale="阶段1归属",
+                confidence=0.8,
+            ),
+        ],
+        mappings=[
+            RequirementMapping(
+                requirement_id=1,
+                canonical_requirement_id="requirement-a",
+                rationale="一致",
+                confidence=0.95,
+            ),
+            # 阶段1声明实例2归属 requirement-b，阶段2却映射到 requirement-a。
+            RequirementMapping(
+                requirement_id=2,
+                canonical_requirement_id="requirement-a",
+                rationale="冲突映射",
+                confidence=0.8,
+            ),
+        ],
+    )
+
+    with pytest.raises(ValueError, match="映射与阶段1来源归属冲突"):
+        validate_requirement_coverage(source, result)
+
+
+def test_stage1_singleton_for_unmergeable_instance_passes() -> None:
+    """阶段1为无法合并实例创建 singleton，阶段2正常映射（两阶段合同成立）。"""
+    source = consolidation_input()
+    result = RequirementConsolidationResult(
+        canonical_requirements=[
+            CanonicalRequirement(
+                canonical_requirement_id="requirement-a",
+                canonical_name="能力甲使用经验",
+                source_requirement_ids=[1],
+                rationale="同义归并",
+                confidence=0.95,
+            ),
+            CanonicalRequirement(
+                canonical_requirement_id="requirement-b",
+                canonical_name="具备能力甲的使用经验",
+                source_requirement_ids=[2],
+                rationale="无法确认等价，保持singleton",
+                confidence=0.8,
+            ),
+        ],
+        mappings=[
+            RequirementMapping(
+                requirement_id=1,
+                canonical_requirement_id="requirement-a",
+                rationale="同条件",
+                confidence=0.95,
+            ),
+            RequirementMapping(
+                requirement_id=2,
+                canonical_requirement_id="requirement-b",
+                rationale="独立",
+                confidence=0.8,
+            ),
+        ],
+    )
+
+    validate_requirement_coverage(source, result)  # 不抛异常
+
+    assert len(result.canonical_requirements) == 2
+    assert {m.canonical_requirement_id for m in result.mappings} == {
+        "requirement-a",
+        "requirement-b",
+    }

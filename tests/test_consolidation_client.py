@@ -75,7 +75,7 @@ def consolidation_input() -> RequirementConsolidationInput:
                 requirement_id=1,
                 job_id=101,
                 extraction_id=1001,
-                extractor_version="test-model|prompt:1.0|schema:3.0",
+                extractor_version="test-model|prompt:0.8|schema:3.0",
                 source_hash="a" * 64,
                 source_file="job-a.md",
                 requirement=requirement("能力甲使用经验", "具备能力甲使用经验"),
@@ -84,7 +84,7 @@ def consolidation_input() -> RequirementConsolidationInput:
                 requirement_id=2,
                 job_id=102,
                 extraction_id=1002,
-                extractor_version="test-model|prompt:1.0|schema:3.0",
+                extractor_version="test-model|prompt:0.8|schema:3.0",
                 source_hash="b" * 64,
                 source_file="job-b.md",
                 requirement=requirement(
@@ -102,6 +102,7 @@ def valid_result_payload() -> dict[str, object]:
             {
                 "canonical_requirement_id": "requirement-a",
                 "canonical_name": "能力甲使用经验",
+                "source_requirement_ids": [1, 2],
                 "rationale": "两条要求在各自证据中指向同一招聘条件",
                 "confidence": 0.95,
             }
