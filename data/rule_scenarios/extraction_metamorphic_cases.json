@@ -1,9 +1,9 @@
 {
-  "protocol_version": "1.0",
-  "description": "抽取层规则场景与变形测试（P0-3 新协议，DEC-015）。base_input 全部为领域中性的合成 JD 文本，不包含真实 JD 内容；场景不保存完整 expected extraction，expected_properties 是可由 app/extraction_validation.py 确定性检查的属性。",
+  "protocol_version": "1.1",
+  "description": "抽取层规则场景与变形测试（P0-3 新协议，DEC-015）。protocol 1.1：熟练度三级（unknown/basic/advanced）；变形比较使用 TransformationResult 锚点（anchor_map 一对多 + changed_regions）；场景期望属性可定位到目标锚点；raw_name 跟随替换检查。base_input 全部为领域中性的合成 JD 文本，不包含真实 JD 内容；场景不保存完整 expected extraction，expected_properties 由 app/extraction_validation.py 确定性检查。",
   "usage": {
     "deterministic_fixture": "单元测试用假客户端或手工构造结果验证检查器逻辑，不调用真实模型",
-    "model_metamorphic_experiment": "scripts/experiments/p0_3/run_acceptance.py --execute 对 base_input 与 transformed_input 各抽取一次并比较",
+    "model_metamorphic_experiment": "scripts/experiments/p0_3/run_acceptance.py --execute 对 base_input 与 transformed_input 各抽取一次并比较（Track A）",
     "human_audit_scenario": "人工按 forbidden_violations 复核输出是否违反规则"
   },
   "scenarios": [
@@ -15,7 +15,7 @@
       "expected_properties": {
         "fact_set_unchanged": true,
         "block_set_preserved": true,
-        "field_invariance": ["category", "importance", "proficiency", "group_logic"]
+        "field_invariance": ["category", "importance", "proficiency", "group_type", "group_membership"]
       },
       "forbidden_violations": [
         {"rule_id": "COVER-01", "violation": "项目符号、编号、空格或换行变化不得导致分句遗漏"},
@@ -30,7 +30,7 @@
       "transformation": {"type": "reorder_paragraphs", "seed": 20260803},
       "expected_properties": {
         "fact_set_unchanged": true,
-        "field_invariance": ["category", "importance", "proficiency", "group_logic"]
+        "field_invariance": ["category", "importance", "proficiency", "group_type", "group_membership"]
       },
       "forbidden_violations": [
         {"rule_id": "COVER-01", "violation": "互不相关段落顺序变化不得导致实质内容遗漏"},
@@ -49,7 +49,7 @@
       "expected_properties": {
         "fact_set_preserved": true,
         "block_set_preserved": true,
-        "field_invariance": ["category", "importance", "proficiency", "group_logic"],
+        "field_invariance": ["category", "importance", "proficiency", "group_type", "group_membership"],
         "no_new_conditions": true
       },
       "forbidden_violations": [
@@ -66,7 +66,7 @@
       "expected_properties": {
         "fact_set_preserved": true,
         "block_set_preserved": true,
-        "field_invariance": ["category", "importance", "proficiency", "group_logic"]
+        "field_invariance": ["category", "importance", "proficiency", "group_type", "group_membership"]
       },
       "forbidden_violations": [
         {"rule_id": "REQ-02", "violation": "精确重复条件不得产生新的实质原子事实（重复抽取只作漂移记录）"}
@@ -83,11 +83,14 @@
       },
       "expected_properties": {
         "fact_set_preserved": true,
-        "field_invariance": ["category", "importance", "group_logic"],
-        "proficiency_upgraded": true
+        "field_invariance": ["category", "importance", "group_type", "group_membership"],
+        "proficiency_expected_changes": [
+          {"anchor": "熟悉技术甲和框架乙", "from": "basic", "to": "advanced"}
+        ],
+        "proficiency_invariance": true
       },
       "forbidden_violations": [
-        {"rule_id": "FIELD-03", "violation": "只有明确程度词变化时才能改变 proficiency"},
+        {"rule_id": "FIELD-03", "violation": "只有明确程度词变化时才能改变 proficiency；熟悉→精通应为 basic→advanced"},
         {"rule_id": "REQ-02", "violation": "措辞变化不得改变原子事实数量"}
       ],
       "severity": "medium"
@@ -104,8 +107,13 @@
       },
       "expected_properties": {
         "fact_set_preserved": true,
-        "field_invariance": ["category", "proficiency", "group_logic"],
-        "importance_upgraded_to_preferred": true
+        "field_invariance": ["category", "proficiency", "group_type", "group_membership"],
+        "importance_expected_change": {
+          "anchor": "熟悉技术甲和框架乙",
+          "from": "must",
+          "to": "preferred"
+        },
+        "proficiency_invariance": true
       },
       "forbidden_violations": [
         {"rule_id": "FIELD-02", "violation": "只有明确出现优先/加分措辞才能改为 preferred"}
@@ -124,12 +132,15 @@
       },
       "expected_properties": {
         "fact_set_preserved": true,
-        "field_invariance": ["category", "importance"],
-        "block_item_count_preserved": true
+        "field_invariance": ["category", "importance", "proficiency"],
+        "group_logic_changed_to": "any_of",
+        "group_change_anchor": "熟悉技术甲和框架乙",
+        "expected_group_member_count": 2,
+        "group_members_preserved": true
       },
       "forbidden_violations": [
         {"rule_id": "GROUP-01", "violation": "明确至少一种时必须建立 any_of，不得保持 standalone"},
-        {"rule_id": "GROUP-02", "violation": "any_of 组至少两个成员且共享同一 group_id"}
+        {"rule_id": "GROUP-02", "violation": "any_of 组至少两个成员且成员关系保持一致"}
       ],
       "severity": "high"
     },
@@ -146,11 +157,15 @@
       },
       "expected_properties": {
         "block_item_count_preserved": true,
-        "field_invariance": ["category", "importance", "proficiency", "group_logic"]
+        "field_invariance": ["category", "importance", "proficiency", "group_type", "group_membership"],
+        "raw_name_follows_replacements": [
+          {"find": "技术甲", "replace": "技术丙"},
+          {"find": "框架乙", "replace": "框架丁"}
+        ]
       },
       "forbidden_violations": [
         {"rule_id": "REQ-02", "violation": "技术改名不得改变原子事实数量或字段"},
-        {"rule_id": "REQ-05", "violation": "raw_name 必须跟随原文改名，不得继续使用旧名"}
+        {"rule_id": "REQ-05", "violation": "raw_name 必须跟随原文改名，不得继续输出旧名"}
       ],
       "severity": "medium"
     },
@@ -167,7 +182,7 @@
       "expected_properties": {
         "fact_set_preserved": true,
         "no_new_conditions": true,
-        "field_invariance": ["category", "importance", "group_logic"]
+        "field_invariance": ["category", "importance", "group_type", "group_membership"]
       },
       "forbidden_violations": [
         {"rule_id": "REQ-02", "violation": "一句拆两句不得丢失或新增原子事实"},
@@ -188,11 +203,66 @@
       "expected_properties": {
         "fact_set_preserved": true,
         "no_new_conditions": true,
-        "field_invariance": ["category", "importance", "proficiency", "group_logic"]
+        "field_invariance": ["category", "importance", "proficiency", "group_type", "group_membership"]
       },
       "forbidden_violations": [
         {"rule_id": "REQ-06", "violation": "相关但未被条件修饰的技术不得补充成条件（至多 mentioned）"},
         {"rule_id": "RESP-01", "violation": "职责中出现的技术不得自动变成 must/preferred 要求"}
+      ],
+      "severity": "high"
+    },
+    {
+      "scenario_id": "SCN-011",
+      "rule_ids": ["FIELD-03"],
+      "base_input": "# 示例岗位\n\n## 岗位职责\n负责能力甲体系建设。\n\n## 任职要求\n1. 了解技术甲和框架乙。\n2. 本科及以上学历。",
+      "transformation": {
+        "type": "text_replace",
+        "replacements": [{"find": "了解", "replace": "熟悉"}]
+      },
+      "expected_properties": {
+        "fact_set_preserved": true,
+        "field_invariance": ["category", "importance", "proficiency", "group_type", "group_membership"]
+      },
+      "forbidden_violations": [
+        {"rule_id": "FIELD-03", "violation": "了解与熟悉属于同一粗粒度 band（basic），同级变化不得改变 proficiency"}
+      ],
+      "severity": "medium"
+    },
+    {
+      "scenario_id": "SCN-012",
+      "rule_ids": ["FIELD-03"],
+      "base_input": "# 示例岗位\n\n## 岗位职责\n负责能力甲体系建设。\n\n## 任职要求\n1. 掌握技术甲和框架乙。\n2. 本科及以上学历。",
+      "transformation": {
+        "type": "text_replace",
+        "replacements": [{"find": "掌握", "replace": "精通"}]
+      },
+      "expected_properties": {
+        "fact_set_preserved": true,
+        "field_invariance": ["category", "importance", "proficiency", "group_type", "group_membership"]
+      },
+      "forbidden_violations": [
+        {"rule_id": "FIELD-03", "violation": "掌握与精通属于同一粗粒度 band（advanced），同级变化不得改变 proficiency"}
+      ],
+      "severity": "medium"
+    },
+    {
+      "scenario_id": "SCN-013",
+      "rule_ids": ["FIELD-03"],
+      "base_input": "# 示例岗位\n\n## 岗位职责\n负责能力甲体系建设。\n\n## 任职要求\n1. 熟悉技术甲和框架乙。\n2. 本科及以上学历。",
+      "transformation": {
+        "type": "text_replace",
+        "replacements": [
+          {"find": "熟悉技术甲和框架乙。", "replace": "具备技术甲和框架乙项目经验。"}
+        ]
+      },
+      "expected_properties": {
+        "fact_set_preserved": true,
+        "field_invariance": ["category", "importance", "group_type", "group_membership"],
+        "experience_to_unknown_expected_change": {"anchor": "熟悉技术甲和框架乙"},
+        "proficiency_invariance": true
+      },
+      "forbidden_violations": [
+        {"rule_id": "FIELD-03", "violation": "项目经验表达必须映射为 unknown，不得自动变成 advanced"}
       ],
       "severity": "high"
     }
