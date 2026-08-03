@@ -20,10 +20,10 @@ from scripts.experiments.p0_4.run_acceptance import (
 )
 
 
-def test_resolve_extractor_version_defaults_to_current_config() -> None:
-    """缺省时使用当前唯一抽取配置 v0.8 + Schema V3。"""
-    resolved = resolve_extractor_version(None, "test-model")
-    assert resolved == "test-model|prompt:0.8|schema:3.0"
+def test_resolve_extractor_version_defaults_to_none() -> None:
+    """缺省返回 None，由生产选择逻辑自动选择唯一共同当前抽取版本。"""
+    resolved = resolve_extractor_version(None)
+    assert resolved is None
 
 
 def test_resolve_extractor_version_rejects_legacy_schema() -> None:
@@ -33,7 +33,13 @@ def test_resolve_extractor_version_rejects_legacy_schema() -> None:
         "test-model|prompt:0.6|schema:2.0",
     ):
         with pytest.raises(SystemExit, match="重新生成"):
-            resolve_extractor_version(legacy, "test-model")
+            resolve_extractor_version(legacy)
+
+
+def test_resolve_extractor_version_accepts_valid_version() -> None:
+    """显式合法版本正常返回。"""
+    resolved = resolve_extractor_version("test-model|prompt:0.8|schema:3.0")
+    assert resolved == "test-model|prompt:0.8|schema:3.0"
 
 
 def _mapping(
@@ -190,42 +196,27 @@ def _seed_v08_extraction(database_path: Path) -> None:
 
 
 class FakeConsolidationClient:
-    """按阶段返回合法归并响应（canonical → mappings），不调用真实模型。"""
+    """返回单次合法 canonical 聚类响应，不调用真实模型。"""
 
     def __init__(self, settings) -> None:
         """保存模型名。"""
         self.model_name = settings.model
 
     def complete(self, system_prompt: str, user_prompt: str) -> str:
-        """按阶段提示返回响应。"""
-        if "只输出canonical_requirements" in user_prompt:
-            return json.dumps(
-                {
-                    "canonical_requirements": [
-                        {"canonical_requirement_id": "cr-0",
-                         "canonical_name": "技术甲",
-                         "source_requirement_ids": [1, 3],
-                         "rationale": "测试",
-                         "confidence": 0.95},
-                        {"canonical_requirement_id": "cr-1",
-                         "canonical_name": "能力乙",
-                         "source_requirement_ids": [2],
-                         "rationale": "测试",
-                         "confidence": 0.95},
-                    ]
-                },
-                ensure_ascii=False,
-            )
-        # 映射阶段：每个实例恰好映射一次。
+        """返回单次合法 canonical 聚类响应（mappings 由确定性代码生成）。"""
         return json.dumps(
             {
-                "mappings": [
-                    {"requirement_id": 1, "canonical_requirement_id": "cr-0",
-                     "rationale": "测试", "confidence": 0.95},
-                    {"requirement_id": 2, "canonical_requirement_id": "cr-1",
-                     "rationale": "测试", "confidence": 0.95},
-                    {"requirement_id": 3, "canonical_requirement_id": "cr-0",
-                     "rationale": "测试", "confidence": 0.95},
+                "canonical_requirements": [
+                    {"canonical_requirement_id": "cr-0",
+                     "canonical_name": "技术甲",
+                     "source_requirement_ids": [1, 3],
+                     "rationale": "测试",
+                     "confidence": 0.95},
+                    {"canonical_requirement_id": "cr-1",
+                     "canonical_name": "能力乙",
+                     "source_requirement_ids": [2],
+                     "rationale": "测试",
+                     "confidence": 0.95},
                 ]
             },
             ensure_ascii=False,
@@ -282,3 +273,316 @@ def test_p0_4_acceptance_end_to_end(monkeypatch, tmp_path) -> None:
     multi_member = report["manual_cluster_review"]["clusters"][0]["multi_member_clusters"]
     assert any(cluster["canonical_id"] == "cr-0" for cluster in multi_member)
     assert (tmp_path / "raw.json").exists()
+
+
+def test_default_extractor_version_auto_selects_unique_common(
+    monkeypatch, tmp_path
+) -> None:
+    """缺省时自动选择数据库中的唯一共同当前版本（归并模型名不参与拼接）。"""
+    import scripts.experiments.p0_4.run_acceptance as acceptance_script
+
+    database_path = tmp_path / "auto.db"
+    _seed_v08_extraction(database_path)
+
+    class FakeSettings:
+        model = "consolidation-model"  # 归并模型名与抽取模型名不同
+        api_key = "test-key"
+        base_url = None
+
+        def missing_fields(self) -> list[str]:
+            return []
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_acceptance",
+            "--execute",
+            "--database-url",
+            f"sqlite:///{database_path.as_posix()}",
+            "--job-ids",
+            "1",
+            "--runs",
+            "1",
+            "--report",
+            str(tmp_path / "report.json"),
+            "--raw-output",
+            str(tmp_path / "raw.json"),
+        ],
+    )
+    monkeypatch.setattr(acceptance_script, "load_llm_settings", lambda: FakeSettings())
+    monkeypatch.setattr(
+        acceptance_script, "OpenAICompatibleConsolidationClient", FakeConsolidationClient
+    )
+
+    assert acceptance_script.main() == 0
+
+    report = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
+    # 自动选中库中唯一 v0.8 抽取版本，而不是用归并模型名拼接。
+    assert report["input_identity"]["extractor_version"] == (
+        "test-model|prompt:0.8|schema:3.0"
+    )
+    assert report["input_identity"]["model"] == "consolidation-model"
+
+
+def test_multiple_common_versions_require_explicit_selection(
+    monkeypatch, tmp_path
+) -> None:
+    """数据库存在多个共同抽取版本时要求显式指定。"""
+    import scripts.experiments.p0_4.run_acceptance as acceptance_script
+
+    database_path = tmp_path / "multi.db"
+    _seed_v08_extraction(database_path)
+
+    from app.database import (
+        create_database_engine,
+        create_session_factory,
+        initialize_database,
+    )
+    from app.models import JobExtraction
+
+    engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
+    initialize_database(engine)
+    session_factory = create_session_factory(engine)
+    with session_factory() as session:
+        extraction = session.get(JobExtraction, 1)
+        assert extraction is not None
+        extraction.extractor_version = "test-model|prompt:0.6|schema:2.0"
+        session.commit()
+    engine.dispose()
+
+    class FakeSettings:
+        model = "test-model"
+        api_key = "test-key"
+        base_url = None
+
+        def missing_fields(self) -> list[str]:
+            return []
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_acceptance",
+            "--execute",
+            "--database-url",
+            f"sqlite:///{database_path.as_posix()}",
+            "--job-ids",
+            "1",
+            "--runs",
+            "1",
+        ],
+    )
+    monkeypatch.setattr(acceptance_script, "load_llm_settings", lambda: FakeSettings())
+    monkeypatch.setattr(
+        acceptance_script, "OpenAICompatibleConsolidationClient", FakeConsolidationClient
+    )
+
+    # 只有 v0.6 一个版本 → 自动选择后被版本门禁拒绝（不是模型调用失败）。
+    result = acceptance_script.main()
+    assert result != 0
+
+
+def test_legacy_database_fails_before_client_initialization(
+    monkeypatch, tmp_path
+) -> None:
+    """P0-4 验收遇到旧数据库时，在模型客户端初始化和调用前失败。"""
+    import scripts.experiments.p0_4.run_acceptance as acceptance_script
+
+    database_path = tmp_path / "legacy_gate.db"
+    from app.database import create_database_engine
+    from sqlalchemy import text
+
+    engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE requirement_relations (id INTEGER PRIMARY KEY)"
+            )
+        )
+    engine.dispose()
+
+    class FakeSettings:
+        model = "test-model"
+        api_key = "test-key"
+        base_url = None
+
+        def missing_fields(self) -> list[str]:
+            return []
+
+    class ExplodingClient:
+        """若被初始化/调用则测试失败。"""
+
+        def __init__(self, settings) -> None:
+            raise AssertionError("不应初始化模型客户端")
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_acceptance",
+            "--execute",
+            "--database-url",
+            f"sqlite:///{database_path.as_posix()}",
+            "--job-ids",
+            "1",
+            "--runs",
+            "1",
+        ],
+    )
+    monkeypatch.setattr(acceptance_script, "load_llm_settings", lambda: FakeSettings())
+    monkeypatch.setattr(
+        acceptance_script, "OpenAICompatibleConsolidationClient", ExplodingClient
+    )
+
+    assert acceptance_script.main() != 0
+
+
+def test_order_transformation_contract_violation_is_hard_gate(
+    monkeypatch, tmp_path
+) -> None:
+    """基础 runs 合法但顺序变形合同违规时 hard gate 非空、脚本返回非零。"""
+    import scripts.experiments.p0_4.run_acceptance as acceptance_script
+
+    database_path = tmp_path / "order_gate.db"
+    _seed_v08_extraction(database_path)
+
+    class FakeSettings:
+        model = "test-model"
+        api_key = "test-key"
+        base_url = None
+
+        def missing_fields(self) -> list[str]:
+            return []
+
+    class OrderViolatingClient:
+        """对顺序打乱输入返回遗漏实例的聚类（模拟顺序敏感幻觉）。"""
+
+        def __init__(self, settings) -> None:
+            self.model_name = settings.model
+
+        def complete(self, system_prompt: str, user_prompt: str) -> str:
+            payload = json.loads(user_prompt)
+            requirement_ids = [item["id"] for item in payload["requirements"]]
+            if requirement_ids != [1, 2, 3]:
+                # 顺序变形运行（输入顺序被打乱）：遗漏实例 2。
+                source_ids = [rid for rid in requirement_ids if rid != 2]
+            else:
+                source_ids = requirement_ids
+            return json.dumps(
+                {
+                    "canonical_requirements": [
+                        {"canonical_requirement_id": "cr-0",
+                         "canonical_name": "技术甲",
+                         "source_requirement_ids": source_ids,
+                         "rationale": "测试",
+                         "confidence": 0.95},
+                    ]
+                },
+                ensure_ascii=False,
+            )
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_acceptance",
+            "--execute",
+            "--database-url",
+            f"sqlite:///{database_path.as_posix()}",
+            "--job-ids",
+            "1",
+            "--runs",
+            "1",
+            "--report",
+            str(tmp_path / "report.json"),
+        ],
+    )
+    monkeypatch.setattr(acceptance_script, "load_llm_settings", lambda: FakeSettings())
+    monkeypatch.setattr(
+        acceptance_script,
+        "OpenAICompatibleConsolidationClient",
+        OrderViolatingClient,
+    )
+
+    # 顺序变形 coverage 不足 → hard gate（order_transformation: coverage）。
+    assert acceptance_script.main() != 0
+
+    report = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
+    assert any(
+        "order_transformation" in failure
+        for failure in report["hard_gate_failures"]
+    )
+
+
+def test_raw_response_structure_keeps_model_and_normalized_result() -> None:
+    """raw_response 保存模型响应与规范化结果，attempt_count 正确。"""
+    from app.consolidation import consolidate_with_correction
+    from app.requirement_consolidation import (
+        RequirementConsolidationInput,
+        RequirementOccurrence,
+    )
+    from app.schemas import RequirementItem
+
+    class SingleClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def complete(self, system_prompt: str, user_prompt: str) -> str:
+            self.calls += 1
+            return json.dumps(
+                {
+                    "canonical_requirements": [
+                        {"canonical_requirement_id": "cr-0",
+                         "canonical_name": "技术甲",
+                         "source_requirement_ids": [1, 2],
+                         "rationale": "测试",
+                         "confidence": 0.95},
+                    ]
+                },
+                ensure_ascii=False,
+            )
+
+    def requirement(raw_name: str, evidence: str) -> RequirementItem:
+        return RequirementItem.model_validate(
+            {
+                "raw_name": raw_name,
+                "category": "other",
+                "importance": "must",
+                "proficiency": "unknown",
+                "group_id": None,
+                "group_logic": "standalone",
+                "min_years": None,
+                "max_years": None,
+                "years_text": None,
+                "evidence": evidence,
+                "confidence": 0.9,
+            }
+        )
+
+    source = RequirementConsolidationInput(
+        occurrences=[
+            RequirementOccurrence(
+                requirement_id=requirement_id,
+                job_id=101,
+                extraction_id=1001,
+                extractor_version="test-model|prompt:0.8|schema:3.0",
+                source_hash="a" * 64,
+                source_file="job-a.md",
+                requirement=requirement("技术甲", "熟悉技术甲"),
+            )
+            for requirement_id in (1, 2)
+        ]
+    )
+
+    result, raw = consolidate_with_correction(source, SingleClient(), max_attempts=1)
+
+    assert len(result.mappings) == 2
+    # model_response 是模型原始输出，不含确定性 mappings。
+    assert "model_response" in raw
+    assert "canonical_requirements" in raw["model_response"]
+    assert "mappings" not in raw["model_response"]
+    # normalized_result 包含确定性生成的 mappings。
+    assert "normalized_result" in raw
+    assert len(raw["normalized_result"]["mappings"]) == 2
+    assert raw["attempt_count"] == 1

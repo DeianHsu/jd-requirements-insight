@@ -11,7 +11,7 @@ v0.8 + Schema V3；显式 `--extractor-version` 必须包含 schema:3.0，拒绝
 3. 变形测试：输入顺序打乱运行一次；
 4. 指标：合同违规（coverage、重复映射、未知引用、空 cluster）、
    positive-pair Jaccard、canonical 数量漂移、singleton 比例漂移、
-   顺序/分块变形结果；
+   顺序变形结果；
 5. 输出脱敏验收报告；原始运行结果（含证据）写入 data/private/。
 """
 
@@ -24,6 +24,7 @@ from pathlib import Path
 
 from app.config import load_llm_settings
 from app.consolidation import (
+    ConsolidationError,
     ConsolidatorMetadata,
     OpenAICompatibleConsolidationClient,
     consolidate_with_correction,
@@ -37,7 +38,11 @@ from app.consolidation_validation import (
     validate_contract,
     write_acceptance_report,
 )
-from app.database import create_database_engine, create_session_factory
+from app.database import (
+    assert_current_database_schema,
+    create_database_engine,
+    create_session_factory,
+)
 from app.extraction import assert_current_extractor_version
 from app.requirement_consolidation import RequirementConsolidationInput
 
@@ -51,14 +56,15 @@ def build_input(selection, job_ids: set[int] | None = None):
     return RequirementConsolidationInput(occurrences=occurrences)
 
 
-def resolve_extractor_version(
-    args_extractor_version: str | None, model_name: str
-) -> str:
-    """默认使用当前唯一抽取配置 v0.8 + Schema V3；显式输入严格校验版本身份。"""
-    if args_extractor_version is None:
-        from app.extraction import PROMPT_VERSION, SCHEMA_VERSION
+def resolve_extractor_version(args_extractor_version: str | None) -> str | None:
+    """解析抽取版本参数；缺省返回 None 交由生产选择逻辑。
 
-        return f"{model_name}|prompt:{PROMPT_VERSION}|schema:{SCHEMA_VERSION}"
+    缺省时（None）由 `load_consolidation_selection` 自动选择所选 JD 的
+    唯一共同抽取版本并校验为 v0.8 + Schema V3（归并模型名不得参与拼接，
+    抽取模型可能与归并模型不同）。只有用户显式提供版本时才提前严格校验。
+    """
+    if args_extractor_version is None:
+        return None
     try:
         assert_current_extractor_version(args_extractor_version)
     except ValueError as exc:
@@ -154,7 +160,7 @@ def main() -> int:
         "--max-attempts",
         type=int,
         default=3,
-        help="每个阶段的有限重试次数",
+        help="单次聚类任务的有限重试次数",
     )
     parser.add_argument(
         "--report",
@@ -186,19 +192,24 @@ def main() -> int:
         print(f"缺少LLM配置：{', '.join(missing)}")
         return 1
 
-    extractor_version = resolve_extractor_version(
-        args.extractor_version, settings.model
-    )
+    extractor_version = resolve_extractor_version(args.extractor_version)
 
     engine = create_database_engine(args.database_url)
-    session_factory = create_session_factory(engine)
     try:
-        with session_factory() as session:
-            selection = load_consolidation_selection(
-                session,
-                job_ids=set(args.job_ids) if args.job_ids else None,
-                extractor_version=extractor_version,
-            )
+        try:
+            # 查询前验证数据库属于当前结构；旧库/残缺库明确拒绝。
+            assert_current_database_schema(engine)
+            session_factory = create_session_factory(engine)
+            with session_factory() as session:
+                selection = load_consolidation_selection(
+                    session,
+                    job_ids=set(args.job_ids) if args.job_ids else None,
+                    extractor_version=extractor_version,
+                )
+        except (RuntimeError, ValueError) as exc:
+            print(f"验收无法开始：{exc}")
+            print("提示：请备份 data/raw_jds/，删除旧派生数据库并重新生成。")
+            return 1
     finally:
         engine.dispose()
 
@@ -228,9 +239,16 @@ def main() -> int:
     shuffled_occurrences = list(consolidation_input.occurrences)
     random.Random(20260803).shuffle(shuffled_occurrences)
     shuffled_input = RequirementConsolidationInput(occurrences=shuffled_occurrences)
-    order_result, _, _ = run_once(
-        make_client, shuffled_input, args.max_attempts
-    )
+    order_result = None
+    try:
+        order_result, _, _ = run_once(
+            make_client, shuffled_input, args.max_attempts
+        )
+    except (ConsolidationError, ValueError) as exc:
+        # 顺序变形运行自身失败也构成 hard gate（顺序敏感幻觉）。
+        order_run_failed = f"order_transformation: 聚类失败：{exc}"
+    else:
+        order_run_failed = None
 
     contract_violations = [
         validate_contract(
@@ -240,17 +258,32 @@ def main() -> int:
         for run in runs
     ]
 
-    order_jaccard = positive_pair_jaccard(
-        mapping_clusters(runs[0]["result"]), mapping_clusters(order_result)
-    )
-    order_contract = validate_contract(
-        order_result,
-        expected_requirement_count=len(consolidation_input.occurrences),
-    )
-
     hard_gate_failures, warnings = evaluate_gates(runs, contract_violations)
-    if order_jaccard < 0.85:
-        warnings.append(f"order_transformation: positive_pair_jaccard={order_jaccard:.2%}")
+    if order_run_failed is not None:
+        # 顺序变形聚类失败直接进入 hard gate。
+        hard_gate_failures.append(order_run_failed)
+    else:
+        order_jaccard = positive_pair_jaccard(
+            mapping_clusters(runs[0]["result"]), mapping_clusters(order_result)
+        )
+        order_contract = validate_contract(
+            order_result,
+            expected_requirement_count=len(consolidation_input.occurrences),
+        )
+        # 顺序变形合同违规直接进入 hard gate（jaccard 低于阈值仍只作 warning）。
+        if order_contract.coverage != 1.0:
+            hard_gate_failures.append(
+                f"order_transformation: coverage={order_contract.coverage}"
+            )
+        if order_contract.structural_violation_count != 0:
+            hard_gate_failures.append(
+                "order_transformation: structural_violations="
+                f"{order_contract.structural_violation_count}"
+            )
+        if order_jaccard < 0.85:
+            warnings.append(
+                f"order_transformation: positive_pair_jaccard={order_jaccard:.2%}"
+            )
 
     drift = singleton_and_canonical_drift(
         [mapping_clusters(run["result"]) for run in runs]
@@ -312,11 +345,15 @@ def main() -> int:
             "singleton_ratios": drift["singleton_ratios"],
         },
         metamorphic={
-            "order_transformation": {
-                "positive_pair_jaccard": round(order_jaccard, 4),
-                "coverage": order_contract.coverage,
-                "structural_violations": order_contract.structural_violation_count,
-            },
+            "order_transformation": (
+                {
+                    "positive_pair_jaccard": round(order_jaccard, 4),
+                    "coverage": order_contract.coverage,
+                    "structural_violations": order_contract.structural_violation_count,
+                }
+                if order_result is not None
+                else {"failed": order_run_failed}
+            ),
         },
         hard_gate_failures=hard_gate_failures,
         warnings=warnings,

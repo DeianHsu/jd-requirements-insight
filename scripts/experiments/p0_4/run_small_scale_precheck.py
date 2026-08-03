@@ -1,8 +1,8 @@
-﻿"""P0-4 分阶段/分块归并：小规模预检入口。
+﻿"""P0-4 单次聚类归并：小规模预检入口。
 
 从选定抽取器版本的实例池中按 requirement_id 升序取前 target_size 条，
-调用`consolidate_with_correction`执行分阶段/受控分块归并，记录每阶段
-请求的实例数、输入输出字符数与耗时，并输出 P0-4 合同违规与事实统计。
+调用`consolidate_with_correction`执行单次 LLM 聚类归并，记录模型请求的
+实例数、输入输出字符数与耗时，并输出 P0-4 合同违规与事实统计。
 必须显式`--execute`确认付费模型调用。
 
 输出：脱敏验收指标写入`reports/P0-4/`（仅统计数字，不含真实证据）；
@@ -28,7 +28,11 @@ from app.consolidation_validation import (
     mapping_clusters,
     validate_contract,
 )
-from app.database import create_database_engine, create_session_factory
+from app.database import (
+    assert_current_database_schema,
+    create_database_engine,
+    create_session_factory,
+)
 from app.requirement_consolidation import (
     RequirementConsolidationInput,
 )
@@ -104,7 +108,7 @@ def main() -> int:
         "--max-attempts",
         type=int,
         default=3,
-        help="每个阶段的有限重试次数",
+        help="单次聚类任务的有限重试次数",
     )
     parser.add_argument(
         "--report",
@@ -131,8 +135,10 @@ def main() -> int:
         return 1
 
     engine = create_database_engine("sqlite:///data/jd_skill_insight.db")
-    session_factory = create_session_factory(engine)
     try:
+        # 只读入口：查询前验证数据库属于当前结构，旧库明确拒绝。
+        assert_current_database_schema(engine)
+        session_factory = create_session_factory(engine)
         with session_factory() as session:
             selection = load_consolidation_selection(
                 session, extractor_version=args.extractor_version
@@ -183,7 +189,7 @@ def main() -> int:
         "extractor_version": selection.extractor_version,
         "input_fingerprint": selection.input_fingerprint,
         "input_size": len(precheck_input.occurrences),
-        "stage_requests": [
+        "request_records": [
             {key: value for key, value in record.items() if key != "response_head"}
             for record in client.records
         ],
@@ -215,7 +221,7 @@ def main() -> int:
     print(f"P0-4 事实：标准项{len(cluster_members)}个、"
           f"singleton {sum(1 for count in member_counts if count == 1)}个、"
           f"最大cluster {max(member_counts, default=0)}")
-    print(f"阶段请求记录：{json.dumps(client.records, ensure_ascii=False)}")
+    print(f"模型请求记录：{json.dumps(client.records, ensure_ascii=False)}")
     print(f"脱敏报告：{args.report}")
     print(f"原始结果：{args.raw_output}")
     return 0
