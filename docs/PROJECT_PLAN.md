@@ -42,7 +42,7 @@ MVP 只建设以下核心闭环，不同时扩展招聘产品、个人匹配系�
 | P0-1 | 抽取数据合同与语义决策规则 | 无 | 🟡 部分完成 | 数据合同与迁移保持已批准；语义规则与验证方法按 DEC-015 重新验收中（规则 ID 已建立、人工角色已迁移、规则场景就绪） | [docs/work/P0-1.md](work/P0-1.md) |
 | P0-2 | JD 结构化抽取 | P0-1 | ✅ 已完成 | active v0.6 + Schema V2 正式可用；candidate v0.8 + Schema V3（三级熟练度）待 Track A/B 验收；v0.7 为历史未批准候选版本 | [docs/work/P0-2.md](work/P0-2.md) |
 | P0-3 | 抽取规则符合性、稳定性与鲁棒性验证 | P0-2 | 🟡 部分完成 | v0.6 原批准保留（approved under legacy Gold protocol）；新协议框架（协议 1.1、锚点化变形比较、Track A/B 双轨道、人工审计模板）已就绪，真实模型验收待授权运行，多次运行阈值待用户裁决 | [docs/work/P0-3.md](work/P0-3.md) |
-| P0-4 | 跨JD原子要求归并与映射 | P0-2 | 🟡 部分完成 | **P0-4A 真实验收全部 Hard gate 达标（co-clustering 99%+、coverage 100%）**，已满足解除 P0-6 阻塞条件；P0-4B 关系稳定性未达标（edge Jaccard<70%，不阻塞 P0-6）；scale acceptance 待 P0-8 扩充后重跑 | [docs/work/P0-4.md](work/P0-4.md) |
+| P0-4 | 跨JD原子要求归并与映射 | P0-2 | 🟡 部分完成 | P0-4A 当前实现可用（第 1 次真实验收达标），等待 v0.8 新输入重新验收；P0-4B（broader_than 层级）为实验功能，不阻塞主线 | [docs/work/P0-4.md](work/P0-4.md) |
 | P0-5 | 分层评测与错误分析 | P0-3、P0-4 | 🟡 部分完成 | 评测基础可用；验收协议随 DEC-015 迁移，等 P0-3 新协议验收与 P0-4 scale acceptance 后冻结新验证集并接入人工证据支持性复核 | [docs/work/P0-5.md](work/P0-5.md) |
 | P0-6 | 高频岗位要求统计 | P0-4 | ⬜ 未开始 | 硬依赖 P0-4 验收通过；P0-8 提供正式规模验收数据 | 未创建 |
 | P0-7 | 统计结论证据追溯 | P0-2、P0-6 | 🟡 部分完成 | 数据基础已具备；P0-6 通过验收前不继续下游开发 | [docs/work/P0-7.md](work/P0-7.md) |
