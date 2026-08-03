@@ -1,0 +1,200 @@
+{
+  "protocol_version": "1.0",
+  "description": "抽取层规则场景与变形测试（P0-3 新协议，DEC-015）。base_input 全部为领域中性的合成 JD 文本，不包含真实 JD 内容；场景不保存完整 expected extraction，expected_properties 是可由 app/extraction_validation.py 确定性检查的属性。",
+  "usage": {
+    "deterministic_fixture": "单元测试用假客户端或手工构造结果验证检查器逻辑，不调用真实模型",
+    "model_metamorphic_experiment": "scripts/experiments/p0_3/run_acceptance.py --execute 对 base_input 与 transformed_input 各抽取一次并比较",
+    "human_audit_scenario": "人工按 forbidden_violations 复核输出是否违反规则"
+  },
+  "scenarios": [
+    {
+      "scenario_id": "SCN-001",
+      "rule_ids": ["COVER-01", "COVER-02", "EVID-01"],
+      "base_input": "# 示例岗位\n\n## 岗位职责\n负责能力甲体系建设。\n负责能力乙评测。\n\n## 任职要求\n1. 熟悉技术甲和框架乙。\n2. 具备能力丙使用经验者优先。\n3. 本科及以上学历。\n\n## 福利待遇\n五险一金、带薪年假。",
+      "transformation": {"type": "format_bullets"},
+      "expected_properties": {
+        "fact_set_unchanged": true,
+        "block_set_preserved": true,
+        "field_invariance": ["category", "importance", "proficiency", "group_logic"]
+      },
+      "forbidden_violations": [
+        {"rule_id": "COVER-01", "violation": "项目符号、编号、空格或换行变化不得导致分句遗漏"},
+        {"rule_id": "COVER-02", "violation": "格式变化不得导致分句重复覆盖"}
+      ],
+      "severity": "medium"
+    },
+    {
+      "scenario_id": "SCN-002",
+      "rule_ids": ["COVER-01", "EVID-01"],
+      "base_input": "# 示例岗位\n\n## 岗位职责\n负责能力甲体系建设。\n\n## 任职要求\n1. 熟悉技术甲。\n2. 本科及以上学历。\n\n## 项目背景\n该岗位参与行业应用的年度升级项目。\n\n## 团队协作\n与产品团队协作推进能力建设。",
+      "transformation": {"type": "reorder_paragraphs", "seed": 20260803},
+      "expected_properties": {
+        "fact_set_unchanged": true,
+        "field_invariance": ["category", "importance", "proficiency", "group_logic"]
+      },
+      "forbidden_violations": [
+        {"rule_id": "COVER-01", "violation": "互不相关段落顺序变化不得导致实质内容遗漏"},
+        {"rule_id": "EVID-01", "violation": "顺序变化后证据仍必须是原文连续片段"}
+      ],
+      "severity": "medium"
+    },
+    {
+      "scenario_id": "SCN-003",
+      "rule_ids": ["REQ-01", "REQ-06"],
+      "base_input": "# 示例岗位\n\n## 岗位职责\n负责能力甲体系建设。\n负责能力乙评测。\n\n## 任职要求\n1. 熟悉技术甲和框架乙。\n2. 具备能力丙使用经验者优先。\n3. 本科及以上学历。\n\n## 福利待遇\n五险一金、带薪年假。",
+      "transformation": {
+        "type": "append_text",
+        "text": "\n\n## 工作地点\n北京市海淀区中关村。\n\n## 公司介绍\n我们是一家专注于行业应用的中型科技公司，成立于2015年。"
+      },
+      "expected_properties": {
+        "fact_set_preserved": true,
+        "block_set_preserved": true,
+        "field_invariance": ["category", "importance", "proficiency", "group_logic"],
+        "no_new_conditions": true
+      },
+      "forbidden_violations": [
+        {"rule_id": "REQ-01", "violation": "福利、地址、公司介绍等无关内容不得标注为要求"},
+        {"rule_id": "REQ-06", "violation": "不得把无关内容推断成隐含条件"}
+      ],
+      "severity": "high"
+    },
+    {
+      "scenario_id": "SCN-004",
+      "rule_ids": ["REQ-02"],
+      "base_input": "# 示例岗位\n\n## 岗位职责\n负责能力甲体系建设。\n负责能力乙评测。\n\n## 任职要求\n1. 熟悉技术甲和框架乙。\n2. 具备能力丙使用经验者优先。\n3. 本科及以上学历。\n\n## 福利待遇\n五险一金、带薪年假。",
+      "transformation": {"type": "duplicate_sentence", "target": "具备能力丙使用经验者优先。"},
+      "expected_properties": {
+        "fact_set_preserved": true,
+        "block_set_preserved": true,
+        "field_invariance": ["category", "importance", "proficiency", "group_logic"]
+      },
+      "forbidden_violations": [
+        {"rule_id": "REQ-02", "violation": "精确重复条件不得产生新的实质原子事实（重复抽取只作漂移记录）"}
+      ],
+      "severity": "medium"
+    },
+    {
+      "scenario_id": "SCN-005",
+      "rule_ids": ["FIELD-03", "REQ-02"],
+      "base_input": "# 示例岗位\n\n## 岗位职责\n负责能力甲体系建设。\n负责能力乙评测。\n\n## 任职要求\n1. 熟悉技术甲和框架乙。\n2. 具备能力丙使用经验者优先。\n3. 本科及以上学历。\n\n## 福利待遇\n五险一金、带薪年假。",
+      "transformation": {
+        "type": "text_replace",
+        "replacements": [{"find": "熟悉", "replace": "精通"}]
+      },
+      "expected_properties": {
+        "fact_set_preserved": true,
+        "field_invariance": ["category", "importance", "group_logic"],
+        "proficiency_upgraded": true
+      },
+      "forbidden_violations": [
+        {"rule_id": "FIELD-03", "violation": "只有明确程度词变化时才能改变 proficiency"},
+        {"rule_id": "REQ-02", "violation": "措辞变化不得改变原子事实数量"}
+      ],
+      "severity": "medium"
+    },
+    {
+      "scenario_id": "SCN-006",
+      "rule_ids": ["FIELD-02"],
+      "base_input": "# 示例岗位\n\n## 岗位职责\n负责能力甲体系建设。\n负责能力乙评测。\n\n## 任职要求\n1. 熟悉技术甲和框架乙。\n2. 具备能力丙使用经验者优先。\n3. 本科及以上学历。\n\n## 福利待遇\n五险一金、带薪年假。",
+      "transformation": {
+        "type": "text_replace",
+        "replacements": [
+          {"find": "熟悉技术甲和框架乙。", "replace": "有技术甲和框架乙相关项目经验者优先。"}
+        ]
+      },
+      "expected_properties": {
+        "fact_set_preserved": true,
+        "field_invariance": ["category", "proficiency", "group_logic"],
+        "importance_upgraded_to_preferred": true
+      },
+      "forbidden_violations": [
+        {"rule_id": "FIELD-02", "violation": "只有明确出现优先/加分措辞才能改为 preferred"}
+      ],
+      "severity": "medium"
+    },
+    {
+      "scenario_id": "SCN-007",
+      "rule_ids": ["GROUP-01", "GROUP-02"],
+      "base_input": "# 示例岗位\n\n## 岗位职责\n负责能力甲体系建设。\n负责能力乙评测。\n\n## 任职要求\n1. 熟悉技术甲和框架乙。\n2. 具备能力丙使用经验者优先。\n3. 本科及以上学历。\n\n## 福利待遇\n五险一金、带薪年假。",
+      "transformation": {
+        "type": "text_replace",
+        "replacements": [
+          {"find": "熟悉技术甲和框架乙", "replace": "熟悉技术甲、框架乙中至少一种"}
+        ]
+      },
+      "expected_properties": {
+        "fact_set_preserved": true,
+        "field_invariance": ["category", "importance"],
+        "block_item_count_preserved": true
+      },
+      "forbidden_violations": [
+        {"rule_id": "GROUP-01", "violation": "明确至少一种时必须建立 any_of，不得保持 standalone"},
+        {"rule_id": "GROUP-02", "violation": "any_of 组至少两个成员且共享同一 group_id"}
+      ],
+      "severity": "high"
+    },
+    {
+      "scenario_id": "SCN-008",
+      "rule_ids": ["REQ-02", "REQ-05"],
+      "base_input": "# 示例岗位\n\n## 岗位职责\n负责能力甲体系建设。\n负责能力乙评测。\n\n## 任职要求\n1. 熟悉技术甲和框架乙。\n2. 具备能力丙使用经验者优先。\n3. 本科及以上学历。\n\n## 福利待遇\n五险一金、带薪年假。",
+      "transformation": {
+        "type": "text_replace",
+        "replacements": [
+          {"find": "技术甲", "replace": "技术丙"},
+          {"find": "框架乙", "replace": "框架丁"}
+        ]
+      },
+      "expected_properties": {
+        "block_item_count_preserved": true,
+        "field_invariance": ["category", "importance", "proficiency", "group_logic"]
+      },
+      "forbidden_violations": [
+        {"rule_id": "REQ-02", "violation": "技术改名不得改变原子事实数量或字段"},
+        {"rule_id": "REQ-05", "violation": "raw_name 必须跟随原文改名，不得继续使用旧名"}
+      ],
+      "severity": "medium"
+    },
+    {
+      "scenario_id": "SCN-009",
+      "rule_ids": ["REQ-02", "REQ-03"],
+      "base_input": "# 示例岗位\n\n## 岗位职责\n负责能力甲体系建设。\n负责能力乙评测。\n\n## 任职要求\n1. 熟悉技术甲和框架乙。\n2. 具备能力丙使用经验者优先。\n3. 本科及以上学历。\n\n## 福利待遇\n五险一金、带薪年假。",
+      "transformation": {
+        "type": "text_replace",
+        "replacements": [
+          {"find": "1. 熟悉技术甲和框架乙。", "replace": "1. 熟悉技术甲。2. 掌握框架乙。"}
+        ]
+      },
+      "expected_properties": {
+        "fact_set_preserved": true,
+        "no_new_conditions": true,
+        "field_invariance": ["category", "importance", "group_logic"]
+      },
+      "forbidden_violations": [
+        {"rule_id": "REQ-02", "violation": "一句拆两句不得丢失或新增原子事实"},
+        {"rule_id": "REQ-03", "violation": "拆分后跨类别条件仍须独立保留"}
+      ],
+      "severity": "medium"
+    },
+    {
+      "scenario_id": "SCN-010",
+      "rule_ids": ["REQ-06", "RESP-01"],
+      "base_input": "# 示例岗位\n\n## 岗位职责\n负责能力甲体系建设。\n负责能力乙评测。\n\n## 任职要求\n1. 熟悉技术甲和框架乙。\n2. 具备能力丙使用经验者优先。\n3. 本科及以上学历。\n\n## 福利待遇\n五险一金、带薪年假。",
+      "transformation": {
+        "type": "text_replace",
+        "replacements": [
+          {"find": "负责能力乙评测。", "replace": "负责能力乙评测。团队内部使用框架戊支撑该评测工作。"}
+        ]
+      },
+      "expected_properties": {
+        "fact_set_preserved": true,
+        "no_new_conditions": true,
+        "field_invariance": ["category", "importance", "proficiency", "group_logic"]
+      },
+      "forbidden_violations": [
+        {"rule_id": "REQ-06", "violation": "相关但未被条件修饰的技术不得补充成条件（至多 mentioned）"},
+        {"rule_id": "RESP-01", "violation": "职责中出现的技术不得自动变成 must/preferred 要求"}
+      ],
+      "severity": "high"
+    }
+  ]
+}
