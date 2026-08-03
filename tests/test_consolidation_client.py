@@ -17,11 +17,13 @@ from app.consolidation import (
     consolidate_with_correction,
     parse_consolidation_response,
     parse_mappings_response,
+    parse_relations_response,
 )
 from app.config import LLMSettings
 from app.requirement_consolidation import (
     RequirementConsolidationInput,
     RequirementOccurrence,
+    RequirementRelationType,
 )
 from app.schemas import RequirementItem
 
@@ -122,23 +124,24 @@ def valid_result_payload() -> dict[str, object]:
     }
 
 
-def test_prompt_v21_is_domain_agnostic() -> None:
-    """验证Prompt v2.1不绑定任何具体领域技能，只描述通用归并任务。"""
-    assert CONSOLIDATION_PROMPT_VERSION == "2.1"
-    assert CONSOLIDATION_SCHEMA_VERSION == "1.0"
+def test_prompt_v4_is_domain_agnostic() -> None:
+    """验证Prompt v4.0不绑定任何具体领域技能，只描述通用归并任务。"""
+    assert CONSOLIDATION_PROMPT_VERSION == "4.0"
+    assert CONSOLIDATION_SCHEMA_VERSION == "2.0"
     for domain_word in ("Python", "RAG", "LangChain", "Agent", "大模型", "AI"):
         assert domain_word not in CONSOLIDATION_SYSTEM_PROMPT
         assert domain_word not in RELATION_SYSTEM_PROMPT
     assert "证据上下文" in CONSOLIDATION_SYSTEM_PROMPT
-    assert "review_required" in CONSOLIDATION_SYSTEM_PROMPT
+    assert "不输出unmapped或review_required" in CONSOLIDATION_SYSTEM_PROMPT
+    assert "singleton" in CONSOLIDATION_SYSTEM_PROMPT
     assert "不得修改、覆盖或删除" in CONSOLIDATION_SYSTEM_PROMPT
     assert "canonical_name都必须全局唯一" in CONSOLIDATION_SYSTEM_PROMPT
-    assert "并列判断只依据同一实例的证据" in CONSOLIDATION_SYSTEM_PROMPT
-    assert "不得合并使用" in CONSOLIDATION_SYSTEM_PROMPT
-    assert "不同层级" in CONSOLIDATION_SYSTEM_PROMPT
-    assert "三者互斥" in CONSOLIDATION_SYSTEM_PROMPT
-    assert "有向无环" in CONSOLIDATION_SYSTEM_PROMPT
-    assert "必须输出part_of" in RELATION_SYSTEM_PROMPT
+    assert "等价性已由映射表达" in RELATION_SYSTEM_PROMPT
+    assert "更宽泛 -> 更具体" in RELATION_SYSTEM_PROMPT
+    assert "相似\"不等于\"等价" in RELATION_SYSTEM_PROMPT
+    assert "相关\"不等于\"包含" in RELATION_SYSTEM_PROMPT
+    assert "uncertain" in RELATION_SYSTEM_PROMPT
+    assert "强行生成边" in RELATION_SYSTEM_PROMPT
     assert "只输出用户提示指定的relations数组" in RELATION_SYSTEM_PROMPT
 
 
@@ -147,7 +150,7 @@ def test_metadata_combines_version_components() -> None:
     metadata = ConsolidatorMetadata(model_name="test-model")
 
     assert metadata.consolidator_version == (
-        "test-model|prompt:2.1|schema:1.0"
+        "test-model|prompt:4.0|schema:2.0"
     )
 
 
@@ -180,7 +183,10 @@ def test_user_prompt_contains_instances_and_output_schema() -> None:
     assert "全局唯一" in payload["output_schema"]["canonical_requirements"][0][
         "canonical_name"
     ]
-    assert "只能选择一种" in payload["output_schema"]["relations"][0][
+    assert "broader_than" in payload["output_schema"]["relations"][0][
+        "relation_type"
+    ]
+    assert "uncertain" in payload["output_schema"]["relations"][0][
         "relation_type"
     ]
 
@@ -293,3 +299,104 @@ def test_retry_exhausted_raises_final_error() -> None:
 
     with pytest.raises(ConsolidationError, match="仍未通过归并校验"):
         consolidate_with_correction(consolidation_input(), client)
+
+
+def test_part_of_normalizes_to_broader_than_with_direction_swap() -> None:
+    """验证旧part_of语义规范化为broader_than并交换方向（整体->组成部分）。"""
+    payload = {
+        "relations": [
+            {
+                "source_requirement_id": "requirement-b",
+                "target_requirement_id": "requirement-a",
+                "relation_type": "part_of",
+                "rationale": "乙是甲的组成部分",
+                "confidence": 0.8,
+            }
+        ]
+    }
+
+    relations, uncertain = parse_relations_response(
+        json.dumps(payload, ensure_ascii=False)
+    )
+
+    assert uncertain == []
+    assert len(relations) == 1
+    assert relations[0].relation_type is RequirementRelationType.BROADER_THAN
+    assert relations[0].source_requirement_id == "requirement-a"
+    assert relations[0].target_requirement_id == "requirement-b"
+
+
+def test_is_a_normalizes_to_broader_than_with_direction_swap() -> None:
+    """验证旧is_a语义规范化为broader_than并交换方向（上位->下位）。"""
+    payload = {
+        "relations": [
+            {
+                "source_requirement_id": "requirement-b",
+                "target_requirement_id": "requirement-a",
+                "relation_type": "is_a",
+                "rationale": "乙是甲的一种具体类型",
+                "confidence": 0.8,
+            }
+        ]
+    }
+
+    relations, uncertain = parse_relations_response(
+        json.dumps(payload, ensure_ascii=False)
+    )
+
+    assert uncertain == []
+    assert len(relations) == 1
+    assert relations[0].relation_type is RequirementRelationType.BROADER_THAN
+    assert relations[0].source_requirement_id == "requirement-a"
+    assert relations[0].target_requirement_id == "requirement-b"
+
+
+def test_related_to_is_rejected_as_deprecated() -> None:
+    """验证废弃的related_to被拒绝，普通相关不再建立任何关系。"""
+    payload = {
+        "relations": [
+            {
+                "source_requirement_id": "requirement-a",
+                "target_requirement_id": "requirement-b",
+                "relation_type": "related_to",
+                "rationale": "统计上相关",
+                "confidence": 0.7,
+            }
+        ]
+    }
+
+    with pytest.raises(ConsolidationError, match="related_to 已废弃"):
+        parse_relations_response(json.dumps(payload, ensure_ascii=False))
+
+
+def test_uncertain_relations_split_out_and_create_no_edges() -> None:
+    """验证uncertain判断与正式关系分离，不创建任何正式关系边。"""
+    payload = {
+        "relations": [
+            {
+                "source_requirement_id": "requirement-a",
+                "target_requirement_id": "requirement-b",
+                "relation_type": "uncertain",
+                "rationale": "名称抽象，无法判断包含方向",
+                "confidence": 0.5,
+            }
+        ]
+    }
+
+    relations, uncertain = parse_relations_response(
+        json.dumps(payload, ensure_ascii=False)
+    )
+
+    assert relations == []
+    assert len(uncertain) == 1
+    assert uncertain[0].relation_type is RequirementRelationType.UNCERTAIN
+
+
+def test_none_relations_accept_empty_array() -> None:
+    """验证无包含关系的标准项之间不输出边（none），空数组合法。"""
+    relations, uncertain = parse_relations_response(
+        json.dumps({"relations": []}, ensure_ascii=False)
+    )
+
+    assert relations == []
+    assert uncertain == []

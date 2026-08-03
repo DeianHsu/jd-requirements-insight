@@ -15,10 +15,10 @@ from app.consolidation import (
     consolidate_requirements,
     list_consolidations,
 )
-from app.consolidation_evaluation import (
-    evaluate_consolidation,
-    load_consolidation_cases,
+from app.consolidation_validation import (
     load_persisted_consolidation_result,
+    relation_graph_stats,
+    validate_contract,
 )
 from app.database import create_database_engine, create_session_factory, initialize_database
 from app.evaluation import (
@@ -238,6 +238,16 @@ def consolidate_requirements_cmd(
     console.print(f"归并成功 [green]{summary.consolidated}[/green] 条")
     console.print(f"标准要求项 [bold]{summary.canonical_count}[/bold] 个")
     console.print(f"要求关系 [bold]{summary.relation_count}[/bold] 条")
+    console.print(f"不确定判断 [yellow]{summary.uncertain_count}[/yellow] 条（不创建边）")
+    console.print(
+        "P0-4B 层级状态 "
+        + (
+            f"[green]{summary.hierarchy_status}[/green]"
+            if summary.hierarchy_status == "success"
+            else f"[yellow]{summary.hierarchy_status}[/yellow]"
+        )
+        + "（failed 时 P0-4A 事实层仍有效）"
+    )
     console.print(f"同版本跳过 [yellow]{summary.skipped}[/yellow]")
     console.print(f"失败 [red]{summary.failed}[/red]")
     if summary.consolidation_id is not None:
@@ -289,30 +299,20 @@ def show_consolidations() -> None:
     console.print(table)
 
 
-@cli.command("evaluate-consolidation")
-def evaluate_consolidation_cmd(
-    cases_path: Path = typer.Argument(
-        ...,
-        exists=True,
-        file_okay=True,
-        dir_okay=False,
-        readable=True,
-        help="归并人工标准答案JSON文件",
-    ),
+@cli.command("validate-consolidation")
+def validate_consolidation_cmd(
     consolidation_id: int = typer.Option(
         ...,
         "--consolidation-id",
         min=1,
-        help="显式指定要评测的持久化归并批次ID",
+        help="显式指定要验证的持久化归并批次ID",
     ),
 ) -> None:
-    """离线评测一个已持久化归并批次，不调用LLM或隐式选择最新批次。"""
-    try:
-        cases = load_consolidation_cases(cases_path)
-    except (OSError, ValueError) as exc:
-        console.print(f"[red]无法读取归并评测文件：{exc}[/red]")
-        raise typer.Exit(code=1) from exc
+    """离线验证一个已持久化归并批次：合同、图稀疏度与事实投影。
 
+    不调用LLM、不隐式选择最新批次、不依赖任何人工Gold；输出
+    P0-4A 合同违规、P0-4B 关系图稀疏度与下游统计投影指标。
+    """
     engine, session_factory = database_resources()
     try:
         persisted = load_persisted_consolidation_result(
@@ -324,59 +324,39 @@ def evaluate_consolidation_cmd(
     finally:
         engine.dispose()
 
-    try:
-        metrics = evaluate_consolidation(persisted.result, cases)
-    except (KeyError, ValueError) as exc:
-        console.print(f"[red]归并评测失败：{exc}[/red]")
-        raise typer.Exit(code=1) from exc
+    contract = validate_contract(
+        persisted.result,
+        expected_requirement_count=len(persisted.result.mappings),
+    )
+    graph = relation_graph_stats(persisted.result)
 
     console.print(f"归并批次ID [bold]{persisted.consolidation_id}[/bold]")
     console.print(f"范围 [bold]{persisted.scope_key}[/bold]")
     console.print(f"归并器版本 [bold]{persisted.consolidator_version}[/bold]")
-    console.print(f"抽取器版本 [bold]{persisted.extractor_version}[/bold]")
-    console.print(f"输入指纹 [cyan]{persisted.input_fingerprint[:12]}[/cyan]")
+    console.print(f"层级状态 [bold]{persisted.hierarchy_status}[/bold]")
     console.print(
-        "映射准确率 "
-        + (
-            f"[green]{metrics.mapping_accuracy:.2%}[/green] "
-            f"({metrics.mapping_matched}/{metrics.mapping_total})"
-            if metrics.mapping_accuracy is not None
-            else "N/A"
-        )
+        "P0-4A 完整覆盖 "
+        + (f"[green]{contract.coverage:.2%}[/green]"
+           if contract.coverage == 1.0 else
+           f"[red]{contract.coverage:.2%}[/red]")
     )
     console.print(
-        "关系Precision "
-        + (
-            f"[green]{metrics.relation_precision:.2%}[/green] "
-            f"({metrics.relation_matched}/{metrics.relation_predicted})"
-            if metrics.relation_precision is not None
-            else "N/A"
-        )
+        "P0-4A 结构违规 "
+        + (f"[green]{contract.structural_violation_count}[/green]"
+           if contract.structural_violation_count == 0 else
+           f"[red]{contract.structural_violation_count}[/red]")
     )
     console.print(
-        "关系Recall "
-        + (
-            f"[green]{metrics.relation_recall:.2%}[/green] "
-            f"({metrics.relation_matched}/{metrics.relation_total})"
-            if metrics.relation_recall is not None
-            else "N/A"
-        )
+        f"P0-4B 关系图：{graph.edge_count} 条边 / {graph.node_count} 个节点"
+        f"（比值 {graph.edge_node_ratio:.2f}）"
     )
     console.print(
-        "关系F1 "
-        + (
-            f"[green]{metrics.relation_f1:.2%}[/green]"
-            if metrics.relation_f1 is not None
-            else "N/A"
-        )
+        f"最大出度 {graph.max_out_degree}、最大入度 {graph.max_in_degree}、"
+        f"根节点 {graph.root_node_count}、孤立节点 {graph.isolated_node_count}"
     )
     console.print(
-        "未映射处理 "
-        + (
-            f"[green]{metrics.unmapped_accuracy:.2%}[/green]"
-            if metrics.unmapped_accuracy is not None
-            else "N/A"
-        )
+        f"低置信边 {graph.low_confidence_edge_count}、"
+        f"uncertain 判断 {graph.uncertain_count}"
     )
 
 

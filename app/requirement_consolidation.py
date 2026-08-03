@@ -18,15 +18,26 @@ def normalize_requirement_name(value: str) -> str:
 
 
 class RequirementRelationType(StrEnum):
-    """限定标准要求项之间允许保存的非同义语义关系。"""
+    """限定标准要求项之间允许保存的语义关系。
 
-    IS_A = "is_a"
-    PART_OF = "part_of"
-    RELATED_TO = "related_to"
+    BROADER_THAN 是唯一正式关系类型，方向固定为 broader -> narrower
+    （上位指向下位）。UNCERTAIN 是模型判断状态，不创建正式关系边，
+    只进入诊断/审计输出。旧类型 is_a、part_of、related_to 已删除：
+    来源无法确认的旧评测夹具已移除，可再生的旧关系数据不保留兼容。
+    """
+
+    BROADER_THAN = "broader_than"
+    # 模型判断状态：信息不足时允许弃权，不创建关系边。
+    UNCERTAIN = "uncertain"
 
 
 class RequirementMappingStatus(StrEnum):
-    """表示要求实例在一次跨JD归并中的处理状态。"""
+    """表示要求实例在一次跨JD归并中的处理状态。
+
+    新批次合同要求每个实例恰好 mapped 一次（不确定时由模型创建
+    singleton canonical requirement）；unmapped 与 review_required
+    不再作为正常业务判断状态，仅保留用于读取旧批次记录。
+    """
 
     MAPPED = "mapped"
     UNMAPPED = "unmapped"
@@ -162,7 +173,7 @@ class RequirementMapping(BaseModel):
 
 
 class RequirementRelation(BaseModel):
-    """表示标准要求项之间的关系；下位指向上位，组成部分指向整体。"""
+    """表示标准要求项之间的关系；broader_than 方向固定为更宽泛指向更具体。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -214,13 +225,18 @@ def _directed_edges_have_cycle(edges: set[tuple[str, str]]) -> bool:
 
 
 class RequirementConsolidationResult(BaseModel):
-    """保存跨JD归并产生的标准要求项、要求映射和非同义关系。"""
+    """保存跨JD归并产生的标准要求项、要求映射、包含关系与不确定判断。"""
 
     model_config = ConfigDict(extra="forbid")
 
     canonical_requirements: list[CanonicalRequirement] = Field(default_factory=list)
     mappings: list[RequirementMapping] = Field(min_length=1)
     relations: list[RequirementRelation] = Field(default_factory=list)
+    # 模型弃权记录（uncertain）：只进诊断/审计，不创建正式关系边。
+    uncertain_relations: list[RequirementRelation] = Field(default_factory=list)
+    # P0-4B 层级状态：success（关系阶段完成）或 failed（关系阶段失败但
+    # P0-4A 事实层有效，已降级保存；不阻塞 P0-6 统计）。
+    hierarchy_status: str = Field(default="success", pattern="^(success|failed)$")
 
     @model_validator(mode="after")
     def result_must_be_internally_consistent(self) -> Self:
@@ -284,10 +300,14 @@ class RequirementConsolidationResult(BaseModel):
         directed_edges: dict[
             RequirementRelationType, set[tuple[str, str]]
         ] = {
-            RequirementRelationType.IS_A: set(),
-            RequirementRelationType.PART_OF: set(),
+            RequirementRelationType.BROADER_THAN: set(),
         }
         for relation in self.relations:
+            if relation.relation_type is RequirementRelationType.UNCERTAIN:
+                raise ValueError(
+                    "uncertain 是模型判断状态，不能作为正式关系；"
+                    "请放入 uncertain_relations"
+                )
             if relation.source_requirement_id not in known_requirements:
                 raise ValueError(
                     f"关系引用未知标准要求项：{relation.source_requirement_id}"
@@ -298,8 +318,6 @@ class RequirementConsolidationResult(BaseModel):
                 )
             source_id = relation.source_requirement_id
             target_id = relation.target_requirement_id
-            if relation.relation_type is RequirementRelationType.RELATED_TO:
-                source_id, target_id = sorted((source_id, target_id))
             key = (source_id, target_id, relation.relation_type)
             if key in relation_keys:
                 raise ValueError("要求关系不能重复")
@@ -337,9 +355,38 @@ class RequirementConsolidationResult(BaseModel):
                 "同一标准要求项对的关系类型必须互斥；冲突项："
                 f"{details}。每对只保留语义最具体的一种关系"
             )
+        broader_edges = directed_edges[RequirementRelationType.BROADER_THAN]
+        reversed_conflicts = {
+            (source, target)
+            for source, target in broader_edges
+            if (target, source) in broader_edges
+        }
+        if reversed_conflicts:
+            details = "；".join(
+                f"{source}<->{target}" for source, target in sorted(reversed_conflicts)
+            )
+            raise ValueError(
+                "broader_than 方向冲突：同一对标准要求项不能同时互为包含；"
+                f"冲突项：{details}"
+            )
         for relation_type, edges in directed_edges.items():
             if _directed_edges_have_cycle(edges):
                 raise ValueError(f"{relation_type.value}关系不能形成环")
+        for relation in self.uncertain_relations:
+            if relation.relation_type is not RequirementRelationType.UNCERTAIN:
+                raise ValueError(
+                    "uncertain_relations 只能保存 uncertain 判断记录"
+                )
+            if relation.source_requirement_id not in known_requirements:
+                raise ValueError(
+                    f"不确定判断引用未知标准要求项："
+                    f"{relation.source_requirement_id}"
+                )
+            if relation.target_requirement_id not in known_requirements:
+                raise ValueError(
+                    f"不确定判断引用未知标准要求项："
+                    f"{relation.target_requirement_id}"
+                )
         return self
 
 

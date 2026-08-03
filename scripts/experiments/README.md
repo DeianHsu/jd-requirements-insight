@@ -8,7 +8,8 @@
 |---|---|---|
 | `p0_3/run_two_stage_extraction.py` | P0-3 两段式抽取真实调用（发现段+判断段），结果写入私有目录 | 是（必须 `--execute`） |
 | `p0_3/evaluate_two_stage_results.py` | P0-3 离线分层评测（development/regression/validation 三分组，支持指定验收轮次结果文件） | 否 |
-| `p0_4/run_small_scale_precheck.py` | P0-4 75 实例小规模预检（标准项/分块映射/关系三阶段），结果脱敏后写入 `reports/P0-4/` | 是（必须 `--execute`） |
+| `p0_4/run_small_scale_precheck.py` | P0-4 小规模预检（标准项/分块映射/关系三阶段，无人工 Gold 依赖），结果脱敏后写入 `reports/P0-4/` | 是（必须 `--execute`） |
+| `p0_4/run_acceptance.py` | P0-4 真实模型验收：3 次独立运行稳定性 + 顺序/分块变形测试 + 合同/稀疏度/下游不变性 + 机器可读验收报告（hard gate/warning/diagnostic 分级） | 是（必须 `--execute`） |
 
 运行方式与参数详见各子目录 README（`p0_3/README.md`、`p0_4/`）。
 

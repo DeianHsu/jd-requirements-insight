@@ -61,6 +61,8 @@ def initialize_database(engine: Engine) -> None:
         _migrate_sqlite_job_requirements_to_v2(engine)
         _migrate_sqlite_consolidations_to_input_identity(engine)
         _ensure_sqlite_consolidation_relation_index(engine)
+        _migrate_sqlite_consolidations_hierarchy_status(engine)
+        _rebuild_sqlite_consolidation_relations(engine)
 
 
 def _migrate_sqlite_job_requirements_to_v2(engine: Engine) -> None:
@@ -253,3 +255,40 @@ def _ensure_sqlite_consolidation_relation_index(engine: Engine) -> None:
             "consolidation_id, source_requirement_id, target_requirement_id, "
             "relation_type)"
         )
+
+
+def _migrate_sqlite_consolidations_hierarchy_status(engine: Engine) -> None:
+    """以可重复执行的ALTER TABLE为归并批次补充P0-4B层级状态列。"""
+    inspector = inspect(engine)
+    if not inspector.has_table("job_consolidations"):
+        return
+    existing_columns = {
+        column["name"] for column in inspector.get_columns("job_consolidations")
+    }
+    if "hierarchy_status" in existing_columns:
+        return
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "ALTER TABLE job_consolidations "
+            "ADD COLUMN hierarchy_status VARCHAR(30) NOT NULL DEFAULT 'success'"
+        )
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_job_consolidations_hierarchy_status "
+            "ON job_consolidations (hierarchy_status)"
+        )
+
+
+def _rebuild_sqlite_consolidation_relations(engine: Engine) -> None:
+    """删除并重建可再生的关系表，移除旧枚举数据（is_a/part_of/related_to）。
+
+    关系表完全由LLM归并批次再生，不承载用户私有数据；旧关系类型
+    已从枚举删除（来源无法确认的旧评测夹具已移除），旧关系数据不再
+    兼容读取。批次主记录与 raw_response 审计输出仍保留。
+    """
+    inspector = inspect(engine)
+    if not inspector.has_table("requirement_relations"):
+        return
+    relation_table = Base.metadata.tables["requirement_relations"]
+    with engine.begin() as connection:
+        connection.exec_driver_sql("DROP TABLE requirement_relations")
+        relation_table.create(connection)

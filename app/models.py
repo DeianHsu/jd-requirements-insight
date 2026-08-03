@@ -156,6 +156,11 @@ class JobConsolidation(Base):
     prompt_version: Mapped[str] = mapped_column(String(50))
     schema_version: Mapped[str] = mapped_column(String(50))
     occurrence_count: Mapped[int] = mapped_column(default=0)
+    # P0-4B 层级状态：success 表示关系阶段成功；failed 表示关系阶段失败
+    # （P0-4A 事实层仍有效并已保存，层级失败不阻塞 P0-6 统计）。
+    hierarchy_status: Mapped[str] = mapped_column(
+        String(30), default="success", index=True
+    )
     raw_response: Mapped[dict[str, Any]] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 

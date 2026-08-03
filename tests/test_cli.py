@@ -1,6 +1,5 @@
 """该模块验证JD导入、列表查看和评测指标格式化的用户行为。"""
 
-import json
 from datetime import date
 from pathlib import Path
 
@@ -227,36 +226,10 @@ def test_cli_list_consolidations_empty_and_with_records(
     assert "all" in listed.stdout
     assert "标准项" in listed.stdout
 
-    cases_path = tmp_path / "consolidation_cases.json"
-    cases_path.write_text(
-        json.dumps(
-            {
-                "expected": {
-                    "canonical_requirements": [
-                        {
-                            "canonical_requirement_id": "expected-c1",
-                            "canonical_name": "能力甲",
-                        }
-                    ],
-                    "mappings": [
-                        {
-                            "requirement_id": 1,
-                            "status": "mapped",
-                            "canonical_requirement_id": "expected-c1",
-                        }
-                    ],
-                    "relations": [],
-                }
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
     evaluated = runner.invoke(
         cli,
         [
-            "evaluate-consolidation",
-            str(cases_path),
+            "validate-consolidation",
             "--consolidation-id",
             "1",
         ],
@@ -264,8 +237,7 @@ def test_cli_list_consolidations_empty_and_with_records(
     missing = runner.invoke(
         cli,
         [
-            "evaluate-consolidation",
-            str(cases_path),
+            "validate-consolidation",
             "--consolidation-id",
             "999",
         ],
@@ -273,7 +245,8 @@ def test_cli_list_consolidations_empty_and_with_records(
 
     assert evaluated.exit_code == 0
     assert "归并批次ID 1" in evaluated.stdout
-    assert "映射准确率 100.00% (1/1)" in evaluated.stdout
-    assert "关系Precision N/A" in evaluated.stdout
+    assert "P0-4A 完整覆盖 100.00%" in evaluated.stdout
+    assert "P0-4A 结构违规 0" in evaluated.stdout
+    assert "P0-4B 关系图" in evaluated.stdout
     assert missing.exit_code == 1
     assert "归并批次不存在：999" in missing.stdout

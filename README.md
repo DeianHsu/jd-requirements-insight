@@ -88,7 +88,7 @@ python -m app.cli evaluate-cases <annotation_cases.json> `
 相同JD使用相同抽取器版本（模型、Prompt和抽取数据合同版本）重复抽取时会自动跳过，避免重复结果污染数据库。
 `evaluate-cases`默认只显示前10条错误摘要，可使用`--max-issues`调整；完整模型JSON保存在本地数据库中，不在终端默认输出。
 
-## 跨JD要求归并与离线评测
+## 跨JD要求归并与离线验证
 
 真实归并必须显式选择范围和覆盖该范围的抽取器版本；该命令会调用配置的LLM并产生费用：
 
@@ -98,11 +98,10 @@ python -m app.cli consolidate-requirements --all `
 python -m app.cli list-consolidations
 ```
 
-归并成功后，使用明确的批次ID离线评测，不会再次调用LLM，也不会隐式选择最新批次：
+归并成功后，使用明确的批次ID离线验证（P0-4A 合同、P0-4B 关系图稀疏度与下游事实投影），不会再次调用LLM，也不会隐式选择最新批次：
 
 ```powershell
-python -m app.cli evaluate-consolidation <consolidation_cases.json> `
-  --consolidation-id <批次ID>
+python -m app.cli validate-consolidation --consolidation-id <批次ID>
 ```
 
 ## 实验性脚本

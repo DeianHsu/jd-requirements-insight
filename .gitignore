@@ -30,6 +30,3 @@ reasonix.toml
 
 # pytest 临时目录（系统Temp被锁定时使用 --basetemp）
 .pytest-tmp/
-
-# 归并评测样例含真实JD证据，属人工标准答案类私有数据
-data/consolidation_cases.json

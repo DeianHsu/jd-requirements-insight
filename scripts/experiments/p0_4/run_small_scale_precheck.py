@@ -1,12 +1,11 @@
-﻿"""P0-4分阶段/分块归并：75实例小规模预检。
+﻿"""P0-4 分阶段/分块归并：小规模预检入口（不依赖任何人工 Gold）。
 
-从抽取器版本2.3.1的149条实例中，选取参考标注覆盖的全部实例并按
-requirement_id升序补齐至75条，调用`consolidate_with_correction`执行
-分阶段/受控分块归并，记录每阶段请求的实例数、输入输出字符数与耗时，
-并与13实例参考标注离线对比（草案已降级，指标仅作参考，不构成验收
-门槛）。必须显式`--execute`确认付费模型调用。
+从选定抽取器版本的实例池中按 requirement_id 升序取前 target_size 条，
+调用`consolidate_with_correction`执行分阶段/受控分块归并，记录每阶段
+请求的实例数、输入输出字符数与耗时，并输出 P0-4A 合同违规、P0-4B
+关系图稀疏度与下游事实投影。必须显式`--execute`确认付费模型调用。
 
-输出：脱敏指标报告写入`reports/P0-4/`（仅统计数字，不含真实证据）；
+输出：脱敏验收指标写入`reports/P0-4/`（仅统计数字，不含真实证据）；
 完整归并结果（含原始名称与证据）写入`data/private/experiments/P0-4/`。
 """
 
@@ -26,9 +25,10 @@ from app.consolidation import (
     consolidate_with_correction,
     load_consolidation_selection,
 )
-from app.consolidation_evaluation import (
-    evaluate_consolidation,
-    load_consolidation_cases,
+from app.consolidation_validation import (
+    fact_projection,
+    relation_graph_stats,
+    validate_contract,
 )
 from app.database import create_database_engine, create_session_factory
 from app.requirement_consolidation import (
@@ -67,22 +67,14 @@ class RecordingClient:
 
 
 def build_precheck_input(
-    selection, cases: dict[str, object], target_size: int = 75
+    selection, target_size: int = 75
 ) -> RequirementConsolidationInput:
-    """构造覆盖全部参考标注实例并补齐到目标规模的预检输入。"""
+    """按requirement_id升序取前target_size条实例构成预检输入。"""
     occurrences = sorted(
         selection.consolidation_input.occurrences,
         key=lambda occurrence: occurrence.requirement_id,
     )
-    annotated_ids = {
-        mapping["requirement_id"] for mapping in cases["expected"]["mappings"]
-    }
-    chosen = [item for item in occurrences if item.requirement_id in annotated_ids]
-    remaining = [item for item in occurrences if item.requirement_id not in annotated_ids]
-    for item in remaining:
-        if len(chosen) >= target_size:
-            break
-        chosen.append(item)
+    chosen = occurrences[:target_size]
     if len(chosen) != target_size:
         raise RuntimeError(
             f"预检输入无法构造{target_size}条（可选{len(occurrences)}条）"
@@ -91,18 +83,12 @@ def build_precheck_input(
 
 
 def main() -> int:
-    """解析参数、加载输入并执行75实例预检与离线评测。"""
+    """解析参数、加载输入并执行小规模预检与合同验证。"""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--execute",
         action="store_true",
         help="确认发起付费模型调用",
-    )
-    parser.add_argument(
-        "--cases",
-        type=Path,
-        default=Path("data/consolidation_cases.json"),
-        help="参考标注JSON路径（草案已降级，仅作参考）",
     )
     parser.add_argument(
         "--extractor-version",
@@ -131,13 +117,13 @@ def main() -> int:
     parser.add_argument(
         "--report",
         type=Path,
-        default=Path("reports/P0-4/precheck-2.1.json"),
-        help="脱敏指标报告输出路径",
+        default=Path("reports/P0-4/precheck.json"),
+        help="脱敏验收指标报告输出路径",
     )
     parser.add_argument(
         "--raw-output",
         type=Path,
-        default=Path("data/private/experiments/P0-4/precheck-2.1-result.json"),
+        default=Path("data/private/experiments/P0-4/precheck-result.json"),
         help="完整归并结果（含证据）输出路径",
     )
     args = parser.parse_args()
@@ -151,7 +137,6 @@ def main() -> int:
     if missing:
         print(f"缺少LLM配置：{', '.join(missing)}")
         return 1
-    cases = load_consolidation_cases(args.cases)
 
     engine = create_database_engine("sqlite:///data/jd_skill_insight.db")
     session_factory = create_session_factory(engine)
@@ -163,12 +148,11 @@ def main() -> int:
     finally:
         engine.dispose()
 
-    precheck_input = build_precheck_input(selection, cases, args.target_size)
+    precheck_input = build_precheck_input(selection, args.target_size)
     mapping_requests = -(-len(precheck_input.occurrences) // args.chunk_size)
     print(f"模型：{settings.model}")
     print(f"抽取器版本：{selection.extractor_version}")
-    print(f"输入范围：{len(precheck_input.occurrences)}条实例"
-          f"（参考标注{sum(1 for _ in cases['expected']['mappings'])}条全覆盖）")
+    print(f"输入范围：{len(precheck_input.occurrences)}条实例")
     print(f"预计模型调用：1（标准项）+ {mapping_requests}（映射块）+ 1（关系）"
           f" = {mapping_requests + 2} 次")
     print("输出目标：仅统计指标（脱敏）；完整结果写入私有目录。")
@@ -196,31 +180,53 @@ def main() -> int:
         print(f"请求诊断记录（含响应开头）：{diagnose_path}")
         return 1
 
-    metrics = evaluate_consolidation(result, cases)
+    contract = validate_contract(
+        result,
+        expected_requirement_count=len(precheck_input.occurrences),
+    )
+    graph = relation_graph_stats(result)
+    projection = fact_projection(result, precheck_input)
     report = {
         "consolidator_version": metadata.consolidator_version,
         "extractor_version": selection.extractor_version,
         "input_fingerprint": selection.input_fingerprint,
         "input_size": len(precheck_input.occurrences),
-        "annotated_size": len(cases["expected"]["mappings"]),
         "mapping_chunk_size": CONSOLIDATION_MAPPING_CHUNK_SIZE,
         "stage_requests": [
             {key: value for key, value in record.items() if key != "response_head"}
             for record in client.records
         ],
-        "canonical_count": len(result.canonical_requirements),
-        "mapping_count": len(result.mappings),
-        "relation_count": len(result.relations),
-        "metrics": {
-            "mapping_accuracy": metrics.mapping_accuracy,
-            "relation_precision": metrics.relation_precision,
-            "relation_recall": metrics.relation_recall,
-            "relation_f1": metrics.relation_f1,
-            "mapping_matched": metrics.mapping_matched,
-            "mapping_total": metrics.mapping_total,
-            "relation_matched": metrics.relation_matched,
-            "relation_predicted": metrics.relation_predicted,
-            "relation_total": metrics.relation_total,
+        "p0_4a_contract": {
+            "coverage": contract.coverage,
+            "duplicate_mapping_count": contract.duplicate_mapping_count,
+            "unknown_reference_count": contract.unknown_reference_count,
+            "empty_cluster_count": contract.empty_cluster_count,
+            "structural_violation_count": contract.structural_violation_count,
+        },
+        "p0_4a_facts": {
+            "canonical_count": len(projection.instance_counts),
+            "singleton_count": sum(
+                1 for count in projection.instance_counts.values() if count == 1
+            ),
+            "max_cluster_size": max(projection.instance_counts.values(), default=0),
+            "distinct_job_count": len(
+                {
+                    job_id
+                    for jobs in projection.source_job_sets.values()
+                    for job_id in jobs
+                }
+            ),
+        },
+        "p0_4b_hierarchy": {
+            "edge_count": graph.edge_count,
+            "node_count": graph.node_count,
+            "edge_node_ratio": round(graph.edge_node_ratio, 3),
+            "max_out_degree": graph.max_out_degree,
+            "max_in_degree": graph.max_in_degree,
+            "root_node_count": graph.root_node_count,
+            "isolated_node_count": graph.isolated_node_count,
+            "low_confidence_edge_count": graph.low_confidence_edge_count,
+            "uncertain_count": graph.uncertain_count,
         },
     }
 
@@ -233,12 +239,15 @@ def main() -> int:
         json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
-    print(f"参考映射准确率：{metrics.mapping_matched}/{metrics.mapping_total}"
-          f" = {metrics.mapping_accuracy}")
-    print(f"参考关系 P/R/F1：{metrics.relation_precision} / "
-          f"{metrics.relation_recall} / {metrics.relation_f1}")
-    print(f"全图：标准项{len(result.canonical_requirements)}、"
-          f"映射{len(result.mappings)}、关系{len(result.relations)}")
+    print(f"P0-4A 覆盖：{contract.coverage:.2%}，"
+          f"结构违规：{contract.structural_violation_count}")
+    print(f"P0-4A 事实：标准项{len(projection.instance_counts)}个、"
+          f"singleton {sum(1 for c in projection.instance_counts.values() if c == 1)}个、"
+          f"最大cluster {max(projection.instance_counts.values(), default=0)}")
+    print(f"P0-4B 关系图：{graph.edge_count}边/{graph.node_count}节点"
+          f"（比值{graph.edge_node_ratio:.2f}）、"
+          f"低置信边{graph.low_confidence_edge_count}、"
+          f"uncertain {graph.uncertain_count}")
     print(f"阶段请求记录：{json.dumps(client.records, ensure_ascii=False)}")
     print(f"脱敏报告：{args.report}")
     print(f"原始结果：{args.raw_output}")

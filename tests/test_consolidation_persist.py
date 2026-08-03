@@ -137,10 +137,10 @@ def valid_result_payload() -> dict[str, object]:
         ],
         "relations": [
             {
-                "source_requirement_id": "requirement-a",
-                "target_requirement_id": "requirement-b",
-                "relation_type": "related_to",
-                "rationale": "统计上相关",
+                "source_requirement_id": "requirement-b",
+                "target_requirement_id": "requirement-a",
+                "relation_type": "broader_than",
+                "rationale": "能力乙是能力甲使用经验的上位概念",
                 "confidence": 0.7,
             }
         ],
@@ -276,7 +276,7 @@ def test_persisted_fields_match_contract(tmp_path: Path) -> None:
         assert first_mapping.rationale == "表述不同但招聘条件相同"
         assert first_mapping.confidence == 0.95
         assert (
-            consolidation.relations[0].relation_type == "related_to"
+            consolidation.relations[0].relation_type == "broader_than"
         )
 
 
@@ -328,8 +328,8 @@ def test_different_versions_coexist(tmp_path: Path) -> None:
             ).all()
         )
     assert versions == {
-        "model-v1|prompt:1.0|schema:1.0",
-        "model-v2|prompt:2.0|schema:1.0",
+        "model-v1|prompt:1.0|schema:2.0",
+        "model-v2|prompt:2.0|schema:2.0",
     }
 
 
@@ -430,3 +430,184 @@ def test_mapping_chunk_failure_persists_nothing(tmp_path: Path) -> None:
     assert summary.consolidated == 0
     assert "映射生成" in summary.errors[0].message
     assert consolidation_count(session_factory) == 0
+
+
+def test_relation_stage_failure_saves_facts_with_failed_hierarchy(
+    tmp_path: Path,
+) -> None:
+    """验证关系阶段失败时：P0-4A 事实层仍原子落库，层级标记为 failed。
+
+    P0-4B 失败不阻塞 P0-4A 与 P0-6 统计，但不允许伪装成整批成功。
+    """
+    _, session_factory = make_database(tmp_path)
+    seed_two_jobs(session_factory)
+    payload = valid_result_payload()
+    client = FakeConsolidationClient(
+        [
+            {"canonical_requirements": payload["canonical_requirements"]},
+            {"mappings": payload["mappings"]},
+            {"bad": True},
+        ]
+    )
+    metadata = ConsolidatorMetadata(model_name="test-model")
+
+    summary = consolidate_requirements(
+        session_factory, client, metadata, max_attempts=1
+    )
+
+    assert summary.failed == 0
+    assert summary.consolidated == 2
+    assert summary.hierarchy_status == "failed"
+    with session_factory() as session:
+        consolidation = session.scalar(
+            select(JobConsolidation).where(
+                JobConsolidation.scope_key == "all",
+                JobConsolidation.consolidator_version
+                == metadata.consolidator_version,
+            )
+        )
+        assert consolidation is not None
+        assert consolidation.hierarchy_status == "failed"
+        assert len(consolidation.canonical_requirements) == 2
+        assert len(consolidation.mappings) == 2
+        assert len(consolidation.relations) == 0
+
+
+def test_uncertain_relations_create_no_persisted_edges(tmp_path: Path) -> None:
+    """验证uncertain判断只进入审计输出，不创建正式关系记录。"""
+    _, session_factory = make_database(tmp_path)
+    seed_two_jobs(session_factory)
+    payload = valid_result_payload()
+    payload["relations"] = payload["relations"] + [
+        {
+            "source_requirement_id": "requirement-a",
+            "target_requirement_id": "requirement-b",
+            "relation_type": "uncertain",
+            "rationale": "名称抽象，无法判断包含方向",
+            "confidence": 0.5,
+        }
+    ]
+    client = FakeConsolidationClient(stage_payloads(payload))
+    metadata = ConsolidatorMetadata(model_name="test-model")
+
+    summary = consolidate_requirements(session_factory, client, metadata)
+
+    assert summary.relation_count == 1
+    assert summary.uncertain_count == 1
+    with session_factory() as session:
+        consolidation = session.scalar(
+            select(JobConsolidation).where(
+                JobConsolidation.scope_key == "all",
+                JobConsolidation.consolidator_version
+                == metadata.consolidator_version,
+            )
+        )
+        assert consolidation is not None
+        assert len(consolidation.relations) == 1
+        assert consolidation.relations[0].relation_type == "broader_than"
+        assert len(consolidation.raw_response["uncertain_relations"]) == 1
+
+
+def test_none_relations_persist_no_records(tmp_path: Path) -> None:
+    """验证无包含关系的批次不产生任何持久化关系记录。"""
+    _, session_factory = make_database(tmp_path)
+    seed_two_jobs(session_factory)
+    payload = valid_result_payload()
+    payload["relations"] = []
+    client = FakeConsolidationClient(stage_payloads(payload))
+    metadata = ConsolidatorMetadata(model_name="test-model")
+
+    summary = consolidate_requirements(session_factory, client, metadata)
+
+    assert summary.relation_count == 0
+    assert summary.uncertain_count == 0
+    with session_factory() as session:
+        consolidation = session.scalar(
+            select(JobConsolidation).where(
+                JobConsolidation.scope_key == "all",
+                JobConsolidation.consolidator_version
+                == metadata.consolidator_version,
+            )
+        )
+        assert consolidation is not None
+        assert len(consolidation.relations) == 0
+
+
+def test_hierarchy_relations_do_not_change_statistics(tmp_path: Path) -> None:
+    """验证层级关系只用于报告组织，不改变独立JD高频统计。"""
+    from app.requirement_consolidation import (
+        CanonicalRequirement,
+        RequirementConsolidationResult,
+        RequirementMapping,
+        RequirementMappingStatus,
+        RequirementRelation,
+        RequirementRelationType,
+    )
+
+    _, session_factory = make_database(tmp_path)
+    seed_two_jobs(session_factory)
+
+    canonical_a = CanonicalRequirement(
+        canonical_requirement_id="cr-a",
+        canonical_name="能力甲使用经验",
+        rationale="来源证据",
+        confidence=0.9,
+    )
+    canonical_b = CanonicalRequirement(
+        canonical_requirement_id="cr-b",
+        canonical_name="能力乙",
+        rationale="独立条件",
+        confidence=0.9,
+    )
+    mappings = [
+        RequirementMapping(
+            requirement_id=1,
+            status=RequirementMappingStatus.MAPPED,
+            canonical_requirement_id="cr-a",
+            rationale="同义归并",
+            confidence=0.9,
+        ),
+        RequirementMapping(
+            requirement_id=2,
+            status=RequirementMappingStatus.MAPPED,
+            canonical_requirement_id="cr-b",
+            rationale="独立条件",
+            confidence=0.9,
+        ),
+    ]
+    base = RequirementConsolidationResult(
+        canonical_requirements=[canonical_a, canonical_b],
+        mappings=mappings,
+    )
+    with_hierarchy = RequirementConsolidationResult(
+        canonical_requirements=[canonical_a, canonical_b],
+        mappings=mappings,
+        relations=[
+            RequirementRelation(
+                source_requirement_id="cr-b",
+                target_requirement_id="cr-a",
+                relation_type=RequirementRelationType.BROADER_THAN,
+                rationale="乙是甲的具体类型",
+                confidence=0.8,
+            )
+        ],
+    )
+    # 独立JD高频统计只由（实例->标准项）映射计算，与层级关系无关。
+    occurrence_jobs = {1: 101, 2: 102}
+
+    def jd_counts(result: RequirementConsolidationResult) -> dict[str, set[int]]:
+        counts: dict[str, set[int]] = {}
+        for mapping in result.mappings:
+            if (
+                mapping.status is RequirementMappingStatus.MAPPED
+                and mapping.canonical_requirement_id is not None
+            ):
+                counts.setdefault(mapping.canonical_requirement_id, set()).add(
+                    occurrence_jobs[mapping.requirement_id]
+                )
+        return counts
+
+    assert jd_counts(base) == jd_counts(with_hierarchy) == {
+        "cr-a": {101},
+        "cr-b": {102},
+    }

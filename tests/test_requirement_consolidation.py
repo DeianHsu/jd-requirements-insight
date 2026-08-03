@@ -181,7 +181,7 @@ def test_result_rejects_relation_to_unknown_requirement() -> None:
         {
             "source_requirement_id": "requirement-a",
             "target_requirement_id": "missing",
-            "relation_type": "part_of",
+            "relation_type": "broader_than",
             "rationale": "测试关系",
             "confidence": 0.8,
         }
@@ -191,7 +191,7 @@ def test_result_rejects_relation_to_unknown_requirement() -> None:
         RequirementConsolidationResult.model_validate(result)
 
 
-def test_result_treats_reverse_related_edges_as_duplicates() -> None:
+def test_result_rejects_duplicate_broader_edges() -> None:
     result = merged_result().model_dump(mode="json")
     result["canonical_requirements"].append(
         {
@@ -215,15 +215,15 @@ def test_result_treats_reverse_related_edges_as_duplicates() -> None:
         RequirementRelation(
             source_requirement_id="requirement-a",
             target_requirement_id="requirement-b",
-            relation_type=RequirementRelationType.RELATED_TO,
-            rationale="测试相关",
+            relation_type=RequirementRelationType.BROADER_THAN,
+            rationale="测试包含",
             confidence=0.8,
         ),
         RequirementRelation(
-            source_requirement_id="requirement-b",
-            target_requirement_id="requirement-a",
-            relation_type=RequirementRelationType.RELATED_TO,
-            rationale="反向重复",
+            source_requirement_id="requirement-a",
+            target_requirement_id="requirement-b",
+            relation_type=RequirementRelationType.BROADER_THAN,
+            rationale="同向重复",
             confidence=0.8,
         ),
     ]
@@ -232,62 +232,56 @@ def test_result_treats_reverse_related_edges_as_duplicates() -> None:
         RequirementConsolidationResult.model_validate(result)
 
 
-def test_result_rejects_multiple_relation_types_for_same_pair() -> None:
-    """验证同一标准要求项对不能同时保存相关和上下位关系。"""
+def test_result_rejects_broader_than_direction_conflict() -> None:
+    """验证同一对标准要求项互为broader_than时被方向冲突检查拒绝。"""
     result = result_with_three_canonicals()
     result["relations"] = [
         {
             "source_requirement_id": "requirement-0",
             "target_requirement_id": "requirement-1",
-            "relation_type": "related_to",
-            "rationale": "相关",
+            "relation_type": "broader_than",
+            "rationale": "甲包含乙",
             "confidence": 0.8,
         },
         {
-            "source_requirement_id": "requirement-0",
-            "target_requirement_id": "requirement-1",
-            "relation_type": "is_a",
-            "rationale": "冲突的上下位关系",
+            "source_requirement_id": "requirement-1",
+            "target_requirement_id": "requirement-0",
+            "relation_type": "broader_than",
+            "rationale": "乙包含甲",
             "confidence": 0.8,
         },
     ]
 
-    with pytest.raises(
-        ValidationError,
-        match=(
-            "关系类型必须互斥.*requirement-0<->requirement-1="
-            "is_a,related_to"
-        ),
-    ):
+    with pytest.raises(ValidationError, match="broader_than 方向冲突"):
         RequirementConsolidationResult.model_validate(result)
 
 
-def test_result_rejects_directed_relation_cycle() -> None:
-    """验证is_a和part_of关系不能形成有向环。"""
+def test_result_rejects_broader_than_cycle() -> None:
+    """验证broader_than包含图不能形成环。"""
     result = result_with_three_canonicals()
     result["relations"] = [
         {
             "source_requirement_id": f"requirement-{source}",
             "target_requirement_id": f"requirement-{target}",
-            "relation_type": "is_a",
-            "rationale": "测试环",
+            "relation_type": "broader_than",
+            "rationale": "包含关系",
             "confidence": 0.8,
         }
         for source, target in ((0, 1), (1, 2), (2, 0))
     ]
 
-    with pytest.raises(ValidationError, match="is_a关系不能形成环"):
+    with pytest.raises(ValidationError, match="broader_than关系不能形成环"):
         RequirementConsolidationResult.model_validate(result)
 
 
 def test_result_accepts_directed_relation_chain() -> None:
-    """验证无环的同类型有向关系链仍可通过合同。"""
+    """验证无环的broader_than关系链仍可通过合同。"""
     result = result_with_three_canonicals()
     result["relations"] = [
         {
             "source_requirement_id": f"requirement-{source}",
             "target_requirement_id": f"requirement-{target}",
-            "relation_type": "part_of",
+            "relation_type": "broader_than",
             "rationale": "合法关系链",
             "confidence": 0.8,
         }
@@ -307,6 +301,52 @@ def test_review_required_mapping_requires_candidates() -> None:
             rationale="存在歧义",
             confidence=0.5,
         )
+
+
+def test_uncertain_in_relations_is_rejected() -> None:
+    """验证uncertain不能作为正式关系进入relations。"""
+    result = result_with_three_canonicals()
+    result["relations"] = [
+        {
+            "source_requirement_id": "requirement-0",
+            "target_requirement_id": "requirement-1",
+            "relation_type": "uncertain",
+            "rationale": "无法判断方向",
+            "confidence": 0.5,
+        }
+    ]
+
+    with pytest.raises(ValidationError, match="uncertain 是模型判断状态"):
+        RequirementConsolidationResult.model_validate(result)
+
+
+def test_uncertain_relations_require_uncertain_type_and_known_references() -> None:
+    """验证uncertain_relations只接受uncertain类型且引用已知标准项。"""
+    result = result_with_three_canonicals()
+    result["uncertain_relations"] = [
+        {
+            "source_requirement_id": "requirement-0",
+            "target_requirement_id": "requirement-1",
+            "relation_type": "broader_than",
+            "rationale": "类型错误",
+            "confidence": 0.8,
+        }
+    ]
+
+    with pytest.raises(ValidationError, match="只能保存 uncertain 判断记录"):
+        RequirementConsolidationResult.model_validate(result)
+
+    result["uncertain_relations"] = [
+        {
+            "source_requirement_id": "missing",
+            "target_requirement_id": "requirement-1",
+            "relation_type": "uncertain",
+            "rationale": "引用未知",
+            "confidence": 0.5,
+        }
+    ]
+    with pytest.raises(ValidationError, match="不确定判断引用未知标准要求项"):
+        RequirementConsolidationResult.model_validate(result)
 
 
 def test_coverage_rejects_missing_requirement_occurrence() -> None:

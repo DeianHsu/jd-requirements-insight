@@ -32,46 +32,55 @@ from app.requirement_consolidation import (
     RequirementConsolidationInput,
     RequirementConsolidationResult,
     RequirementMapping,
+    RequirementMappingStatus,
     RequirementOccurrence,
     RequirementRelation,
+    RequirementRelationType,
     validate_requirement_coverage,
 )
 from app.schemas import RequirementItem
 
-CONSOLIDATION_PROMPT_VERSION = "2.1"
-CONSOLIDATION_SCHEMA_VERSION = "1.0"
+CONSOLIDATION_PROMPT_VERSION = "4.0"
+CONSOLIDATION_SCHEMA_VERSION = "2.0"
 CONSOLIDATION_READ_TIMEOUT_SECONDS = 900.0
 # 单次完整请求在149实例规模下曾出现约50KB响应截断；映射阶段按此上限
 # 受控分块，使任何单次映射请求的实例数与输出规模都远离截断边界。
 CONSOLIDATION_MAPPING_CHUNK_SIZE = 50
 
-# 关系轮专用系统提示：只聚焦关系判定，避免映射/标准项规则干扰，并强化
-# part_of优先与跨层级不建关系，缓解模型对"并列即related_to"的过度倾向。
-RELATION_SYSTEM_PROMPT = """你是跨JD标准要求项关系判断器。输入一批标准要求项与它们来源的实例证据，请只判断标准要求项之间的语义关系，并严格只输出relations数组。
+# 关系轮专用系统提示：只聚焦关系判定。关系模型已收缩为三种业务判断：
+# equivalent（由实例→标准项映射表达，不建边）、broader_than（唯一正式边）、
+# none（不输出）；信息不足时允许 uncertain 弃权，不创建正式边。
+RELATION_SYSTEM_PROMPT = """你是跨JD标准要求项关系判断器。输入一批标准要求项与它们来源的实例证据，请判断标准要求项之间是否需要建立包含关系，并严格只输出relations数组。
 
-【关系判定】
-1. related_to仅用于同一实例证据中以同级并列方式出现的招聘条件（例如"任务分解、工具调用、协同执行等机制"中的并列机制）；同组同级并列必须全部两两建立related_to关系，不得遗漏任意一对。并列判断只依据同一实例的证据，不同实例的证据不得合并使用。
-2. 组成部分与上下位关系优先于related_to：若一个条件的具体活动或组成部分是另一个条件的整体或上位活动（例如"能力甲实施经验"是"能力甲落地经验"的一部分），必须输出part_of，不得用related_to代替。
-3. 两个条件虽然在同一证据中出现，但属于不同层级（大类与其包含的具体概念）时，不建立任何关系。
-4. 关系不是可选项：只要符合上述情形就必须输出关系，不能只输出空数组。
-5. 同一对标准要求项最多输出一条关系，is_a、part_of和related_to三者互斥。若is_a或part_of成立，不得再为同一对输出related_to；is_a只表示类型上下位，part_of只表示组成部分到整体，必须选择语义最具体且唯一的一种。
-6. is_a和part_of分别都必须保持有向无环；不要输出自环、反向重复或可由环路返回起点的关系。
+【判断顺序】（必须按此顺序逐对判断）
+1. 两个要求在跨JD统计目的下是否应该归并为同一个标准要求项？是：它们应当被映射到同一标准要求项，等价性已由映射表达，不要为这对输出任何关系边。
+2. 不能归并时，其中一个是否明确包含另一个（后者是前者的具体类型、组成部分、实现方式或明确子能力）？是：输出一条broader_than，方向为 更宽泛 -> 更具体。
+3. 不存在明确包含方向：不输出这对（none，无关系即不输出）。
+4. 名称过于抽象、缺少上下文或包含方向无法可靠判断：输出uncertain，不要猜测。
+
+【关系语义】
+1. broader_than统一表达旧概念part_of、is_a、上下位、整体/组成部分：例如"能力甲应用开发" broader_than "能力乙应用开发"（乙是甲的一种具体类型），"能力甲系统开发" broader_than "能力丙机制实现"（丙是甲系统的一种实现方式）。
+2. 只凭以下情况不足以建立包含关系：经常共同出现、属于相同技术领域、一项经常使用另一项、两项语义相似、两项都与某个更大领域有关。例如"能力甲"与"能力丁"经常在同一岗位出现，但不建立包含关系。
+3. "相似"不等于"等价"，"相关"不等于"包含"；禁止先根据语义相关建立关系。
+4. 不要为了构建完整图而强行生成边：没有任何包含关系的标准项之间不输出边，relations可以是空数组。
+5. 同一对标准要求项最多输出一条关系；不要输出自环、反向重复或可由环路返回起点的关系。
+6. 信息不足时宁可输出uncertain，也不要猜测方向；uncertain不会创建任何正式关系边。
 
 【输出要求】
 严格按照用户提示要求的JSON结构输出，只输出用户提示指定的relations数组，不要输出Markdown代码块或额外说明。"""
 
-# Prompt V1只定义通用归并任务：同义归并、关系判断和未映射处理，不出现任何具体领域技能。
-CONSOLIDATION_SYSTEM_PROMPT = """你是跨JD岗位要求归并器。输入是一批来自不同JD的原子要求实例，你需要判断哪些实例指向同一招聘条件，并为无法确定或需要人工判断的实例标注状态。只能依据每个实例提供的原始名称和证据上下文判断，不得补充任何领域知识或行业常识。
+# Prompt v4.0：保守归并（全 mapped + singleton 回退），不出现任何具体领域技能。
+CONSOLIDATION_SYSTEM_PROMPT = """你是跨JD岗位要求归并器。输入是一批来自不同JD的原子要求实例，你需要判断哪些实例指向同一招聘条件，并把每个实例映射到一个标准要求项。只能依据每个实例提供的原始名称和证据上下文判断，不得补充任何领域知识或行业常识。
 
 【任务边界】
-1. 每个输入实例必须且只能产生一条mapping结果（mapped、unmapped或review_required之一），不得遗漏任何实例，也不得为不存在的实例生成结果。
-2. 同义归并：只有表面名称不同但结合证据上下文后指向同一招聘条件的实例才归并到同一标准要求项。例如实例A（raw_name="能力甲使用经验"，evidence="具备能力甲使用经验"）与实例B（raw_name="具备能力甲的使用经验"，evidence="具备能力甲的使用经验"）应归并到同一标准要求项"能力甲使用经验"。
-3. 同一表面词可以因证据上下文不同而映射到不同标准要求项；不能只因为名称文本相同就自动归并，必须结合证据判断。
-4. 上下位、组成或仅相关关系不是同义，不能触发归并；这类实例分别映射到各自标准要求项，再建立is_a、part_of或related_to关系。
-5. 关系方向固定：is_a和part_of的source指向target（下位指向上位、组成部分指向整体）；related_to无方向，反向重复视为同一关系。
-6. 证据不足无法确定映射目标时使用unmapped；存在多个候选且需要人工判断时使用review_required，并把候选标准要求项ID填入candidate_requirement_ids。
+1. 每个输入实例必须且只能产生一条mapped结果，不得遗漏任何实例，也不得为不存在的实例生成结果；本流程不输出unmapped或review_required。
+2. 同义归并：只有表面名称不同但结合证据上下文后指向同一招聘条件（达到可以合并统计的程度）的实例才归并到同一标准要求项。例如实例A（raw_name="能力甲使用经验"，evidence="具备能力甲使用经验"）与实例B（raw_name="具备能力甲的使用经验"，evidence="具备能力甲的使用经验"）应归并到同一标准要求项"能力甲使用经验"。
+3. 保守归并：无法确认是否等价的实例保持为不同标准要求项，每个实例至少可以形成自己的singleton标准要求项；不允许因为名称中出现相同关键词或属于同一技术领域就强制合并。
+4. 同一表面词可以因证据上下文不同而映射到不同标准要求项；不能只因为名称文本相同就自动归并，必须结合证据判断。
+5. 上下位、组成或仅相关关系不是同义，不能触发归并；这类实例分别映射到各自标准要求项，包含方向由关系轮输出broader_than表达。
+6. 本阶段不输出relations；关系判断由专门的关系轮完成，判断顺序为：可归并则不建边（等价由映射表达）→ 明确包含则broader_than（更宽泛指向更具体）→ 无明确包含则不输出 → 信息不足输出uncertain。
 7. 不得修改、覆盖或删除任何输入实例的原始名称、证据和属性；归并只产生标准要求项和映射，不改写输入。
-8. 每条mapping和relation都必须给出理由：说明依据了哪些证据和名称线索，不能只写"语义相同"或"相关"。
+8. 每条mapping都必须给出理由：说明依据了哪些证据和名称线索，不能只写"语义相同"或"相关"。
 
 【标准项名称】
 1. 标准要求项名称使用简洁、独立可读的常见表达，优先采用最贴近该条件的原文表达；改写只做最小必要修改：去掉"相关知识""概念"等冗余后缀，统一中英文或同义表达（例如"能力甲应用开发"与"甲类应用开发"归并后统一使用一个名称）。
@@ -82,17 +91,17 @@ CONSOLIDATION_SYSTEM_PROMPT = """你是跨JD岗位要求归并器。输入是一
 
 【归并边界】
 1. 任选组（any_of，例如"至少掌握一门主流能力"中的各选项）的成员与单独的硬性条件（例如"具备扎实的能力甲基础"）即使表面名称相似，也代表不同招聘门槛，不得归并到同一标准要求项。
-2. 单独条件只是整体的一部分时（例如"能力甲分析能力"是"能力甲分析与解决能力"的一部分），不得与整体归并，应独立映射并建立part_of关系。
+2. 单独条件只是整体的一部分时（例如"能力甲分析能力"是"能力甲分析与解决能力"的一部分），不得与整体归并，应独立映射到各自标准要求项；包含方向由关系轮输出broader_than表达。
 3. 年限或数值门槛不同的条件不得归并：例如"3年以上能力甲经验"与"5年以上能力甲经验"是不同招聘门槛，必须分别映射到不同标准要求项；实例带年限时，标准项名称应保留年限含义（如"3年以上能力甲经验"）。
 4. 示例：实例"能力甲"（属于"至少掌握一门主流能力"任选组）与实例"能力甲基础"（硬性条件）不得归并，必须分别映射到不同标准要求项。
 
 【关系生成】
-1. 同一证据中并列出现的多个机制、能力或组件（例如"任务分解、工具调用、协同执行等机制"）彼此必须全部两两建立related_to关系，不得遗漏任意一对；并列判断只依据同一实例的证据，不同实例的证据不得合并使用。
-2. 上下位或整体-部分关系不得使用related_to：具体活动或组成部分与整体/上位活动（例如"能力甲实施经验"是"能力甲落地经验"的一部分）必须建立part_of关系，不得用related_to代替。
-3. 两个条件虽然在同一证据中出现，但属于不同层级（大类与其包含的具体概念）时，不建立related_to。
-4. 关系不是可选项：只要符合上述情形就必须输出关系，不能只输出映射。
-5. 同一对标准要求项最多输出一条关系，is_a、part_of和related_to三者互斥。若is_a或part_of成立，不得再为同一对输出related_to；is_a只表示类型上下位，part_of只表示组成部分到整体，必须选择语义最具体且唯一的一种。
-6. is_a和part_of分别都必须保持有向无环；不要输出自环、反向重复或可由环路返回起点的关系。
+1. 关系轮判断顺序：可归并（映射已表达等价）则不建边；一项明确包含另一项（具体类型、组成部分、实现方式或子能力）则输出broader_than（方向：更宽泛 -> 更具体）；无明确包含则不输出；信息不足输出uncertain。
+2. part_of、is_a、上下位、整体/组成部分统一用broader_than表达，不得输出is_a、part_of或related_to。
+3. 只凭共同出现、同属一个技术领域、经常互相使用或语义相似不足以建立包含关系；"相似"不等于"等价"，"相关"不等于"包含"。
+4. 不要为了构建完整图而强行生成关系：没有包含关系的标准项之间不输出边，relations可以是空数组。
+5. 同一对标准要求项最多输出一条关系，方向不能反向重复；不要输出自环或形成环的关系。
+6. 信息不足时宁可输出uncertain弃权，也不要猜测方向。
 
 【输出要求】
 严格按照用户提示要求的JSON结构输出，只输出用户提示指定的数组，不要输出Markdown代码块或额外说明。"""
@@ -400,7 +409,7 @@ def build_consolidation_user_prompt(
                 {
                     "source_requirement_id": "string",
                     "target_requirement_id": "string",
-                    "relation_type": "is_a|part_of|related_to；同一无序项对只能选择一种",
+                    "relation_type": "broader_than（方向：更宽泛->更具体）|uncertain（信息不足弃权，不创建边）；equivalent已由映射表达、none不输出",
                     "rationale": "string",
                     "confidence": "0到1",
                 }
@@ -447,19 +456,21 @@ def build_mappings_prompt(
     """构建只要求模型输出本块实例映射的阶段提示，携带标准项清单供引用。"""
     payload = {
         "task": (
-            "请把每条要求实例映射到给定的标准要求项；证据不足的实例使用"
-            "unmapped，需要人工判断的使用review_required。只输出mappings，"
-            "不要输出canonical_requirements和relations。"
+            "请把每条要求实例映射到给定的标准要求项；每个实例必须且只能"
+            "产生一条mapped结果，无法确认等价时为该实例创建独立的singleton"
+            "标准要求项。只输出mappings，不要输出canonical_requirements和"
+            "relations。"
         ),
         "output_schema": {
             "mappings": [
                 {
                     "requirement_id": "int，本块输入实例的id",
-                    "status": "mapped|unmapped|review_required",
+                    "status": "mapped（本流程唯一允许的状态）",
                     "canonical_requirement_id": (
-                        "string或null，必须来自给定的标准要求项"
+                        "string，必须来自给定的标准要求项；无法确认等价时"
+                        "新建singleton标准要求项并引用它"
                     ),
-                    "candidate_requirement_ids": ["string，review_required时使用"],
+                    "candidate_requirement_ids": [],
                     "rationale": "string",
                     "confidence": "0到1",
                 }
@@ -492,7 +503,7 @@ def build_relations_prompt(
                 {
                     "source_requirement_id": "string",
                     "target_requirement_id": "string",
-                    "relation_type": "is_a|part_of|related_to；同一无序项对只能选择一种",
+                    "relation_type": "broader_than（方向：更宽泛->更具体）|uncertain（信息不足弃权，不创建边）；equivalent已由映射表达、none不输出",
                     "rationale": "string",
                     "confidence": "0到1",
                 }
@@ -571,16 +582,59 @@ def parse_mappings_response(response_text: str) -> list[RequirementMapping]:
         raise ConsolidationError(f"模型输出不符合归并合同：{exc}") from exc
 
 
-def parse_relations_response(response_text: str) -> list[RequirementRelation]:
-    """解析关系阶段响应，校验每条关系符合合同结构。"""
+def _normalize_relation_item(item: dict[str, object]) -> dict[str, object]:
+    """把模型关系输出规范化为收缩后的关系模型。
+
+    旧类型 is_a、part_of、related_to 已从枚举删除（旧评测夹具移除、
+    可再生产物不保留兼容）；模型仍输出旧类型时按以下规则处理：
+
+    - is_a、part_of：旧方向为"下位/组成部分 -> 上位/整体"，broader_than
+      方向固定为"更宽泛 -> 更具体"，因此交换两端并改写类型；
+    - related_to：已废弃（普通相关不建立关系），拒绝并交由重试修正；
+    - broader_than、uncertain：保留原样。
+    """
+    relation_type = item.get("relation_type")
+    if relation_type in ("is_a", "part_of"):
+        source = item.get("source_requirement_id")
+        target = item.get("target_requirement_id")
+        item["relation_type"] = RequirementRelationType.BROADER_THAN.value
+        item["source_requirement_id"] = target
+        item["target_requirement_id"] = source
+    elif relation_type == "related_to":
+        raise ConsolidationError(
+            "related_to 已废弃：普通相关不建立关系，"
+            "请输出 broader_than、uncertain 或不输出该对"
+        )
+    return item
+
+
+def parse_relations_response(
+    response_text: str,
+) -> tuple[list[RequirementRelation], list[RequirementRelation]]:
+    """解析关系阶段响应，返回（正式关系列表, uncertain判断列表）。
+
+    正式关系只保留 broader_than；uncertain 是模型判断状态，分离到
+    不确定列表并只进入诊断/审计输出，不创建正式关系边。
+    """
     payload = _parse_json_object(response_text)
     items = payload.get("relations")
     if not isinstance(items, list):
         raise ConsolidationError("模型输出不符合归并合同：缺少relations")
-    try:
-        return [RequirementRelation.model_validate(item) for item in items]
-    except ValidationError as exc:
-        raise ConsolidationError(f"模型输出不符合归并合同：{exc}") from exc
+    relations: list[RequirementRelation] = []
+    uncertain_relations: list[RequirementRelation] = []
+    for item in items:
+        if not isinstance(item, dict):
+            raise ConsolidationError("模型输出不符合归并合同：relations元素必须是对象")
+        normalized = _normalize_relation_item(dict(item))
+        try:
+            relation = RequirementRelation.model_validate(normalized)
+        except ValidationError as exc:
+            raise ConsolidationError(f"模型输出不符合归并合同：{exc}") from exc
+        if relation.relation_type is RequirementRelationType.UNCERTAIN:
+            uncertain_relations.append(relation)
+        else:
+            relations.append(relation)
+    return relations, uncertain_relations
 
 
 def _chunk_consolidation_input(
@@ -601,7 +655,12 @@ def _validate_chunk_coverage(
     chunk_input: RequirementConsolidationInput,
     mappings: list[RequirementMapping],
 ) -> None:
-    """确认映射块为本块每条实例且仅生成一条结果，缺漏可反馈模型修正。"""
+    """确认映射块为本块每条实例且仅生成一条mapped结果，缺漏可反馈模型修正。
+
+    新批次合同要求每个实例恰好 mapped 一次：出现 unmapped 或
+    review_required 时拒绝并反馈修正，模型应改为创建 singleton
+    标准要求项。
+    """
     expected_ids = {item.requirement_id for item in chunk_input.occurrences}
     actual_ids = {mapping.requirement_id for mapping in mappings}
     errors = []
@@ -611,6 +670,17 @@ def _validate_chunk_coverage(
     unexpected_ids = sorted(actual_ids - expected_ids)
     if unexpected_ids:
         errors.append(f"包含未知要求实例：{unexpected_ids}")
+    non_mapped = sorted(
+        mapping.requirement_id
+        for mapping in mappings
+        if mapping.status is not RequirementMappingStatus.MAPPED
+    )
+    if non_mapped:
+        errors.append(
+            "本流程要求每个实例恰好mapped一次，不得输出unmapped或"
+            f"review_required；无法确认等价的实例请创建singleton标准要求项："
+            f"{non_mapped}"
+        )
     if errors:
         raise ConsolidationError("；".join(errors))
 
@@ -706,10 +776,11 @@ def _request_relations(
     canonical_requirements: list[CanonicalRequirement],
     client: ConsolidationClient,
     max_attempts: int,
-) -> list[RequirementRelation]:
+) -> tuple[list[RequirementRelation], list[RequirementRelation]]:
     """阶段3：请求模型基于全部实例证据生成标准要求项关系。
 
-    关系轮使用专用系统提示，聚焦关系判定并强化part_of优先与层级限制。
+    返回（正式关系, uncertain判断）。关系轮使用专用系统提示，按
+    判断顺序（可归并不建边 → broader_than → none → uncertain）输出。
     """
     return _retry_stage(
         client,
@@ -730,6 +801,7 @@ def consolidate_with_correction(
     system_prompt: str = CONSOLIDATION_SYSTEM_PROMPT,
     max_attempts: int = 2,
     mapping_chunk_size: int = CONSOLIDATION_MAPPING_CHUNK_SIZE,
+    degrade_hierarchy_failure: bool = False,
 ) -> tuple[RequirementConsolidationResult, dict[str, object]]:
     """分阶段执行跨JD归并，并在内存合成完整结果后统一校验。
 
@@ -737,6 +809,10 @@ def consolidate_with_correction(
     每个阶段请求的输出规模都远离单次完整请求的截断边界。各阶段结果
     先在内存合成为完整结果，再统一执行合同、冲突、完整覆盖和关系图
     校验，成功后返回；任何阶段失败都不产生可持久化的部分批次。
+
+    degrade_hierarchy_failure=True 时，关系阶段失败会降级：P0-4A 事实层
+    （标准项+映射）仍通过校验并返回，hierarchy_status="failed" 且正式
+    关系为空；P0-4B 失败不阻塞 P0-4A 落库与 P0-6 统计。
     """
     if mapping_chunk_size <= 0:
         raise ValueError("mapping_chunk_size必须大于0")
@@ -753,18 +829,28 @@ def consolidate_with_correction(
                 chunk, canonical_requirements, client, system_prompt, max_attempts
             )
         )
-    relations = _request_relations(
-        consolidation_input,
-        canonical_requirements,
-        client,
-        max_attempts,
-    )
+    try:
+        relations, uncertain_relations = _request_relations(
+            consolidation_input,
+            canonical_requirements,
+            client,
+            max_attempts,
+        )
+        hierarchy_status = "success"
+    except ConsolidationError:
+        if not degrade_hierarchy_failure:
+            raise
+        relations = []
+        uncertain_relations = []
+        hierarchy_status = "failed"
 
     try:
         result = RequirementConsolidationResult(
             canonical_requirements=canonical_requirements,
             mappings=mappings,
             relations=relations,
+            uncertain_relations=uncertain_relations,
+            hierarchy_status=hierarchy_status,
         )
         validate_requirement_coverage(consolidation_input, result)
     except ValueError as exc:
@@ -788,6 +874,8 @@ class ConsolidationSummary:
     consolidated: int = 0
     canonical_count: int = 0
     relation_count: int = 0
+    uncertain_count: int = 0
+    hierarchy_status: str = "success"
     skipped: int = 0
     consolidation_id: int | None = None
     input_fingerprint: str | None = None
@@ -839,6 +927,7 @@ def persist_consolidation(
         prompt_version=metadata.prompt_version,
         schema_version=metadata.schema_version,
         occurrence_count=len(selection.consolidation_input.occurrences),
+        hierarchy_status=result.hierarchy_status,
         raw_response=raw_response,
     )
     session.add(consolidation)
@@ -936,6 +1025,7 @@ def consolidate_requirements(
             client,
             max_attempts=max_attempts,
             mapping_chunk_size=mapping_chunk_size,
+            degrade_hierarchy_failure=True,
         )
     except (ConsolidationError, ValueError) as exc:
         summary.errors.append(ConsolidationFailure(scope, str(exc)))
@@ -954,6 +1044,8 @@ def consolidate_requirements(
     summary.consolidated = len(result.mappings)
     summary.canonical_count = len(result.canonical_requirements)
     summary.relation_count = len(result.relations)
+    summary.uncertain_count = len(result.uncertain_relations)
+    summary.hierarchy_status = result.hierarchy_status
     return summary
 
 
