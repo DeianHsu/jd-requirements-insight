@@ -6,7 +6,7 @@ import os
 import sqlite3
 from pathlib import Path
 
-from sqlalchemy import Engine, create_engine, event
+from sqlalchemy import Engine, create_engine, event, inspect
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -14,6 +14,13 @@ from app.models import Base
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DATABASE_PATH = PROJECT_ROOT / "data" / "jd_skill_insight.db"
+
+# 已从当前代码删除、不得再出现于数据库的结构（旧派生数据的标志）。
+_DELETED_TABLES = ("job_responsibilities", "requirement_relations")
+_DELETED_COLUMNS = {
+    "job_consolidations": ("hierarchy_status",),
+    "requirement_mappings": ("status", "candidate_requirement_ids"),
+}
 
 
 @event.listens_for(Engine, "connect")
@@ -52,10 +59,43 @@ def create_session_factory(engine: Engine) -> sessionmaker[Session]:
     return sessionmaker(bind=engine, expire_on_commit=False)
 
 
+def assert_current_database_schema(engine: Engine) -> None:
+    """检测旧派生数据库结构并明确拒绝。
+
+    当前代码只支持 v0.8 + Schema V3 对应的现行数据库结构。发现已删除的
+    表（job_responsibilities、requirement_relations）或旧列
+    （job_consolidations.hierarchy_status、requirement_mappings.status、
+    requirement_mappings.candidate_requirement_ids）时立即抛出清晰错误：
+    不迁移、不兼容、不自动删除，要求用户备份原始 JD 后重建。
+    """
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    violations: list[str] = []
+    for table in _DELETED_TABLES:
+        if table in existing_tables:
+            violations.append(f"表 {table}")
+    for table, columns in _DELETED_COLUMNS.items():
+        if table not in existing_tables:
+            continue
+        existing_columns = {
+            column["name"] for column in inspector.get_columns(table)
+        }
+        for column in columns:
+            if column in existing_columns:
+                violations.append(f"表 {table}.{column}")
+    if violations:
+        raise RuntimeError(
+            "检测到旧派生数据库结构（" + "、".join(violations) + "）。\n"
+            "当前代码只支持 v0.8 + Schema V3。\n"
+            "请先备份 data/raw_jds/，删除旧派生数据库并重新生成。"
+        )
+
+
 def initialize_database(engine: Engine) -> None:
-    """创建当前数据库结构（当前只支持 v0.8 + Schema V3）。
+    """创建当前数据库结构；检测到旧派生结构时明确拒绝，不静默继续。
 
     旧抽取结果或旧数据库结构不做兼容或迁移；遇到旧数据时明确提示
     备份原始 JD、删除旧派生数据库并重新生成。
     """
+    assert_current_database_schema(engine)
     Base.metadata.create_all(engine)
