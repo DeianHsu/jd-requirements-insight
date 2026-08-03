@@ -153,4 +153,4 @@ Embedding 和 Vector Database 与 RAG 相关，但类别是 `retrieval`，不能
 
 不确定的字段使用 `unknown` 或 `null`，不得猜测。
 
-证据与验证协议规则见 [DATASET_EVALUATION.md](DATASET_EVALUATION.md)。
+证据与验证协议规则见 [VALIDATION.md](VALIDATION.md)，职责边界见 [RESPONSIBILITIES.md](RESPONSIBILITIES.md)。
