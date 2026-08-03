@@ -300,7 +300,7 @@ def test_coverage_rejects_unexpected_requirement_occurrence() -> None:
 
 
 def test_stage1_missing_source_instance_is_rejected() -> None:
-    """阶段1来源声明遗漏某个输入实例时被拒绝（须由阶段1创建singleton）。"""
+    """来源分区声明遗漏某个输入实例时被拒绝（须由模型创建singleton）。"""
     source = consolidation_input()
     result = merged_result()
     result.canonical_requirements[0].source_requirement_ids = [1]
@@ -334,7 +334,7 @@ def test_instance_declared_in_two_canonicals_is_rejected() -> None:
 
 
 def test_canonical_without_source_instance_is_rejected() -> None:
-    """阶段1声明了来源为空的标准项被拒绝（每个 canonical 至少一个来源）。"""
+    """声明了来源为空的标准项被拒绝（每个 canonical 至少一个来源）。"""
     source = consolidation_input()
     result = merged_result().model_dump(mode="json")
     result["canonical_requirements"].append(
@@ -354,8 +354,8 @@ def test_canonical_without_source_instance_is_rejected() -> None:
         )
 
 
-def test_mapping_conflicts_with_stage1_source_declaration() -> None:
-    """阶段2 mapping 与阶段1来源归属冲突时被拒绝。"""
+def test_mapping_conflicts_with_source_partition() -> None:
+    """映射与来源分区归属冲突时被拒绝。"""
     source = consolidation_input()
     # 绕过 Result validator（b 无 mapping 引用会被 validator 拒绝），
     # 直接验证映射与来源归属的一致性检查。
@@ -383,7 +383,7 @@ def test_mapping_conflicts_with_stage1_source_declaration() -> None:
                 rationale="一致",
                 confidence=0.95,
             ),
-            # 阶段1声明实例2归属 requirement-b，阶段2却映射到 requirement-a。
+            # 来源分区声明实例2归属 requirement-b，映射却指向 requirement-a。
             RequirementMapping(
                 requirement_id=2,
                 canonical_requirement_id="requirement-a",
@@ -393,12 +393,12 @@ def test_mapping_conflicts_with_stage1_source_declaration() -> None:
         ],
     )
 
-    with pytest.raises(ValueError, match="映射与阶段1来源归属冲突"):
+    with pytest.raises(ValueError, match="映射与来源分区归属冲突"):
         validate_requirement_coverage(source, result)
 
 
 def test_stage1_singleton_for_unmergeable_instance_passes() -> None:
-    """阶段1为无法合并实例创建 singleton，阶段2正常映射（两阶段合同成立）。"""
+    """模型为无法合并实例创建 singleton，映射由来源分区确定性生成。"""
     source = consolidation_input()
     result = RequirementConsolidationResult(
         canonical_requirements=[

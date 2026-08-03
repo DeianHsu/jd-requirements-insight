@@ -325,13 +325,13 @@ def test_default_extractor_version_auto_selects_unique_common(
     assert report["input_identity"]["model"] == "consolidation-model"
 
 
-def test_multiple_common_versions_require_explicit_selection(
+def test_auto_selected_legacy_version_is_rejected(
     monkeypatch, tmp_path
 ) -> None:
-    """数据库存在多个共同抽取版本时要求显式指定。"""
+    """库中唯一抽取版本是旧 v0.6：缺省自动选择后在模型调用前被版本门禁拒绝。"""
     import scripts.experiments.p0_4.run_acceptance as acceptance_script
 
-    database_path = tmp_path / "multi.db"
+    database_path = tmp_path / "legacy_version.db"
     _seed_v08_extraction(database_path)
 
     from app.database import (
@@ -359,6 +359,12 @@ def test_multiple_common_versions_require_explicit_selection(
         def missing_fields(self) -> list[str]:
             return []
 
+    class ExplodingClient:
+        """若被初始化/调用则测试失败（版本门禁必须在模型调用前拒绝）。"""
+
+        def __init__(self, settings) -> None:
+            raise AssertionError("不应初始化模型客户端")
+
     monkeypatch.setattr(
         sys,
         "argv",
@@ -375,18 +381,182 @@ def test_multiple_common_versions_require_explicit_selection(
     )
     monkeypatch.setattr(acceptance_script, "load_llm_settings", lambda: FakeSettings())
     monkeypatch.setattr(
-        acceptance_script, "OpenAICompatibleConsolidationClient", FakeConsolidationClient
+        acceptance_script, "OpenAICompatibleConsolidationClient", ExplodingClient
     )
 
-    # 只有 v0.6 一个版本 → 自动选择后被版本门禁拒绝（不是模型调用失败）。
+    # 缺省自动选择唯一版本 v0.6 → 版本门禁拒绝（不是模型调用失败）。
     result = acceptance_script.main()
     assert result != 0
 
 
-def test_legacy_database_fails_before_client_initialization(
+def test_multiple_common_current_versions_require_explicit_selection(
     monkeypatch, tmp_path
 ) -> None:
-    """P0-4 验收遇到旧数据库时，在模型客户端初始化和调用前失败。"""
+    """同一 JD 同时拥有两个合法当前抽取版本：缺省拒绝并提示显式指定。"""
+    import scripts.experiments.p0_4.run_acceptance as acceptance_script
+
+    database_path = tmp_path / "multi_current.db"
+    _seed_v08_extraction(database_path)
+
+    from app.database import (
+        create_database_engine,
+        create_session_factory,
+        initialize_database,
+    )
+    from app.models import JobExtraction, JobRequirement
+
+    engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
+    initialize_database(engine)
+    session_factory = create_session_factory(engine)
+    with session_factory() as session:
+        # 第二条独立抽取记录：同一 JD、不同模型名、同为 v0.8 + Schema V3。
+        second = JobExtraction(
+            job_id=1,
+            extractor_version="extractor-b|prompt:0.8|schema:3.0",
+            model_name="extractor-b",
+            prompt_version="0.8",
+            schema_version="3.0",
+            role_family="other",
+            seniority="unknown",
+            raw_response={},
+        )
+        session.add(second)
+        session.flush()
+        # 第二条抽取带对应要求实例，确保选中后输入完整。
+        session.add(
+            JobRequirement(
+                extraction_id=second.id,
+                raw_name="技术甲",
+                category="other",
+                importance="must",
+                proficiency="basic",
+                group_id=None,
+                group_logic="standalone",
+                min_years=None,
+                max_years=None,
+                years_text=None,
+                evidence="熟悉技术甲",
+                confidence=0.9,
+            )
+        )
+        session.commit()
+    engine.dispose()
+
+    class FakeSettings:
+        model = "test-model"
+        api_key = "test-key"
+        base_url = None
+
+        def missing_fields(self) -> list[str]:
+            return []
+
+    class ExplodingClient:
+        """若被初始化/调用则测试失败（多共同版本必须在模型调用前拒绝）。"""
+
+        def __init__(self, settings) -> None:
+            raise AssertionError("不应初始化模型客户端")
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_acceptance",
+            "--execute",
+            "--database-url",
+            f"sqlite:///{database_path.as_posix()}",
+            "--job-ids",
+            "1",
+            "--runs",
+            "1",
+        ],
+    )
+    monkeypatch.setattr(acceptance_script, "load_llm_settings", lambda: FakeSettings())
+    monkeypatch.setattr(
+        acceptance_script, "OpenAICompatibleConsolidationClient", ExplodingClient
+    )
+
+    # 缺省自动选择失败：存在多个共同抽取版本，要求显式指定。
+    result = acceptance_script.main()
+    assert result != 0
+
+
+def test_explicit_current_version_is_used_when_multiple_exist(
+    monkeypatch, tmp_path
+) -> None:
+    """多共同版本存在时显式指定其中一个合法版本可正常选择。"""
+    import scripts.experiments.p0_4.run_acceptance as acceptance_script
+
+    database_path = tmp_path / "multi_explicit.db"
+    _seed_v08_extraction(database_path)
+
+    from app.database import (
+        create_database_engine,
+        create_session_factory,
+        initialize_database,
+    )
+    from app.models import JobExtraction
+
+    engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
+    initialize_database(engine)
+    session_factory = create_session_factory(engine)
+    with session_factory() as session:
+        second = JobExtraction(
+            job_id=1,
+            extractor_version="extractor-b|prompt:0.8|schema:3.0",
+            model_name="extractor-b",
+            prompt_version="0.8",
+            schema_version="3.0",
+            role_family="other",
+            seniority="unknown",
+            raw_response={},
+        )
+        session.add(second)
+        session.commit()
+    engine.dispose()
+
+    class FakeSettings:
+        model = "test-model"
+        api_key = "test-key"
+        base_url = None
+
+        def missing_fields(self) -> list[str]:
+            return []
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_acceptance",
+            "--execute",
+            "--database-url",
+            f"sqlite:///{database_path.as_posix()}",
+            "--job-ids",
+            "1",
+            "--runs",
+            "1",
+            "--extractor-version",
+            "test-model|prompt:0.8|schema:3.0",
+            "--report",
+            str(tmp_path / "report.json"),
+        ],
+    )
+    monkeypatch.setattr(acceptance_script, "load_llm_settings", lambda: FakeSettings())
+    monkeypatch.setattr(
+        acceptance_script, "OpenAICompatibleConsolidationClient", FakeConsolidationClient
+    )
+
+    assert acceptance_script.main() == 0
+
+    report = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
+    assert report["input_identity"]["extractor_version"] == (
+        "test-model|prompt:0.8|schema:3.0"
+    )
+
+
+def test_legacy_database_fails_before_client_initialization(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """P0-4 验收遇到旧数据库时，在模型客户端初始化和调用前失败并提示重建。"""
     import scripts.experiments.p0_4.run_acceptance as acceptance_script
 
     database_path = tmp_path / "legacy_gate.db"
@@ -436,6 +606,132 @@ def test_legacy_database_fails_before_client_initialization(
     )
 
     assert acceptance_script.main() != 0
+    output = capsys.readouterr().out
+    assert "备份 data/raw_jds/" in output
+    assert "重新生成" in output
+
+
+def test_empty_database_is_input_error_without_rebuild_hint(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """空库（无 JD）是普通输入错误：不提示删除旧派生数据库。"""
+    import scripts.experiments.p0_4.run_acceptance as acceptance_script
+
+    database_path = tmp_path / "empty.db"
+    from app.database import create_database_engine, initialize_database
+
+    engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
+    initialize_database(engine)  # 全新空库（无业务表）→ 门禁通过
+    engine.dispose()
+
+    class FakeSettings:
+        model = "test-model"
+        api_key = "test-key"
+        base_url = None
+
+        def missing_fields(self) -> list[str]:
+            return []
+
+    class ExplodingClient:
+        def __init__(self, settings) -> None:
+            raise AssertionError("不应初始化模型客户端")
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_acceptance",
+            "--execute",
+            "--database-url",
+            f"sqlite:///{database_path.as_posix()}",
+            "--job-ids",
+            "1",
+            "--runs",
+            "1",
+        ],
+    )
+    monkeypatch.setattr(acceptance_script, "load_llm_settings", lambda: FakeSettings())
+    monkeypatch.setattr(
+        acceptance_script, "OpenAICompatibleConsolidationClient", ExplodingClient
+    )
+
+    assert acceptance_script.main() != 0
+    output = capsys.readouterr().out
+    assert "选定范围内没有JD" in output or "指定JD不存在" in output
+    assert "删除旧派生数据库" not in output
+    assert "备份 data/raw_jds/" not in output
+
+
+def test_multiple_versions_error_has_no_rebuild_hint(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """多共同版本错误只提示显式指定，不提示删除数据库。"""
+    import scripts.experiments.p0_4.run_acceptance as acceptance_script
+
+    database_path = tmp_path / "multi_hint.db"
+    _seed_v08_extraction(database_path)
+
+    from app.database import (
+        create_database_engine,
+        create_session_factory,
+        initialize_database,
+    )
+    from app.models import JobExtraction
+
+    engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
+    initialize_database(engine)
+    session_factory = create_session_factory(engine)
+    with session_factory() as session:
+        session.add(
+            JobExtraction(
+                job_id=1,
+                extractor_version="extractor-b|prompt:0.8|schema:3.0",
+                model_name="extractor-b",
+                prompt_version="0.8",
+                schema_version="3.0",
+                role_family="other",
+                seniority="unknown",
+                raw_response={},
+            )
+        )
+        session.commit()
+    engine.dispose()
+
+    class FakeSettings:
+        model = "test-model"
+        api_key = "test-key"
+        base_url = None
+
+        def missing_fields(self) -> list[str]:
+            return []
+
+    class ExplodingClient:
+        def __init__(self, settings) -> None:
+            raise AssertionError("不应初始化模型客户端")
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_acceptance",
+            "--execute",
+            "--database-url",
+            f"sqlite:///{database_path.as_posix()}",
+            "--job-ids",
+            "1",
+            "--runs",
+            "1",
+        ],
+    )
+    monkeypatch.setattr(acceptance_script, "load_llm_settings", lambda: FakeSettings())
+    monkeypatch.setattr(
+        acceptance_script, "OpenAICompatibleConsolidationClient", ExplodingClient
+    )
+
+    assert acceptance_script.main() != 0
+    output = capsys.readouterr().out
+    assert "多个共同抽取器版本" in output or "存在多个共同抽取器版本" in output
+    assert "删除旧派生数据库" not in output
 
 
 def test_order_transformation_contract_violation_is_hard_gate(
@@ -513,6 +809,95 @@ def test_order_transformation_contract_violation_is_hard_gate(
         "order_transformation" in failure
         for failure in report["hard_gate_failures"]
     )
+
+
+def test_precheck_legacy_database_fails_cleanly(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """小规模预检遇到旧数据库：返回非零、无 traceback、客户端不初始化。"""
+    import scripts.experiments.p0_4.run_small_scale_precheck as precheck_script
+
+    database_path = tmp_path / "precheck_legacy.db"
+    from app.database import create_database_engine
+    from sqlalchemy import text
+
+    engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE requirement_relations (id INTEGER PRIMARY KEY)"
+            )
+        )
+    engine.dispose()
+
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{database_path.as_posix()}")
+
+    class FakeSettings:
+        model = "test-model"
+        api_key = "test-key"
+        base_url = None
+
+        def missing_fields(self) -> list[str]:
+            return []
+
+    class ExplodingClient:
+        def __init__(self, settings) -> None:
+            raise AssertionError("不应初始化模型客户端")
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_small_scale_precheck", "--execute"],
+    )
+    monkeypatch.setattr(precheck_script, "load_llm_settings", lambda: FakeSettings())
+    monkeypatch.setattr(
+        precheck_script,
+        "OpenAICompatibleConsolidationClient",
+        ExplodingClient,
+    )
+
+    assert precheck_script.main() != 0
+    output = capsys.readouterr().out
+    assert "预检无法开始" in output
+    assert "备份 data/raw_jds/" in output
+    assert "Traceback" not in output
+
+
+def test_precheck_input_error_has_no_rebuild_hint(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """小规模预检遇到普通选择错误：返回非零且不提示删除数据库。"""
+    import scripts.experiments.p0_4.run_small_scale_precheck as precheck_script
+
+    database_path = tmp_path / "precheck_empty.db"
+    from app.database import create_database_engine, initialize_database
+
+    engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
+    initialize_database(engine)  # 全新空库 → 门禁通过，但无 JD
+    engine.dispose()
+
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{database_path.as_posix()}")
+
+    class FakeSettings:
+        model = "test-model"
+        api_key = "test-key"
+        base_url = None
+
+        def missing_fields(self) -> list[str]:
+            return []
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_small_scale_precheck", "--execute"],
+    )
+    monkeypatch.setattr(precheck_script, "load_llm_settings", lambda: FakeSettings())
+
+    assert precheck_script.main() != 0
+    output = capsys.readouterr().out
+    assert "预检无法开始" in output
+    assert "删除旧派生数据库" not in output
+    assert "备份 data/raw_jds/" not in output
 
 
 def test_raw_response_structure_keeps_model_and_normalized_result() -> None:

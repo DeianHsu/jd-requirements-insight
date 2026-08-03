@@ -195,9 +195,10 @@ def consolidate_requirements_cmd(
 ) -> None:
     """对选定JD范围内的要求实例执行跨JD原子要求归并并幂等保存。
 
-    只完成 canonical requirements 与 instance mappings：每个实例必须
-    且只能映射到一个标准要求项；无法合并的实例由阶段1创建 singleton。
-    付费调用必须显式--execute确认。
+    单次 LLM 聚类输出 canonical requirements（含来源分区）；无法与其他
+    实例安全合并时，模型在单次聚类中为该实例创建 singleton canonical
+    requirement。mappings 由确定性代码生成。付费调用必须显式--execute
+    确认。
     """
     if all_jobs == bool(job_ids):
         console.print("[red]必须且只能选择--all或--job-id之一。[/red]")

@@ -6,7 +6,7 @@
 - 数据合同与完整覆盖：coverage、重复映射、未知引用、空 cluster；
 - 多次运行稳定性：positive-pair Jaccard、canonical 数量漂移、
   singleton 比例漂移；
-- 非语义因素不变性：输入顺序、分块大小（变形比较）；
+- 非语义因素不变性：输入顺序变形比较；
 - 人工检查所有多成员 cluster。
 """
 

@@ -305,7 +305,7 @@ def validate_requirement_coverage(
     if errors:
         raise ValueError("；".join(errors))
 
-    # 阶段 1 来源归属声明一致性（与输入对照）。
+    # 来源分区归属声明一致性（与输入对照）。
     declared: dict[int, str] = {}
     for canonical in result.canonical_requirements:
         if not canonical.source_requirement_ids:
@@ -329,7 +329,7 @@ def validate_requirement_coverage(
     missing_source_ids = sorted(expected_ids - set(declared))
     if missing_source_ids:
         raise ValueError(
-            "标准要求项来源声明遗漏实例（无法合并的实例必须由阶段1创建"
+            "标准要求项来源声明遗漏实例（无法合并的实例必须由模型创建"
             f"singleton）：{missing_source_ids}"
         )
 
@@ -338,7 +338,7 @@ def validate_requirement_coverage(
         declared_canonical = declared.get(mapping.requirement_id)
         if mapping.canonical_requirement_id != declared_canonical:
             raise ValueError(
-                f"映射与阶段1来源归属冲突：实例{mapping.requirement_id} "
-                f"阶段1归属{declared_canonical}，阶段2映射到"
+                f"映射与来源分区归属冲突：实例{mapping.requirement_id} "
+                f"来源分区归属{declared_canonical}，映射到"
                 f"{mapping.canonical_requirement_id}"
             )

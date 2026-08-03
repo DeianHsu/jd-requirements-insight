@@ -39,7 +39,7 @@ from app.requirement_consolidation import (
 
 
 class RecordingClient:
-    """包装真实LLM客户端，记录每阶段请求的实例数与响应规模。"""
+    """包装真实LLM客户端，记录每次请求的实例数、请求与响应规模、耗时。"""
 
     def __init__(self, inner: OpenAICompatibleConsolidationClient) -> None:
         """保存被包装客户端并初始化请求记录。"""
@@ -134,15 +134,25 @@ def main() -> int:
         print(f"缺少LLM配置：{', '.join(missing)}")
         return 1
 
-    engine = create_database_engine("sqlite:///data/jd_skill_insight.db")
+    engine = create_database_engine()  # 尊重 DATABASE_URL 环境变量
     try:
-        # 只读入口：查询前验证数据库属于当前结构，旧库明确拒绝。
-        assert_current_database_schema(engine)
-        session_factory = create_session_factory(engine)
-        with session_factory() as session:
-            selection = load_consolidation_selection(
-                session, extractor_version=args.extractor_version
-            )
+        try:
+            # 只读入口：查询前验证数据库属于当前结构，旧库明确拒绝。
+            assert_current_database_schema(engine)
+            session_factory = create_session_factory(engine)
+            with session_factory() as session:
+                selection = load_consolidation_selection(
+                    session, extractor_version=args.extractor_version
+                )
+        except RuntimeError as exc:
+            # 数据库结构门禁错误：旧库/残缺库才提示重建。
+            print(f"预检无法开始：{exc}")
+            print("请先备份 data/raw_jds/，删除非当前派生数据库并重新生成。")
+            return 1
+        except ValueError as exc:
+            # 输入范围或抽取版本选择错误：不附加删除数据库建议。
+            print(f"预检无法开始：{exc}")
+            return 1
     finally:
         engine.dispose()
 

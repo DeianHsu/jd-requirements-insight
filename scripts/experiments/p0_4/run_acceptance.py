@@ -206,9 +206,14 @@ def main() -> int:
                     job_ids=set(args.job_ids) if args.job_ids else None,
                     extractor_version=extractor_version,
                 )
-        except (RuntimeError, ValueError) as exc:
+        except RuntimeError as exc:
+            # 数据库结构门禁错误：旧库/残缺库才提示重建。
             print(f"验收无法开始：{exc}")
-            print("提示：请备份 data/raw_jds/，删除旧派生数据库并重新生成。")
+            print("请先备份 data/raw_jds/，删除非当前派生数据库并重新生成。")
+            return 1
+        except ValueError as exc:
+            # 输入范围或抽取版本选择错误：不附加删除数据库建议。
+            print(f"验收无法开始：{exc}")
             return 1
     finally:
         engine.dispose()
