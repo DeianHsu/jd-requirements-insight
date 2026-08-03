@@ -121,6 +121,56 @@ def test_loads_occurrences_from_multiple_jobs_without_field_loss(
     assert by_id[3].source_file == "job-b.md"
 
 
+def test_extractor_version_duplicate_prompt_segment_is_rejected() -> None:
+    """prompt: 段重复时拒绝（不允许重复版本段）。"""
+    from app.extraction import assert_current_extractor_version
+
+    for version in (
+        "model|prompt:0.8|schema:3.0|prompt:0.6",
+        "model|prompt:0.8|prompt:0.8|schema:3.0",
+    ):
+        with pytest.raises(ValueError, match="恰好各一个"):
+            assert_current_extractor_version(version)
+
+
+def test_extractor_version_missing_segment_is_rejected() -> None:
+    """缺失 prompt: 或 schema: 段时拒绝。"""
+    from app.extraction import assert_current_extractor_version
+
+    for version in (
+        "model|prompt:0.8",
+        "model|schema:3.0",
+        "model",
+    ):
+        with pytest.raises(ValueError, match="恰好各一个"):
+            assert_current_extractor_version(version)
+
+    # 空段同样拒绝。
+    with pytest.raises(ValueError, match="空段"):
+        assert_current_extractor_version("model|prompt:0.8|schema:3.0|")
+
+
+def test_extractor_version_wrong_values_are_rejected() -> None:
+    """版本段值不等于当前版本时拒绝。"""
+    from app.extraction import assert_current_extractor_version
+
+    for version in (
+        "model|prompt:0.6|schema:3.0",
+        "model|prompt:0.8|schema:2.0",
+        "model|prompt:1.0|schema:1.0",
+    ):
+        with pytest.raises(ValueError, match="当前只支持 v0.8"):
+            assert_current_extractor_version(version)
+
+
+def test_extractor_version_valid_identity_passes() -> None:
+    """合法版本身份（含额外非冲突段）通过。"""
+    from app.extraction import assert_current_extractor_version
+
+    assert_current_extractor_version("deepseek-v4-flash|prompt:0.8|schema:3.0")
+    assert_current_extractor_version("model|prompt:0.8|schema:3.0|revision:1")
+
+
 def test_explicit_extraction_version_is_loaded(tmp_path: Path) -> None:
     """验证同一JD并存多个版本时显式指定 v0.8 装配；旧版本被拒绝。"""
     engine, session_factory = make_database(tmp_path)

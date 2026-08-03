@@ -30,22 +30,37 @@ class ExtractionError(ValueError):
 
 
 def assert_current_extractor_version(extractor_version: str) -> None:
-    """严格校验抽取器版本为 v0.8 + Schema V3；旧版本明确拒绝。
+    """严格校验抽取器版本为 v0.8 + Schema V3；其余版本明确拒绝。
 
-    版本身份按 `prompt:` / `schema:` 段解析校验，不能只做子串包含检查。
-    当前主线只消费 v0.8 + Schema V3 的抽取结果；旧版本要求用当前
-    抽取器重新生成对应范围的数据，不做兼容、转换或迁移。
+    版本身份按 `|` 分段解析：`prompt:` 段与 `schema:` 段必须恰好各一个，
+    且值分别严格等于当前版本；空值、重复段、缺失段、额外冲突段均拒绝。
+    模型名称与其他非冲突身份段可以保留。当前主线只消费 v0.8 + Schema V3
+    的抽取结果；旧版本要求用当前抽取器重新生成对应范围的数据，不做
+    兼容、转换或迁移。
     """
     parts = extractor_version.split("|")
-    prompt_part = next(
-        (part for part in parts if part.startswith("prompt:")), None
-    )
-    schema_part = next(
-        (part for part in parts if part.startswith("schema:")), None
-    )
+    if any(not part for part in parts):
+        raise ValueError(
+            f"抽取器版本身份无效：{extractor_version}；"
+            "不得包含空段。当前只支持 v0.8 + Schema V3，请使用当前"
+            "抽取器重新生成该范围的数据。"
+        )
+    prompt_parts = [
+        part for part in parts if part.startswith("prompt:")
+    ]
+    schema_parts = [
+        part for part in parts if part.startswith("schema:")
+    ]
+    if len(prompt_parts) != 1 or len(schema_parts) != 1:
+        raise ValueError(
+            f"抽取器版本身份无效：{extractor_version}；"
+            "prompt: 与 schema: 段必须恰好各一个。"
+            "当前只支持 v0.8 + Schema V3，请使用当前抽取器重新生成"
+            "该范围的数据。"
+        )
     if (
-        prompt_part != f"prompt:{PROMPT_VERSION}"
-        or schema_part != f"schema:{SCHEMA_VERSION}"
+        prompt_parts[0] != f"prompt:{PROMPT_VERSION}"
+        or schema_parts[0] != f"schema:{SCHEMA_VERSION}"
     ):
         raise ValueError(
             f"当前只支持 v0.8 + Schema V3：{extractor_version}。"
