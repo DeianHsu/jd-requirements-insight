@@ -7,8 +7,13 @@
 ## 当前状态
 
 已实现 JD 导入、结构化抽取和跨 JD 要求归并的基础链路。
-P0-3 两段式原子化候选正在完成正式验收裁决；
-P0-4 分块输出与规则合同已达标，验收口径为规则 + 稳定性 + 人工抽样复核，149 实例正式验收待授权。
+抽取验收协议已迁移为规则化验证（DEC-015）：数据合同 + 规则 ID + 稳定性 +
+规则场景变形测试 + 人工违规审计；旧人工标准答案与 F1 指标降级为 legacy
+历史材料。
+P0-1 与 P0-3 按新协议重开为部分完成（v0.6 原批准标注 approved under legacy
+Gold protocol，仍是当前正式可运行版本；v0.7 Prompt 已规则化，真实模型验收
+待授权运行）；P0-4 implementation acceptance 真实验收已执行，scale
+acceptance 待 P0-8 扩充。
 详细状态、指标和下一步见 [docs/PROJECT_PLAN.md](docs/PROJECT_PLAN.md) 与 [docs/work/](docs/work/)。
 
 ## 环境
@@ -79,7 +84,7 @@ python -m app.cli extract-jds --all
 python -m app.cli list-extractions
 python -m app.cli evaluate-extractions data\golden\jd_extractions
 
-# 使用自己的困难样例文件比较指定抽取版本的分层指标
+# 使用自己的困难样例文件比较指定抽取版本的分层指标（legacy protocol，仅历史比较）
 python -m app.cli evaluate-cases <annotation_cases.json> `
   --prompt-version 2.3.1 --schema-version 2.0 --model <模型名称> `
   --split development
@@ -107,11 +112,12 @@ python -m app.cli validate-consolidation --consolidation-id <批次ID>
 ## 实验性脚本
 
 开发期实验和临时验收脚本位于`scripts/experiments/p0_x/`，并以`python -m ...`运行；真实外部调用使用`--execute`并选择数据库目标。目录和输出说明见[scripts/experiments/README.md](scripts/experiments/README.md)。
+P0-3 新协议验收入口为 `scripts/experiments/p0_3/run_acceptance.py`（规则场景 + 稳定性 + 变形测试，默认不调用外部模型）。
 
 ## 方法文档
 
 - [全项目术语词典](docs/GLOSSARY.md)：核心业务术语与跨阶段不变量。
-- [人工标注规范](docs/annotation/README.md)：按职责、要求和数据集评测三个主题提供规则入口。
+- [语义决策规则](docs/annotation/README.md)：按职责、要求和证据/场景协议三个主题提供规则入口（规则带稳定 ID）。
 - [项目路线图](docs/PROJECT_PLAN.md)：P0功能范围、硬依赖、验收输入和当前状态。
 - [P0 工作文档](docs/work/)：每个已启动 P0 的目标、当前实现、验证、问题和结论。
 - [项目决策](docs/DECISIONS.md)：有面试价值的技术决策与重大问题复盘。

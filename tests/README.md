@@ -19,5 +19,7 @@
 | `test_consolidation_run.py` | 批量归并执行：装配、模型调用、失败隔离与汇总摘要。 |
 | `test_consolidation_persist.py` | 归并持久化：幂等跳过、字段无损、外键追溯与版本/范围共存。 |
 | `test_consolidation_evaluation.py` | 归并评测：映射准确率、关系Precision/Recall/F1和未映射状态。 |
-| `test_extraction_two_stage.py` | P0-3两段式实验的中间合同、唯一覆盖、证据与重试行为。 |
-| `test_experiment_scripts.py` | 实验脚本的导入安全、私有输出路径和真实调用显式确认。 |
+| `test_extraction_two_stage.py` | P0-3两段式实验的中间合同、唯一覆盖、证据、重试行为、正式版本号（v0.7）与历史 Prompt 锁定。 |
+| `test_experiment_scripts.py` | 实验脚本的导入安全、私有输出路径和真实调用显式确认（含 run_acceptance 默认不调用外部模型）。 |
+| `test_extraction_validation.py` | P0-3 新协议确定性验证：合同检查（覆盖/证据/逻辑组/归属/身份）、运行间比较与场景属性检查。 |
+| `test_extraction_metamorphic.py` | 规则场景文件结构、领域中性约束与确定性变换（`data/rule_scenarios/`）。 |
