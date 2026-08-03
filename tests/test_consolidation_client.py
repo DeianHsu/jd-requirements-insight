@@ -1,4 +1,4 @@
-"""验证P0-4归并LLM客户端、Prompt v4.0、解析与有限重试闭环。"""
+"""验证P0-4归并LLM客户端、Prompt v4.1、单次聚类解析与有限重试闭环。"""
 
 import json
 
@@ -12,10 +12,9 @@ from app.consolidation import (
     ConsolidationError,
     ConsolidatorMetadata,
     OpenAICompatibleConsolidationClient,
-    build_consolidation_user_prompt,
+    build_canonical_requirements_prompt,
     consolidate_with_correction,
-    parse_consolidation_response,
-    parse_mappings_response,
+    parse_canonical_requirements_response,
 )
 from app.config import LLMSettings
 from app.requirement_consolidation import (
@@ -26,7 +25,7 @@ from app.schemas import RequirementItem
 
 
 class FakeConsolidationClient:
-    """按预设顺序返回JSON文本，并记录用户提示，替代真实且有费用的LLM调用。"""
+    """按预设顺序返回 JSON 文本，只模拟单次 canonical 聚类响应。"""
 
     def __init__(
         self, responses: list[dict[str, object] | ConsolidationError]
@@ -39,7 +38,7 @@ class FakeConsolidationClient:
     def complete(self, system_prompt: str, user_prompt: str) -> str:
         """返回当前预设响应，并断言Prompt携带必要约束和实例数据。"""
         assert "要求项" in system_prompt
-        assert "requirements" in user_prompt
+        assert "canonical_requirements" in user_prompt
         self.prompts.append(user_prompt)
         response = self.responses[self.calls]
         self.calls += 1
@@ -96,7 +95,7 @@ def consolidation_input() -> RequirementConsolidationInput:
 
 
 def valid_result_payload() -> dict[str, object]:
-    """生成两个实例归并到同一标准要求项的合法响应。"""
+    """生成两个实例归并到同一标准要求项的合法单次聚类响应。"""
     return {
         "canonical_requirements": [
             {
@@ -106,44 +105,37 @@ def valid_result_payload() -> dict[str, object]:
                 "rationale": "两条要求在各自证据中指向同一招聘条件",
                 "confidence": 0.95,
             }
-        ],
-        "mappings": [
-            {
-                "requirement_id": requirement_id,
-                "canonical_requirement_id": "requirement-a",
-                "rationale": "表述不同但招聘条件相同",
-                "confidence": 0.95,
-            }
-            for requirement_id in (1, 2)
-        ],
+        ]
     }
 
 
-def test_prompt_v4_is_domain_agnostic() -> None:
-    """验证Prompt v4.0不绑定任何具体领域技能，只描述通用归并任务。"""
-    assert CONSOLIDATION_PROMPT_VERSION == "4.0"
-    assert CONSOLIDATION_SCHEMA_VERSION == "2.0"
+def test_prompt_v41_is_domain_agnostic() -> None:
+    """验证Prompt v4.1不绑定任何具体领域技能，只描述单次聚类任务。"""
+    assert CONSOLIDATION_PROMPT_VERSION == "4.1"
+    assert CONSOLIDATION_SCHEMA_VERSION == "3.0"
     for domain_word in ("Python", "RAG", "LangChain", "Agent", "大模型", "AI"):
         assert domain_word not in CONSOLIDATION_SYSTEM_PROMPT
     assert "证据上下文" in CONSOLIDATION_SYSTEM_PROMPT
     assert "singleton" in CONSOLIDATION_SYSTEM_PROMPT
     assert "不得修改、覆盖或删除" in CONSOLIDATION_SYSTEM_PROMPT
     assert "canonical_name都必须全局唯一" in CONSOLIDATION_SYSTEM_PROMPT
-    # 归并合同不输出任何关系：等价由映射表达，不建边。
+    assert "source_requirement_ids" in CONSOLIDATION_SYSTEM_PROMPT
+    # 单次聚类合同：不输出 mappings、不输出关系或层级结构。
+    assert "mappings" not in CONSOLIDATION_SYSTEM_PROMPT
     assert "relations" not in CONSOLIDATION_SYSTEM_PROMPT
 
 
 def test_metadata_combines_version_components() -> None:
-    """验证归并器版本由模型、Prompt和合同版本组成。"""
+    """验证归并器版本由模型、Prompt和合同版本组成（新合同新版本）。"""
     metadata = ConsolidatorMetadata(model_name="test-model")
 
     assert metadata.consolidator_version == (
-        "test-model|prompt:4.0|schema:2.0"
+        "test-model|prompt:4.1|schema:3.0"
     )
 
 
 def test_real_client_uses_explicit_full_batch_timeout_and_retry_policy() -> None:
-    """验证全量归并使用显式读取超时，并由项目层而非SDK隐式控制重试。"""
+    """验证归并使用显式读取超时，并由项目层而非SDK隐式控制重试。"""
     client = OpenAICompatibleConsolidationClient(
         LLMSettings(api_key="test-key", model="test-model")
     )
@@ -154,9 +146,11 @@ def test_real_client_uses_explicit_full_batch_timeout_and_retry_policy() -> None
     client._client.close()
 
 
-def test_user_prompt_contains_instances_and_output_schema() -> None:
-    """验证用户提示携带全部实例字段并说明期望输出结构。"""
-    payload = json.loads(build_consolidation_user_prompt(consolidation_input()))
+def test_user_prompt_contains_instances_and_canonical_schema() -> None:
+    """验证提示携带全部实例字段，输出 schema 只有 canonical_requirements。"""
+    payload = json.loads(
+        build_canonical_requirements_prompt(consolidation_input())
+    )
 
     assert len(payload["requirements"]) == 2
     first = payload["requirements"][0]
@@ -165,99 +159,96 @@ def test_user_prompt_contains_instances_and_output_schema() -> None:
     assert first["evidence"] == "具备能力甲使用经验"
     assert first["importance"] == "must"
     assert "output_schema" in payload
-    assert "canonical_requirements" in payload["output_schema"]
-    assert "mappings" in payload["output_schema"]
-    assert "全局唯一" in payload["output_schema"]["canonical_requirements"][0][
-        "canonical_name"
-    ]
-    mapping_schema = payload["output_schema"]["mappings"][0]
-    assert set(mapping_schema) == {
-        "requirement_id",
-        "canonical_requirement_id",
-        "rationale",
-        "confidence",
-    }
+    assert set(payload["output_schema"]) == {"canonical_requirements"}
+    canonical_schema = payload["output_schema"]["canonical_requirements"][0]
+    assert "source_requirement_ids" in canonical_schema
+    assert "mappings" not in payload["output_schema"]
 
 
-def stage_payloads(payload: dict[str, object]) -> list[dict[str, object]]:
-    """把完整归并结果拆成标准项和映射两个阶段的独立响应。"""
-    return [
-        {"canonical_requirements": payload["canonical_requirements"]},
-        {"mappings": payload["mappings"]},
-    ]
-
-
-def test_valid_response_parses_and_passes_coverage() -> None:
-    """验证两阶段响应合成后解析成功并通过覆盖检查，返回完整结果。"""
-    client = FakeConsolidationClient(stage_payloads(valid_result_payload()))
+def test_valid_response_parses_and_generates_mappings() -> None:
+    """验证单次聚类响应解析后确定性生成 mappings 并通过覆盖检查。"""
+    client = FakeConsolidationClient([valid_result_payload()])
 
     result, raw = consolidate_with_correction(consolidation_input(), client)
 
-    assert client.calls == 2
+    assert client.calls == 1
     assert len(result.canonical_requirements) == 1
     assert result.canonical_requirements[0].canonical_name == "能力甲使用经验"
+    # mappings 由来源分区确定性生成：每个来源实例一条。
     assert len(result.mappings) == 2
+    assert {mapping.requirement_id for mapping in result.mappings} == {1, 2}
+    assert all(
+        mapping.canonical_requirement_id == "requirement-a"
+        for mapping in result.mappings
+    )
     assert raw["canonical_requirements"][0]["canonical_requirement_id"] == "requirement-a"
 
 
 def test_invalid_json_raises_consolidation_error() -> None:
     """验证非JSON响应被包装为统一归并错误。"""
     with pytest.raises(ConsolidationError, match="不是合法JSON"):
-        parse_consolidation_response("这不是JSON")
+        parse_canonical_requirements_response("这不是JSON")
 
 
-def test_contract_violation_raises_consolidation_error() -> None:
-    """验证映射引用未知标准项ID时被块级校验拒绝（可反馈模型修正）。"""
+def test_partition_gap_raises_consolidation_error() -> None:
+    """验证来源分区遗漏要求实例时被拒绝（可反馈模型修正）。"""
     payload = valid_result_payload()
-    payload["mappings"][0]["canonical_requirement_id"] = "missing"
+    payload["canonical_requirements"][0]["source_requirement_ids"] = [1]
 
-    with pytest.raises(
-        ConsolidationError,
-        match="映射引用了标准要求项清单中不存在的ID",
-    ):
+    with pytest.raises(ConsolidationError, match="遗漏 requirement_id"):
         consolidate_with_correction(
             consolidation_input(),
-            FakeConsolidationClient(stage_payloads(payload)),
+            FakeConsolidationClient([payload]),
             max_attempts=1,
         )
 
 
-def test_coverage_gap_raises_consolidation_error() -> None:
-    """验证映射块遗漏要求实例时被块级覆盖检查拒绝。"""
+def test_unknown_source_id_raises_consolidation_error() -> None:
+    """验证来源分区引用未知实例ID时被拒绝。"""
     payload = valid_result_payload()
-    payload["mappings"].pop()
+    payload["canonical_requirements"][0]["source_requirement_ids"] = [1, 99]
 
-    with pytest.raises(ConsolidationError, match="遗漏要求实例"):
+    with pytest.raises(ConsolidationError, match="未知 requirement_id"):
         consolidate_with_correction(
             consolidation_input(),
-            FakeConsolidationClient(stage_payloads(payload)),
+            FakeConsolidationClient([payload]),
             max_attempts=1,
         )
 
 
 def test_retry_feeds_correction_and_succeeds() -> None:
-    """验证标准项阶段首次输出非法JSON后，第二次带修正提示重试并成功。"""
-    client = FakeConsolidationClient(
-        [{"bad": True}] + stage_payloads(valid_result_payload())
-    )
+    """验证首次分区违规后，第二次带修正提示重试并成功。"""
+    payload = valid_result_payload()
+    bad_payload = {
+        "canonical_requirements": [
+            {
+                "canonical_requirement_id": "requirement-a",
+                "canonical_name": "能力甲使用经验",
+                "source_requirement_ids": [1],
+                "rationale": "遗漏实例2",
+                "confidence": 0.95,
+            }
+        ]
+    }
+    client = FakeConsolidationClient([bad_payload, payload])
 
     result, _ = consolidate_with_correction(consolidation_input(), client)
 
-    assert client.calls == 3
+    assert client.calls == 2
     assert len(result.mappings) == 2
     assert "上次校验错误" in client.prompts[1]
+    assert "遗漏 requirement_id" in client.prompts[1]
 
 
 def test_retry_repeats_original_prompt_after_llm_call_error() -> None:
-    """验证标准项阶段调用层失败会重试，且不把网络错误写入业务修正提示。"""
+    """验证调用层失败会重试，且不把网络错误写入业务修正提示。"""
     client = FakeConsolidationClient(
-        [ConsolidationError("LLM调用失败：临时超时")]
-        + stage_payloads(valid_result_payload())
+        [ConsolidationError("LLM调用失败：临时超时"), valid_result_payload()]
     )
 
     result, _ = consolidate_with_correction(consolidation_input(), client)
 
-    assert client.calls == 3
+    assert client.calls == 2
     assert len(result.mappings) == 2
     assert client.prompts[1] == client.prompts[0]
 
@@ -268,21 +259,3 @@ def test_retry_exhausted_raises_final_error() -> None:
 
     with pytest.raises(ConsolidationError, match="仍未通过归并校验"):
         consolidate_with_correction(consolidation_input(), client)
-
-
-def test_mappings_response_rejects_legacy_status_field() -> None:
-    """验证旧 status/candidate 字段不再属于映射合同（extra=forbid 拒绝）。"""
-    payload = {
-        "mappings": [
-            {
-                "requirement_id": 1,
-                "status": "mapped",
-                "canonical_requirement_id": "requirement-a",
-                "rationale": "表述不同但招聘条件相同",
-                "confidence": 0.95,
-            }
-        ]
-    }
-
-    with pytest.raises(ConsolidationError, match="不符合归并合同"):
-        parse_mappings_response(json.dumps(payload, ensure_ascii=False))

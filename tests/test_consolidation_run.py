@@ -117,10 +117,9 @@ def valid_result_payload() -> dict[str, object]:
 
 
 def stage_payloads(payload: dict[str, object]) -> list[dict[str, object]]:
-    """把完整归并结果拆成标准项和映射两个阶段的独立响应。"""
+    """返回单次 canonical 聚类响应（mappings 由确定性代码生成）。"""
     return [
         {"canonical_requirements": payload["canonical_requirements"]},
-        {"mappings": payload["mappings"]},
     ]
 
 
@@ -149,7 +148,7 @@ def test_successful_run_reports_counts(tmp_path: Path) -> None:
     assert summary.consolidated == 2
     assert summary.canonical_count == 1
     assert summary.failed == 0
-    assert client.calls == 2
+    assert client.calls == 1
 
 
 def test_failed_run_isolates_error_without_raising(tmp_path: Path) -> None:

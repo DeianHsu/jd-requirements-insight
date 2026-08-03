@@ -18,7 +18,6 @@ from pathlib import Path
 
 from app.config import load_llm_settings
 from app.consolidation import (
-    CONSOLIDATION_MAPPING_CHUNK_SIZE,
     ConsolidationError,
     ConsolidatorMetadata,
     OpenAICompatibleConsolidationClient,
@@ -102,12 +101,6 @@ def main() -> int:
         help="预检输入实例数",
     )
     parser.add_argument(
-        "--chunk-size",
-        type=int,
-        default=CONSOLIDATION_MAPPING_CHUNK_SIZE,
-        help="映射分块上限（诊断截断时调小）",
-    )
-    parser.add_argument(
         "--max-attempts",
         type=int,
         default=3,
@@ -148,12 +141,10 @@ def main() -> int:
         engine.dispose()
 
     precheck_input = build_precheck_input(selection, args.target_size)
-    mapping_requests = -(-len(precheck_input.occurrences) // args.chunk_size)
     print(f"模型：{settings.model}")
     print(f"抽取器版本：{selection.extractor_version}")
     print(f"输入范围：{len(precheck_input.occurrences)}条实例")
-    print(f"预计模型调用：1（标准项）+ {mapping_requests}（映射块）"
-          f" = {mapping_requests + 1} 次")
+    print("预计模型调用：1（canonical 聚类）")
     print("输出目标：仅统计指标（脱敏）；完整结果写入私有目录。")
 
     client = RecordingClient(
@@ -166,7 +157,6 @@ def main() -> int:
             precheck_input,
             client,
             max_attempts=args.max_attempts,
-            mapping_chunk_size=args.chunk_size,
         )
     except (ConsolidationError, ValueError) as exc:
         print(f"预检失败：{exc}")
@@ -193,7 +183,6 @@ def main() -> int:
         "extractor_version": selection.extractor_version,
         "input_fingerprint": selection.input_fingerprint,
         "input_size": len(precheck_input.occurrences),
-        "mapping_chunk_size": CONSOLIDATION_MAPPING_CHUNK_SIZE,
         "stage_requests": [
             {key: value for key, value in record.items() if key != "response_head"}
             for record in client.records

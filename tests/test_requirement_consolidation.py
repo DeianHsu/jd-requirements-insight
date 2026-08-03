@@ -210,6 +210,70 @@ def test_mapping_rejects_blank_rationale() -> None:
         )
 
 
+def test_partition_rejects_too_many_canonicals() -> None:
+    """canonical 数量大于输入实例数量时被拒绝。"""
+    from app.requirement_consolidation import validate_canonical_partition
+
+    source = consolidation_input()
+    canonicals = [
+        CanonicalRequirement(
+            canonical_requirement_id=f"cr-{index}",
+            canonical_name=f"能力{index}",
+            source_requirement_ids=[index + 1],
+            rationale="测试",
+            confidence=0.8,
+        )
+        for index in range(3)
+    ]
+
+    with pytest.raises(ValueError, match="不能大于输入实例数量"):
+        validate_canonical_partition(source, canonicals)
+
+
+def test_partition_rejects_duplicate_canonical_names() -> None:
+    """canonical name（规范化后）重复时被拒绝。"""
+    from app.requirement_consolidation import validate_canonical_partition
+
+    source = consolidation_input()
+    canonicals = [
+        CanonicalRequirement(
+            canonical_requirement_id="cr-0",
+            canonical_name="能力甲",
+            source_requirement_ids=[1],
+            rationale="测试",
+            confidence=0.8,
+        ),
+        CanonicalRequirement(
+            canonical_requirement_id="cr-1",
+            canonical_name=" 能力甲 ",
+            source_requirement_ids=[2],
+            rationale="测试",
+            confidence=0.8,
+        ),
+    ]
+
+    with pytest.raises(ValueError, match="canonical name 重复"):
+        validate_canonical_partition(source, canonicals)
+
+
+def test_partition_valid_singleton_partition_passes() -> None:
+    """合法分区（含 singleton）通过校验。"""
+    from app.requirement_consolidation import validate_canonical_partition
+
+    source = consolidation_input()
+    canonicals = [
+        CanonicalRequirement(
+            canonical_requirement_id="cr-0",
+            canonical_name="能力甲使用经验",
+            source_requirement_ids=[1, 2],
+            rationale="同义归并",
+            confidence=0.95,
+        )
+    ]
+
+    validate_canonical_partition(source, canonicals)  # 不抛异常
+
+
 def test_coverage_rejects_missing_requirement_occurrence() -> None:
     source = consolidation_input()
     result = merged_result()

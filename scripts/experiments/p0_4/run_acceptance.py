@@ -8,7 +8,7 @@ v0.8 + Schema V3；显式 `--extractor-version` 必须包含 schema:3.0，拒绝
 
 1. 加载选定范围的完整输入（输入指纹固定，抽取器版本 = v0.8 + Schema V3）；
 2. `--runs` 次独立非缓存运行（consolidate_with_correction，不写入正式批次）；
-3. 变形测试：输入顺序打乱运行一次；chunk_size=25 运行一次；
+3. 变形测试：输入顺序打乱运行一次；
 4. 指标：合同违规（coverage、重复映射、未知引用、空 cluster）、
    positive-pair Jaccard、canonical 数量漂移、singleton 比例漂移、
    顺序/分块变形结果；
@@ -66,7 +66,7 @@ def resolve_extractor_version(
     return args_extractor_version
 
 
-def run_once(client_factory, consolidation_input, chunk_size, max_attempts):
+def run_once(client_factory, consolidation_input, max_attempts):
     """执行一次独立归并运行，返回（result, metadata, raw）。"""
     client = client_factory()
     metadata = ConsolidatorMetadata(model_name=client.model_name)
@@ -74,7 +74,6 @@ def run_once(client_factory, consolidation_input, chunk_size, max_attempts):
         consolidation_input,
         client,
         max_attempts=max_attempts,
-        mapping_chunk_size=chunk_size,
     )
     return result, metadata, raw
 
@@ -146,12 +145,6 @@ def main() -> int:
         help="只验收指定JD；缺省为全部",
     )
     parser.add_argument(
-        "--chunk-size",
-        type=int,
-        default=50,
-        help="映射分块大小（默认与生产一致）",
-    )
-    parser.add_argument(
         "--runs",
         type=int,
         default=3,
@@ -214,7 +207,7 @@ def main() -> int:
     print(f"模型：{settings.model}")
     print(f"抽取器版本：{selection.extractor_version}")
     print(f"输入：{len(consolidation_input.occurrences)}条实例 / {len(job_ids)}份JD")
-    print(f"计划模型调用：{args.runs}次独立运行 + 1次顺序变形 + 1次分块变形")
+    print(f"计划模型调用：{args.runs}次独立运行 + 1次顺序变形")
     print("门槛：coverage=100%、结构违规=0；positive-pair Jaccard <85% 记入 warning")
 
     def make_client() -> NamedClient:
@@ -226,24 +219,17 @@ def main() -> int:
         result, metadata, raw = run_once(
             make_client,
             consolidation_input,
-            args.chunk_size,
             args.max_attempts,
         )
         runs.append({"result": result, "metadata": metadata, "raw": raw})
 
-    # 变形测试1：输入顺序打乱（固定随机种子保证可复现）。
+    # 变形测试：输入顺序打乱（固定随机种子保证可复现）。
     print("--- 顺序变形运行 ---")
     shuffled_occurrences = list(consolidation_input.occurrences)
     random.Random(20260803).shuffle(shuffled_occurrences)
     shuffled_input = RequirementConsolidationInput(occurrences=shuffled_occurrences)
     order_result, _, _ = run_once(
-        make_client, shuffled_input, args.chunk_size, args.max_attempts
-    )
-
-    # 变形测试2：分块大小25。
-    print("--- 分块变形运行（chunk_size=25）---")
-    chunk_result, _, _ = run_once(
-        make_client, consolidation_input, 25, args.max_attempts
+        make_client, shuffled_input, args.max_attempts
     )
 
     contract_violations = [
@@ -257,23 +243,14 @@ def main() -> int:
     order_jaccard = positive_pair_jaccard(
         mapping_clusters(runs[0]["result"]), mapping_clusters(order_result)
     )
-    chunk_jaccard = positive_pair_jaccard(
-        mapping_clusters(runs[0]["result"]), mapping_clusters(chunk_result)
-    )
     order_contract = validate_contract(
         order_result,
-        expected_requirement_count=len(consolidation_input.occurrences),
-    )
-    chunk_contract = validate_contract(
-        chunk_result,
         expected_requirement_count=len(consolidation_input.occurrences),
     )
 
     hard_gate_failures, warnings = evaluate_gates(runs, contract_violations)
     if order_jaccard < 0.85:
         warnings.append(f"order_transformation: positive_pair_jaccard={order_jaccard:.2%}")
-    if chunk_jaccard < 0.85:
-        warnings.append(f"chunk_transformation: positive_pair_jaccard={chunk_jaccard:.2%}")
 
     drift = singleton_and_canonical_drift(
         [mapping_clusters(run["result"]) for run in runs]
@@ -339,11 +316,6 @@ def main() -> int:
                 "positive_pair_jaccard": round(order_jaccard, 4),
                 "coverage": order_contract.coverage,
                 "structural_violations": order_contract.structural_violation_count,
-            },
-            "chunk_transformation": {
-                "positive_pair_jaccard": round(chunk_jaccard, 4),
-                "coverage": chunk_contract.coverage,
-                "structural_violations": chunk_contract.structural_violation_count,
             },
         },
         hard_gate_failures=hard_gate_failures,

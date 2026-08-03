@@ -58,10 +58,10 @@ class RequirementConsolidationInput(BaseModel):
 class CanonicalRequirement(BaseModel):
     """表示多个同义要求实例共同指向的跨JD标准要求项。
 
-    `source_requirement_ids` 是阶段 1（标准项生成轮）声明的来源实例
-    归属：每个实例必须且只能归属一个标准要求项；无法合并的实例由阶段 1
-    创建包含它的 singleton 标准项。阶段 2（映射轮）只能引用阶段 1
-    给出的 canonical requirement，不得创建新的 canonical。
+    `source_requirement_ids` 是模型在单次聚类输出中声明的来源实例
+    归属：每个实例必须且只能归属一个标准要求项；无法合并的实例由模型
+    创建包含它的 singleton 标准项。mappings 由确定性代码从来源分区
+    生成并持久化。
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -184,20 +184,114 @@ class RequirementConsolidationResult(BaseModel):
         return self
 
 
+def validate_canonical_partition(
+    consolidation_input: RequirementConsolidationInput,
+    canonical_requirements: list[CanonicalRequirement],
+) -> None:
+    """在模型输出 canonical 后立即校验来源分区构成完整唯一覆盖。
+
+    这是归并的第一道合同：必须在任何后续处理、持久化或额外模型调用前
+    执行。要求：
+
+    1. canonical 数量不大于输入实例数量；
+    2. 每个 source_requirement_id 都来自当前输入；
+    3. 同一 canonical 内不得重复；
+    4. 每个 canonical 至少有一个来源实例；
+    5. 同一个输入实例不得属于多个 canonical；
+    6. 每个输入实例必须且只能出现一次（无法合并的实例由 singleton 表达）；
+    7. canonical name（规范化后）全局唯一。
+
+    校验失败时反馈具体错误，供 canonical 阶段有限重试修正。
+    """
+    expected_ids = {item.requirement_id for item in consolidation_input.occurrences}
+    if len(canonical_requirements) > len(expected_ids):
+        raise ValueError(
+            "标准要求项数量不能大于输入实例数量："
+            f"{len(canonical_requirements)} > {len(expected_ids)}"
+        )
+
+    declared: dict[int, str] = {}
+    for canonical in canonical_requirements:
+        source_ids = list(canonical.source_requirement_ids)
+        if not source_ids:
+            raise ValueError(
+                f"canonical {canonical.canonical_requirement_id} 没有来源实例"
+            )
+        duplicate_ids = sorted(
+            {requirement_id for requirement_id in source_ids
+             if source_ids.count(requirement_id) > 1}
+        )
+        if duplicate_ids:
+            raise ValueError(
+                f"canonical {canonical.canonical_requirement_id} 内来源实例重复："
+                f"{duplicate_ids}"
+            )
+        unknown_ids = sorted(set(source_ids) - expected_ids)
+        if unknown_ids:
+            raise ValueError(f"未知 requirement_id: {unknown_ids}")
+        for requirement_id in source_ids:
+            if requirement_id in declared:
+                raise ValueError(
+                    f"重复归属 requirement_id: [{requirement_id}]"
+                    f"（{declared[requirement_id]} 与 "
+                    f"{canonical.canonical_requirement_id}）"
+                )
+            declared[requirement_id] = canonical.canonical_requirement_id
+
+    missing_ids = sorted(expected_ids - set(declared))
+    if missing_ids:
+        raise ValueError(f"遗漏 requirement_id: {missing_ids}")
+
+    normalized_names: dict[str, str] = {}
+    for canonical in canonical_requirements:
+        normalized = normalize_requirement_name(canonical.canonical_name)
+        previous = normalized_names.get(normalized)
+        if previous is not None:
+            raise ValueError(
+                "canonical name 重复（规范化后）："
+                f"{previous} 与 {canonical.canonical_requirement_id} "
+                f"均为 {canonical.canonical_name}"
+            )
+        normalized_names[normalized] = canonical.canonical_requirement_id
+
+
+def build_mappings_from_canonical_partition(
+    canonical_requirements: list[CanonicalRequirement],
+) -> list[RequirementMapping]:
+    """由经过校验的来源分区确定性生成 mappings（不再调用模型）。
+
+    每个来源实例生成一条 mapping，requirement_id 与 canonical 归属取自
+    来源分区；rationale 使用确定性命名的前缀 + canonical 归并理由。
+    """
+    mappings: list[RequirementMapping] = []
+    for canonical in canonical_requirements:
+        for requirement_id in sorted(canonical.source_requirement_ids):
+            mappings.append(
+                RequirementMapping(
+                    requirement_id=requirement_id,
+                    canonical_requirement_id=canonical.canonical_requirement_id,
+                    rationale=(
+                        "由标准要求项来源分区确定："
+                        f"{canonical.rationale}"
+                    ),
+                    confidence=canonical.confidence,
+                )
+            )
+    return mappings
+
+
 def validate_requirement_coverage(
     consolidation_input: RequirementConsolidationInput,
     result: RequirementConsolidationResult,
 ) -> None:
-    """确认P0-4为语料池中的每条要求且仅生成一条处理结果。
+    """确认P0-4为语料池中的每条要求且仅生成一条处理结果（最终合同）。
 
-    同时校验阶段 1 的来源归属声明与阶段 2 的映射完全一致：
+    - 每条要求恰好一条 mapping（coverage = 100%）；
+    - 每个 canonical 至少被一条 mapping 引用；
+    - mapping 与来源分区一致（mappings 由分区确定性生成后必然成立，
+      此处作为防御性最终校验）。
 
-    - 每个 canonical 至少声明一个来源实例；
-    - 每个来源实例必须来自输入语料池；
-    - 同一个实例不得属于多个 canonical；
-    - 每个输入实例都必须出现在某个 canonical 的来源声明中（无法合并
-      的实例由阶段 1 创建 singleton）；
-    - 阶段 2 每条 mapping 的目标 canonical 必须与阶段 1 的归属声明一致。
+    模型输出后的来源分区即时校验由 `validate_canonical_partition` 承担。
     """
     expected_ids = {item.requirement_id for item in consolidation_input.occurrences}
     actual_ids = {mapping.requirement_id for mapping in result.mappings}
@@ -239,7 +333,7 @@ def validate_requirement_coverage(
             f"singleton）：{missing_source_ids}"
         )
 
-    # 阶段 2 映射必须与阶段 1 来源归属一致。
+    # mapping 必须与来源分区归属一致（确定性生成后必然成立，防御性检查）。
     for mapping in result.mappings:
         declared_canonical = declared.get(mapping.requirement_id)
         if mapping.canonical_requirement_id != declared_canonical:
