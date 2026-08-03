@@ -241,11 +241,14 @@ def test_mappings_response_normalizes_null_candidate_ids() -> None:
 
 
 def test_contract_violation_raises_consolidation_error() -> None:
-    """验证映射引用未知标准要求项时被合成阶段的全局校验拒绝。"""
+    """验证映射引用未知标准项ID时被块级校验拒绝（可反馈模型修正）。"""
     payload = valid_result_payload()
     payload["mappings"][0]["canonical_requirement_id"] = "missing"
 
-    with pytest.raises(ConsolidationError, match="映射引用未知标准要求项"):
+    with pytest.raises(
+        ConsolidationError,
+        match="映射引用了标准要求项清单中不存在的ID",
+    ):
         consolidate_with_correction(
             consolidation_input(),
             FakeConsolidationClient(stage_payloads(payload)),

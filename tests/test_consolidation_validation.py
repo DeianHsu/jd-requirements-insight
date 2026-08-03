@@ -565,3 +565,80 @@ def test_unreferenced_canonical_is_dropped_deterministically() -> None:
     assert result.canonical_requirements[0].canonical_requirement_id == "cr-0"
     assert len(result.mappings) == 2
     assert result.hierarchy_status == "success"
+
+
+def test_mapping_reference_to_unknown_canonical_is_rejected_and_retried() -> None:
+    """映射轮引用清单外标准项ID时被块级校验拒绝，并在重试修正后成功。"""
+    from app.consolidation import consolidate_with_correction
+
+    class HallucinatingClient:
+        """映射轮首次引用不存在的CR-noise，收到修正提示后改为合法ID。"""
+
+        def __init__(self) -> None:
+            self.calls = 0
+            self.prompts: list[str] = []
+
+        def complete(self, system_prompt: str, user_prompt: str) -> str:
+            self.calls += 1
+            self.prompts.append(user_prompt)
+            if self.calls == 1:
+                return json.dumps(
+                    {
+                        "canonical_requirements": [
+                            {
+                                "canonical_requirement_id": "cr-0",
+                                "canonical_name": "能力甲",
+                                "rationale": "独立要求",
+                                "confidence": 0.8,
+                            }
+                        ]
+                    },
+                    ensure_ascii=False,
+                )
+            if self.calls == 2:
+                return json.dumps(
+                    {
+                        "mappings": [
+                            {
+                                "requirement_id": requirement_id,
+                                "status": "mapped",
+                                "canonical_requirement_id": "CR-noise",
+                                "candidate_requirement_ids": [],
+                                "rationale": "幻觉引用",
+                                "confidence": 0.8,
+                            }
+                            for requirement_id in (1, 2)
+                        ]
+                    },
+                    ensure_ascii=False,
+                )
+            if self.calls == 3:
+                return json.dumps(
+                    {
+                        "mappings": [
+                            {
+                                "requirement_id": requirement_id,
+                                "status": "mapped",
+                                "canonical_requirement_id": "cr-0",
+                                "candidate_requirement_ids": [],
+                                "rationale": "修正后引用",
+                                "confidence": 0.8,
+                            }
+                            for requirement_id in (1, 2)
+                        ]
+                    },
+                    ensure_ascii=False,
+                )
+            return json.dumps({"relations": []}, ensure_ascii=False)
+
+    source = consolidation_input(["能力甲", "能力乙"])
+
+    client = HallucinatingClient()
+    result, _ = consolidate_with_correction(source, client, max_attempts=3)
+
+    assert all(
+        mapping.canonical_requirement_id == "cr-0" for mapping in result.mappings
+    )
+    assert len(result.mappings) == 2
+    # 映射轮第二次请求（修正轮）应携带上次校验错误，包含幻觉ID。
+    assert "CR-noise" in client.prompts[2]

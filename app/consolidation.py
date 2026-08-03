@@ -747,6 +747,33 @@ def _request_canonical_requirements(
     )
 
 
+def _validate_mapping_references(
+    mappings: list[RequirementMapping],
+    canonical_requirements: list[CanonicalRequirement],
+) -> None:
+    """确认映射引用的标准项ID全部来自给定清单，幻觉ID可反馈模型修正。"""
+    known_ids = {
+        item.canonical_requirement_id for item in canonical_requirements
+    }
+    unknown_ids = sorted(
+        {
+            requirement_id
+            for mapping in mappings
+            for requirement_id in (
+                [mapping.canonical_requirement_id]
+                if mapping.canonical_requirement_id is not None
+                else mapping.candidate_requirement_ids
+            )
+            if requirement_id not in known_ids
+        }
+    )
+    if unknown_ids:
+        raise ConsolidationError(
+            "映射引用了标准要求项清单中不存在的ID："
+            f"{unknown_ids}；请只引用给定的标准要求项ID"
+        )
+
+
 def _request_mappings_for_chunk(
     chunk_input: RequirementConsolidationInput,
     canonical_requirements: list[CanonicalRequirement],
@@ -754,10 +781,11 @@ def _request_mappings_for_chunk(
     system_prompt: str,
     max_attempts: int,
 ) -> list[RequirementMapping]:
-    """请求模型输出单个映射块的结果，并校验本块实例恰好全部覆盖。"""
+    """请求模型输出单个映射块的结果，并校验本块实例恰好全部覆盖且引用合法。"""
     def parse_chunk_mappings(response_text: str) -> list[RequirementMapping]:
         mappings = parse_mappings_response(response_text)
         _validate_chunk_coverage(chunk_input, mappings)
+        _validate_mapping_references(mappings, canonical_requirements)
         return mappings
 
     return _retry_stage(

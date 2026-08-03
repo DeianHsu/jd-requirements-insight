@@ -198,9 +198,12 @@ def test_chunk_boundary_crosses_into_multiple_mapping_requests() -> None:
 
 
 def test_cross_chunk_unknown_canonical_reference_fails_global_validation() -> None:
-    """验证某块映射引用未知标准项时，合成阶段的全局校验拒绝整个批次。"""
+    """验证某块映射引用未知标准项ID时，块级校验拒绝并反馈修正。"""
     client = UnknownCanonicalClient()
     consolidation_input = make_input(101)
 
-    with pytest.raises(ConsolidationError, match="映射引用未知标准要求项"):
-        consolidate_with_correction(consolidation_input, client)
+    with pytest.raises(
+        ConsolidationError,
+        match="映射引用了标准要求项清单中不存在的ID",
+    ):
+        consolidate_with_correction(consolidation_input, client, max_attempts=1)
