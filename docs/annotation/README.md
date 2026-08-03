@@ -75,10 +75,12 @@
 | `raw_name` | JD 中的原始要求名称，不做同义归并 | `REQ-05` |
 | `category` | 要求类别（领域配置枚举） | `FIELD-01` |
 | `importance` | `must`、`preferred`、`mentioned` 或 `unknown` | `FIELD-02` |
-| `proficiency` | 原文明示的掌握程度 | `FIELD-03` |
+| `proficiency` | 粗粒度掌握程度（Schema V3：`unknown`/`basic`/`advanced`，DEC-016） | `FIELD-03` |
 | `group_id` / `group_logic` | 独立要求或 `any_of` 任选组 | `GROUP-02` |
 | `min_years` / `max_years` / `years_text` | 年限下限、原文上限和完整表达 | `FIELD-04` |
 | `evidence` | 支持结论的连续 JD 原文 | `EVID-01`、`EVID-02` |
 | `confidence` | 抽取置信度；不再把人工确认等同于 `1.0` | — |
+
+熟练度三级语义与 V2→V3 确定性映射见 [REQUIREMENTS.md](REQUIREMENTS.md) FIELD-03 与 `docs/DECISIONS.md` DEC-016。
 
 标准要求项、要求关系和映射理由属于后续跨 JD 原子要求归并阶段，不加入当前抽取数据合同；具体字段名以未来稳定代码合同为准。

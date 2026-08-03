@@ -124,17 +124,18 @@ Embedding 和 Vector Database 与 RAG 相关，但类别是 `retrieval`，不能
 
 同一技能在基本要求中为 `must`、在加分项中又出现更高阶经验时，保留能表达差异的两项和两条证据，不能简单覆盖。
 
-## FIELD-03 proficiency
+## FIELD-03 熟练程度（Schema V3 三级）
 
-| JD措辞 | proficiency |
+| JD 措辞 | proficiency |
 |---|---|
-| 了解、理解基础概念 | `understand` |
-| 熟悉、能够使用 | `familiar` |
-| 熟练、掌握、具备扎实能力 | `proficient` |
-| 精通、专家级 | `expert` |
-| 有经验、参与过或表述不明确 | `unknown` |
+| 没有明确程度词；仅出现使用经验、项目经验、有经验、参与过等表达 | `unknown` |
+| 了解、理解、熟悉、能够使用、具备基础使用能力 | `basic` |
+| 掌握、熟练、扎实、精通、专家级 | `advanced` |
 
-项目经验不能自动推断成熟练度；“使用经验”“项目经验”不得推断熟练度，使用 `unknown`。
+- 不得根据项目经验、工作年限、技能出现位置或常识推断熟练程度；
+- 原始程度词保留在 evidence，枚举只表达粗粒度岗位门槛；
+- 不得输出 `understand`/`familiar`/`proficient`/`expert` 等旧五级值；
+- `none`（完全不会）属于未来候选人个人能力层，不属于岗位要求：JD 未提出某项技能时根本没有对应 requirement，而不是 proficiency 为 `none`。
 
 ## FIELD-04 经验年限
 

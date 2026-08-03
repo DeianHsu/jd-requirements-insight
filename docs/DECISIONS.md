@@ -22,6 +22,7 @@
 | DEC-013 | 关系模型收缩为 broader_than 并删除来源不明的旧评测夹具 | 已采纳 |
 | DEC-014 | 两段式 v0.6 经 3 次独立验收批准替换 V2.3.1 成为正式抽取版本 | 已采纳（legacy Gold protocol 下批准） |
 | DEC-015 | 抽取层取消完整人工 Gold，改为数据合同 + 规则化验证 + 人工违规审计 | 已采纳 |
+| DEC-016 | 熟练度从五级收缩为三级（unknown/basic/advanced），原始措辞由 evidence 保留 | 已采纳 |
 
 ## DEC-001：产品定位为岗位要求洞察，而不是简历匹配打分器
 
@@ -717,3 +718,59 @@ P0-1/P0-3 按新协议重开（PARTIAL）；`app/extraction_validation.py` 提�
 
 当人工审计积累的证据表明某类规则无法用确定性检查覆盖、或需要冻结一组已知
 行为时，按决策第 6 条经用户裁决引入小规模人工参考；验收口径变更须用户裁决。
+
+## DEC-016：熟练度从五级收缩为三级（unknown/basic/advanced）
+
+### 问题
+
+抽取层熟练度长期使用五级枚举：`unknown / understand / familiar /
+proficient / expert`。三个问题：
+
+1. 招聘文案中“了解/熟悉”与“掌握/精通”的边界不稳定：同一家公司的不同 JD、
+   不同写手对同一程度词的使用不一致，五级枚举要求模型区分人类自己都无法
+   稳定区分的边界，输出波动被放大（temperature=0 下仍实测存在）。
+2. 五级枚举形成虚假精确：0~4 级熟练度暗示“可排序、可比较”的精确刻度，
+   但岗位门槛本质是粗粒度的“会 / 熟练 / 没提”，细分只会让统计口径失真。
+3. 与下游消费不匹配：P0-6 统计、P0-4 归并并不需要五级区分，粒度越细越难
+   保持跨 JD 一致。
+
+### 候选方案
+
+- 保留五级枚举继续调 Prompt（无法收敛，且继续放大虚假精确）。
+- 收缩为三级 `unknown / basic / advanced`（当前方案）：unknown 表示没有
+  明确程度或只有经验类表达；basic 覆盖了解/理解/熟悉/能够使用；
+  advanced 覆盖掌握/熟练/扎实/精通/专家级。
+
+### 决策
+
+1. Schema V3 熟练度只包含 `unknown / basic / advanced`；不得添加
+   `none / beginner / intermediate / proficient / expert`。
+2. `none`（完全不会）只属于未来候选人个人能力层，不属于岗位要求：JD 未
+   提出某项技能，不表示该技能的 proficiency 为 `none`，而是根本没有对应
+   requirement。
+3. 原始程度词继续保留在 evidence 与 raw_name，结构化枚举只负责稳定统计；
+   熟练度收缩不得影响 importance、category、逻辑组和证据语义。
+4. 旧 Schema V2 五级值确定性映射读取（understand/familiar → basic、
+   proficient/expert → advanced），旧物理数据不重写，extractor_version
+   身份不变；未知非法值明确失败，不静默归入 unknown。
+5. 版本隔离：active 保持 v0.6 + Schema V2；候选 v0.8 + Schema V3；
+   v0.7 作为未完成真实验收的历史候选版本保留（Git 历史承担复现）；
+   v0.8 未完成验收前不得替换 active。
+
+### 主要取舍
+
+- 放弃五级可解释度，换取跨 JD 稳定统计与模型可稳定执行的判断边界；
+- 迁移成本为零（数据库只存字符串，读取时映射），历史结果可追溯可读取；
+- 与 DEC-015 一致：验收只证明规则符合性，不宣称枚举代表候选人真实能力。
+
+### 结果与证据
+
+Schema V3（`app/schemas.py` 三级 `ProficiencyLevel` + 读取兼容映射）；
+v0.8 候选 Prompt 的 FIELD-03 使用三级枚举；规则场景新增同级词（SCN-011
+basic→basic、SCN-012 advanced→advanced）与经验表达（SCN-013 basic→unknown）
+证明粗粒度枚举生效；全量 218 项测试与 Ruff 通过。
+
+### 复审条件
+
+当人工审计或下游统计证明某类岗位确实需要区分“了解”与“熟悉”、且措辞边界
+可以稳定定义时，经用户裁决在 Schema V4 引入更细粒度；在此之前维持三级。
