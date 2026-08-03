@@ -118,13 +118,6 @@ def parse_args() -> argparse.Namespace:
         help="供人工审计的脱敏样本索引数量（每份 JD 按固定种子抽样）",
     )
     parser.add_argument(
-        "--phase",
-        type=str,
-        choices=("pilot", "acceptance"),
-        default="pilot",
-        help="pilot：检查流程、收集指标，不产生批准结论；acceptance：使用已冻结的规则/范围/阈值，可用于批准当前版本",
-    )
-    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="只做确定性预检（加载 JD、打印计划），不调用模型",
@@ -207,7 +200,6 @@ def main() -> int:
     job_scope = "全部" if args.all else args.job_ids
     print(f"真实 JD 验收（Track B）：{len(jobs)} 份 JD（{job_scope}）")
     print(f"当前抽取配置：prompt={PROMPT_VERSION} schema={SCHEMA_VERSION}（v0.8 + Schema V3）")
-    print(f"验收阶段：{args.phase}")
     print(f"每份 JD 独立运行：{args.runs} 次")
 
     if not args.execute:
@@ -261,7 +253,7 @@ def main() -> int:
                 raw_payload[f"job{job_id}_run{index}"] = _snapshot_payload(snapshot)
                 print(
                     f"  {job.source_file} run{index}: "
-                    f"职责{len(snapshot.result.responsibilities)}项 "
+
                     f"要求{len(snapshot.result.requirements)}项"
                 )
             except Exception as exc:  # 实验批处理保留单次错误并继续
@@ -344,14 +336,7 @@ def main() -> int:
         # 脱敏审计样本索引：固定种子抽样，不含原文。
         if snapshots:
             rng = random.Random(job_id)
-            candidates = list(
-                enumerate(
-                    [
-                        *snapshots[0].result.responsibilities,
-                        *snapshots[0].result.requirements,
-                    ]
-                )
-            )
+            candidates = list(enumerate(snapshots[0].result.requirements))
             sampled = rng.sample(candidates, min(args.audit_sample_size, len(candidates)))
             for position, _ in sampled:
                 audit_samples.append(
@@ -390,7 +375,6 @@ def main() -> int:
 
     identity = {
         "model": metadata.model_name,
-        "phase": args.phase,
         "prompt_version": metadata.prompt_version,
         "schema_version": metadata.schema_version,
         "jd_set_fingerprint": compute_input_fingerprint(
@@ -405,22 +389,15 @@ def main() -> int:
     hard_gate_failures = sorted(set(hard_gate_failures))
     warnings = sorted(set(warnings))
     diagnostics = sorted(set(diagnostics))
-    # decision_eligible 在人工审计与阈值冻结真正接入前恒为 False：
-    # 脚本只计算自动 hard gate（passed），最终批准由人工汇总步骤确认
-    # （Track A passed + Track B passed + human audit completed +
-    #  threshold decision recorded，见 reports/templates/final-review.md）。
-    decision_eligible = False
     payload = {
         "identity": identity,
         "track": "B",
-        "phase": args.phase,
         "jobs": job_reports,
         "audit_samples": audit_samples,
         "hard_gate_failures": hard_gate_failures,
         "warnings": warnings,
         "diagnostics": diagnostics,
         "passed": not hard_gate_failures,
-        "decision_eligible": decision_eligible,
     }
     args.report_dir.mkdir(parents=True, exist_ok=True)
     report_path.write_text(

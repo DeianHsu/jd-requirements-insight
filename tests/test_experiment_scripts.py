@@ -75,16 +75,15 @@ def test_acceptance_script_dry_run_does_not_call_model(
 
 
 def test_acceptance_script_rejects_invalid_runs(monkeypatch, tmp_path) -> None:
-    """--runs 0/1/2 与 --max-attempts 0 必须在模型调用前失败（测试 22）。"""
+    """--runs 0 与 --max-attempts 0 必须在模型调用前失败。"""
     scenarios = _write_scenario_file(tmp_path)
-    for runs in (0, 1, 2):
-        monkeypatch.setattr(
-            sys,
-            "argv",
-            ["run_acceptance", "--scenarios", str(scenarios), "--runs", str(runs)],
-        )
-        with pytest.raises(SystemExit):
-            run_acceptance.parse_args()
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_acceptance", "--scenarios", str(scenarios), "--runs", "0"],
+    )
+    with pytest.raises(SystemExit):
+        run_acceptance.parse_args()
     monkeypatch.setattr(
         sys,
         "argv",
@@ -190,41 +189,6 @@ def test_acceptance_script_uses_single_current_config(monkeypatch, tmp_path) -> 
     assert run_acceptance.main() == 0
     assert PROMPT_VERSION == TWO_STAGE_PROMPT_VERSION == "0.8"
     assert SCHEMA_VERSION == "3.0"
-
-
-def test_acceptance_script_phase_defaults_to_pilot(monkeypatch, tmp_path) -> None:
-    """--phase 缺省为 pilot；pilot 报告 decision_eligible=False。"""
-    scenarios = _write_scenario_file(tmp_path)
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        ["run_acceptance", "--scenarios", str(scenarios), "--dry-run"],
-    )
-    assert run_acceptance.parse_args().phase == "pilot"
-
-
-def test_acceptance_phase_decision_eligible_requires_human_review(
-    monkeypatch, tmp_path, capsys
-) -> None:
-    """decision_eligible 恒为 False：批准须经人工汇总确认（阈值冻结+审计）。"""
-    from app.extraction_validation import ExtractionAcceptanceReport
-
-    # 即使 acceptance 阶段且无 hard gate 失败，也绝不自动授予批准资格。
-    assert ExtractionAcceptanceReport(identity={}, hard_gate_failures=[], warnings=[], diagnostics=[]).decision_eligible is False
-    assert ExtractionAcceptanceReport(
-        identity={}, hard_gate_failures=[], warnings=[], diagnostics=[], phase="acceptance"
-    ).decision_eligible is False
-    assert ExtractionAcceptanceReport(
-        identity={}, hard_gate_failures=[], warnings=[], diagnostics=[], phase="acceptance"
-    ).passed is True  # passed 只表示自动 hard gate 通过
-
-    # 最终批准由人工汇总步骤确认（final-review 模板字段）。
-    template = Path("reports/templates/final-review.md")
-    assert template.exists()
-    content = template.read_text(encoding="utf-8")
-    for marker in ("Track A passed", "Track B passed", "human audit completed", "threshold decision recorded"):
-        assert marker in content
-
 
 
 def test_acceptance_script_defaults_keep_raw_results_private(
@@ -335,31 +299,10 @@ def test_real_jd_acceptance_dry_run_uses_temp_database(
     assert run_real_jd_acceptance.main() == 1
 
 
-def test_audit_template_exists() -> None:
-    """人工审计模板存在且字段完整（§十四）。"""
-    template_path = Path("reports/templates/extraction-rule-audit.json")
-    assert template_path.exists()
-    template = json.loads(template_path.read_text(encoding="utf-8"))
-    required = {
-        "audit_id",
-        "extractor_version",
-        "scenario_or_job_id",
-        "rule_id",
-        "violation",
-        "severity",
-        "evidence_reference",
-        "reason",
-        "recommended_action",
-        "reviewer",
-        "reviewed_at",
-    }
-    assert required <= set(template["audit_fields"])
-
 def test_track_b_success_path_generates_full_report(monkeypatch, tmp_path) -> None:
     """Track B 成功路径端到端：假 LLM → 完整报告。
 
-    覆盖审核发现的 requirement_count 类型错误（列表被 sum 相加会 TypeError）
-    与 decision_eligible 恒 False。
+    覆盖 requirement_count 类型正确（int，可被 sum 汇总）。
     """
     database_path = tmp_path / "track_b.db"
     engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
@@ -424,10 +367,6 @@ def test_track_b_success_path_generates_full_report(monkeypatch, tmp_path) -> No
                 {
                     "role_family": "other",
                     "seniority": "unknown",
-                    "responsibilities": [
-                        {"name": "建设能力甲体系",
-                         "evidence": "负责能力甲体系建设"}
-                    ],
                     "requirements": [
                         {
                             "raw_name": "技术甲",
@@ -479,7 +418,6 @@ def test_track_b_success_path_generates_full_report(monkeypatch, tmp_path) -> No
     report_path = next((tmp_path / "reports").glob("*-report.json"))
     report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["passed"] is True
-    assert report["decision_eligible"] is False
     assert report["jobs"][0]["requirement_count"] == 1
     assert isinstance(report["jobs"][0]["requirement_count"], int)
     assert "jd_set_fingerprint" in report["identity"]

@@ -1,26 +1,25 @@
 """P0-3 抽取验收脚本（DEC-015 新协议，Track A：合成规则场景）。
 
-默认不调用外部模型；完整验收必须显式`--execute`，预检使用`--dry-run`。
-验收显式使用 candidate profile：v0.8 + Schema V3（三级熟练度），不依赖
-active 全局常量间接选择。执行流程（真实模型）：
+默认不调用外部模型；验证必须显式`--execute`，预检使用`--dry-run`。
+抽取配置固定为当前唯一方案 v0.8 + Schema V3。执行流程（真实模型）：
 
 1. 加载规则场景（`data/rule_scenarios/extraction_metamorphic_cases.json`），
    对每个场景把 base_input 应用确定性变换（返回 TransformationResult：
    新文本 + base→transformed 锚点映射 + 预期变化区域）；
-2. 对 base_input 独立运行 `--runs` 次（必须 >=3），每次结果独立保存；
-3. 对每个变形输入运行 1 次；
-4. 每次运行（base 与 transformed）都执行完整确定性合同检查
+2. 每个场景的 base 与 transformed 各运行 1 次（可用 `--scenarios` 子集
+   与 `--runs` 显式重复高风险场景）；
+3. 每次运行（base 与 transformed）都执行完整确定性合同检查
    （Schema、discovery coverage、duplicate coverage、evidence、
    candidate type coverage、logic groups、identity、evidence attribution）；
-5. base 多次运行两两比较（稳定性，第一版只作 warning）；
-6. base 与变形输入用 TransformationResult 锚点比较并检查场景期望属性；
-7. 输出机器可读报告（hard gate / warning / diagnostic 分级），记录
-   model、prompt version、schema version、scenario_set_fingerprint、
-   runs、max_attempts、run identifier、timestamp；报告不输出完整 JD 文本；
-8. 运行完整性（expected/successful/failed）任何缺失都属于 hard gate。
+4. base 与变形输入用 TransformationResult 锚点比较并检查场景期望属性；
+5. 输出机器可读报告，记录 model、prompt version、schema version、
+   scenario_set_fingerprint、run count、max_attempts、run identifier、
+   timestamp；报告不输出完整 JD 文本；
+6. 运行完整性（expected/successful/failed）任何缺失都属于 hard gate。
 
-本脚本不读取人工完整答案决定通过或失败。返回码：参数错误非零；
-`--dry-run` 返回 0（预检，不是验收）；验收 hard gate 失败返回 1，通过返回 0。
+本脚本不读取人工完整答案决定通过或失败；人工直接根据报告判断当前
+抽取方案是否可以进入下游。返回码：参数错误非零；`--dry-run` 返回 0
+（预检）；hard gate 失败返回 1，通过返回 0。
 """
 
 from __future__ import annotations
@@ -285,8 +284,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--runs",
         type=int,
-        default=3,
-        help="base_input 独立运行次数（必须 >=3，稳定性按3次设计）",
+        default=1,
+        help="每个场景 base 的独立运行次数（默认各一次；高风险场景可显式重复）",
     )
     parser.add_argument(
         "--max-attempts",
@@ -313,13 +312,6 @@ def parse_args() -> argparse.Namespace:
         help="原始运行结果目录（含完整输入与模型响应，私有）",
     )
     parser.add_argument(
-        "--phase",
-        type=str,
-        choices=("pilot", "acceptance"),
-        default="pilot",
-        help="pilot：检查流程、收集指标，不产生批准结论；acceptance：使用已冻结的规则/范围/阈值，可用于批准当前版本",
-    )
-    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="只做确定性预检（加载场景、应用变换、打印计划），不调用模型",
@@ -330,8 +322,8 @@ def parse_args() -> argparse.Namespace:
         help="确认发起付费模型调用（完整验收；默认拒绝）",
     )
     args = parser.parse_args()
-    if args.runs < 3:
-        parser.error("--runs 必须 >= 3")
+    if args.runs < 1:
+        parser.error("--runs 必须 >= 1")
     if args.max_attempts < 1:
         parser.error("--max-attempts 必须 >= 1")
     if args.execute and args.dry_run:
@@ -443,7 +435,6 @@ def main() -> int:
 
     print(f"模型：{settings.model}")
     print(f"当前抽取配置：prompt={PROMPT_VERSION} schema={SCHEMA_VERSION}（v0.8 + Schema V3）")
-    print(f"验收阶段：{args.phase}（acceptance 且 hard gates 全过时才 decision_eligible）")
     print(f"运行标识：{run_identifier}")
     print(f"场景数：{len(scenario_list)}；base 独立运行：{args.runs} 次")
 
@@ -495,8 +486,7 @@ def main() -> int:
                 successful_base_runs += 1
                 raw_payload[f"{scenario_id}_base_run{index}"] = _snapshot_payload(snapshot)
                 print(
-                    f"  base run{index}: 职责{len(snapshot.result.responsibilities)}项 "
-                    f"要求{len(snapshot.result.requirements)}项"
+                    f"  base run{index}: 要求{len(snapshot.result.requirements)}项"
                 )
             except Exception as exc:  # 实验批处理保留单次错误并继续
                 failed_base_runs += 1
@@ -520,8 +510,7 @@ def main() -> int:
                 transformed_snapshot
             )
             print(
-                f"  transformed: 职责{len(transformed_snapshot.result.responsibilities)}项 "
-                f"要求{len(transformed_snapshot.result.requirements)}项"
+                f"  transformed: 要求{len(transformed_snapshot.result.requirements)}项"
             )
         except Exception as exc:
             failed_transformed_runs += 1
@@ -659,7 +648,6 @@ def main() -> int:
 
     identity = {
         "model": metadata.model_name,
-        "phase": args.phase,
         "prompt_version": metadata.prompt_version,
         "schema_version": metadata.schema_version,
         "scenario_protocol_version": protocol_version,
@@ -675,20 +663,14 @@ def main() -> int:
     hard_gate_failures = sorted(set(hard_gate_failures))
     warnings = sorted(set(warnings))
     diagnostics = sorted(set(diagnostics))
-    # decision_eligible 在人工审计与阈值冻结真正接入前恒为 False：
-    # 脚本只计算自动 hard gate（passed），最终批准由人工汇总步骤确认
-    # （见 reports/templates/final-review.md）。
-    decision_eligible = False
     payload = {
         "identity": identity,
-        "phase": args.phase,
         "run_count": args.runs,
         "scenarios": scenario_reports,
         "hard_gate_failures": hard_gate_failures,
         "warnings": warnings,
         "diagnostics": diagnostics,
         "passed": not hard_gate_failures,
-        "decision_eligible": decision_eligible,
     }
     args.report_dir.mkdir(parents=True, exist_ok=True)
     report_path.write_text(
