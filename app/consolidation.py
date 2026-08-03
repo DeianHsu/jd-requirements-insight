@@ -74,6 +74,7 @@ CONSOLIDATION_SYSTEM_PROMPT = """你是跨JD岗位要求归并器。输入是一
 
 【任务边界】
 1. 每个输入实例必须且只能产生一条mapped结果，不得遗漏任何实例，也不得为不存在的实例生成结果；本流程不输出unmapped或review_required。
+2. 每个标准要求项必须至少有一个实例作为来源；标准要求项数量不超过输入实例数量，只为有实例依据的条件创建标准项，不得提出无人引用的标准项。
 2. 同义归并：只有表面名称不同但结合证据上下文后指向同一招聘条件（达到可以合并统计的程度）的实例才归并到同一标准要求项。例如实例A（raw_name="能力甲使用经验"，evidence="具备能力甲使用经验"）与实例B（raw_name="具备能力甲的使用经验"，evidence="具备能力甲的使用经验"）应归并到同一标准要求项"能力甲使用经验"。
 3. 保守归并：无法确认是否等价的实例保持为不同标准要求项，每个实例至少可以形成自己的singleton标准要求项；不允许因为名称中出现相同关键词或属于同一技术领域就强制合并。
 4. 同一表面词可以因证据上下文不同而映射到不同标准要求项；不能只因为名称文本相同就自动归并，必须结合证据判断。
@@ -854,8 +855,71 @@ def consolidate_with_correction(
         )
         validate_requirement_coverage(consolidation_input, result)
     except ValueError as exc:
+        # 标准项轮与映射轮分离时，模型可能在标准项轮提出无人引用的噪声
+        # 标准项（映射轮不认可）；这些标准项没有任何 mapping/relation 引用，
+        # 由确定性代码剔除并记入诊断，保证"每个标准项至少一个来源"合同成立。
+        result = _drop_unreferenced_canonicals(
+            canonical_requirements,
+            mappings,
+            relations,
+            uncertain_relations,
+            hierarchy_status,
+        )
+        if result is not None:
+            return result, result.model_dump(mode="json")
         raise ConsolidationError(f"模型输出不符合归并合同：{exc}") from exc
     return result, result.model_dump(mode="json")
+
+
+def _drop_unreferenced_canonicals(
+    canonical_requirements: list[CanonicalRequirement],
+    mappings: list[RequirementMapping],
+    relations: list[RequirementRelation],
+    uncertain_relations: list[RequirementRelation],
+    hierarchy_status: str,
+) -> RequirementConsolidationResult | None:
+    """剔除没有实例来源的标准项并重建结果；无法安全剔除时返回None。
+
+    只剔除未被任何 mapping 引用且未被任何 relation/uncertain 引用的标准项；
+    有引用时说明模型输出自相矛盾，不能静默修复（返回None交由上层报错）。
+    """
+    referenced_by_mapping = {
+        mapping.canonical_requirement_id
+        for mapping in mappings
+        if mapping.canonical_requirement_id is not None
+    }
+    referenced_by_relation = {
+        relation.source_requirement_id for relation in relations
+    } | {relation.target_requirement_id for relation in relations}
+    referenced_by_relation |= {
+        relation.source_requirement_id for relation in uncertain_relations
+    } | {relation.target_requirement_id for relation in uncertain_relations}
+    dropped = [
+        item.canonical_requirement_id
+        for item in canonical_requirements
+        if item.canonical_requirement_id not in referenced_by_mapping
+    ]
+    if not dropped:
+        return None
+    if any(item in referenced_by_relation for item in dropped):
+        return None
+    kept = [
+        item
+        for item in canonical_requirements
+        if item.canonical_requirement_id not in dropped
+    ]
+    if not kept:
+        return None
+    try:
+        return RequirementConsolidationResult(
+            canonical_requirements=kept,
+            mappings=mappings,
+            relations=relations,
+            uncertain_relations=uncertain_relations,
+            hierarchy_status=hierarchy_status,
+        )
+    except ValueError:
+        return None
 
 
 @dataclass

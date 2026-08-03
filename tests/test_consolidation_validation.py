@@ -504,3 +504,64 @@ def test_metamorphic_conservative_fallback_keeps_singletons() -> None:
     assert len(result.canonical_requirements) == 2
     assert {m.canonical_requirement_id for m in result.mappings} == {"cr-0", "cr-1"}
     assert result.hierarchy_status == "success"
+
+
+def test_unreferenced_canonical_is_dropped_deterministically() -> None:
+    """标准项轮提出的无来源标准项被确定性剔除，映射合同仍成立。"""
+    from app.consolidation import consolidate_with_correction
+
+    class NoisyClient:
+        """标准项轮多提出一个无人引用的噪声标准项。"""
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def complete(self, system_prompt: str, user_prompt: str) -> str:
+            self.calls += 1
+            if self.calls == 1:
+                return json.dumps(
+                    {
+                        "canonical_requirements": [
+                            {
+                                "canonical_requirement_id": "cr-0",
+                                "canonical_name": "能力甲",
+                                "rationale": "独立要求",
+                                "confidence": 0.8,
+                            },
+                            {
+                                "canonical_requirement_id": "cr-noise",
+                                "canonical_name": "无人引用的噪声条件",
+                                "rationale": "模型幻觉",
+                                "confidence": 0.5,
+                            },
+                        ]
+                    },
+                    ensure_ascii=False,
+                )
+            if self.calls == 2:
+                return json.dumps(
+                    {
+                        "mappings": [
+                            {
+                                "requirement_id": requirement_id,
+                                "status": "mapped",
+                                "canonical_requirement_id": "cr-0",
+                                "candidate_requirement_ids": [],
+                                "rationale": "测试映射",
+                                "confidence": 0.8,
+                            }
+                            for requirement_id in (1, 2)
+                        ]
+                    },
+                    ensure_ascii=False,
+                )
+            return json.dumps({"relations": []}, ensure_ascii=False)
+
+    source = consolidation_input(["能力甲", "能力乙"])
+
+    result, raw = consolidate_with_correction(source, NoisyClient(), max_attempts=1)
+
+    assert len(result.canonical_requirements) == 1
+    assert result.canonical_requirements[0].canonical_requirement_id == "cr-0"
+    assert len(result.mappings) == 2
+    assert result.hierarchy_status == "success"
