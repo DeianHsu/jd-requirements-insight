@@ -9,7 +9,7 @@ from app.consolidation_validation import (
     merge_pair_metrics,
     positive_pair_jaccard,
     singleton_and_canonical_drift,
-    top_k_set_stability,
+    top_cluster_membership_stability,
     co_clustering_agreement,
     direction_consistency,
     edge_jaccard,
@@ -347,8 +347,8 @@ def test_instance_neighbor_stability_drops_when_cluster_split() -> None:
     assert instance_neighbor_stability(*unstable) < 1.0
 
 
-def test_top_k_set_stability_unchanged_and_dropped() -> None:
-    """Top-K 高频要求集合稳定性：无变化 = 1.0；变化 = <1.0。"""
+def test_top_cluster_membership_stability_unchanged_and_dropped() -> None:
+    """Top cluster 成员集合稳定性：无变化 = 1.0；拆分变化 = <1.0。"""
     names = ["甲", "乙", "丙", "丁", "戊", "己", "庚", "辛"]
     base = mapping_clusters(
         result_payload([[1, 2, 3, 4], [5, 6], [7]], names=names)
@@ -361,8 +361,8 @@ def test_top_k_set_stability_unchanged_and_dropped() -> None:
         result_payload([[1, 2], [3, 4], [5, 6], [7]], names=names)
     )
 
-    assert top_k_set_stability(base, unchanged, k=2)["jaccard"] == 1.0
-    assert top_k_set_stability(base, dropped, k=2)["jaccard"] < 1.0
+    assert top_cluster_membership_stability(base, unchanged, k=2)["jaccard"] == 1.0
+    assert top_cluster_membership_stability(base, dropped, k=2)["jaccard"] < 1.0
 
 
 def test_edge_jaccard_and_direction_consistency() -> None:

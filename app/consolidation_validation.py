@@ -432,15 +432,17 @@ def instance_neighbor_stability(
     return sum(scores) / len(scores) if scores else 1.0
 
 
-def top_k_set_stability(
+def top_cluster_membership_stability(
     first: dict[int, tuple[str, float]],
     second: dict[int, tuple[str, float]],
     k: int = 10,
 ) -> dict[str, float]:
-    """高频要求集合稳定性：按 canonical 成员数取 Top-K，比较集合 Jaccard。
+    """最大 cluster 成员集合稳定性：按 canonical 成员数取 Top-K 比较集合 Jaccard。
 
     canonical 身份 = 成员实例集合（requirement_id 跨运行稳定），不依赖
-    临时 canonical ID；Jaccard < 1 表示有要求因归并波动掉出/进入 Top-K。
+    临时 canonical ID；Jaccard < 1 表示最大 cluster 的成员集合发生变化。
+    注意：本指标按实例数排序，不等于市场 Top-K（P0-6 按 distinct job
+    count 统计后另行实现真正的 Top-K stability）。
     """
     def top_k(mapping: dict[int, tuple[str, float]], limit: int) -> set[frozenset[int]]:
         clusters = _cluster_members(mapping)
