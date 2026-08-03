@@ -5,6 +5,11 @@ from __future__ import annotations
 import json
 
 from app.consolidation_validation import (
+    instance_neighbor_stability,
+    merge_pair_metrics,
+    positive_pair_jaccard,
+    singleton_and_canonical_drift,
+    top_k_set_stability,
     co_clustering_agreement,
     direction_consistency,
     edge_jaccard,
@@ -277,6 +282,89 @@ def test_co_clustering_agreement_ignores_canonical_id_renaming() -> None:
     assert overall == 1.0
 
 
+def test_positive_pair_jaccard_identical_mapping_is_one() -> None:
+    """完全相同的两次运行：同簇正实例对 Jaccard = 1.0。"""
+    first = mapping_clusters(result_payload([[1, 2], [3, 4]]))
+    second = mapping_clusters(result_payload([[1, 2], [3, 4]]))
+
+    assert positive_pair_jaccard(first, second) == 1.0
+
+
+def test_positive_pair_jaccard_detects_cluster_split() -> None:
+    """cluster 被拆开时同簇对 Jaccard 显著下降（比总 pairwise 更敏感）。"""
+    names = ["甲", "乙", "丙", "丁"]
+    first = mapping_clusters(result_payload([[1, 2, 3, 4]], names=names))
+    second = mapping_clusters(result_payload([[1, 2], [3, 4]], names=names))
+
+    assert positive_pair_jaccard(first, second) == 2 / 6  # 2 对交集 / 6 对并集
+
+
+def test_merge_pair_metrics_detect_merge_and_split() -> None:
+    """合并实例对指标：合并使 precision 下降，拆分使 recall 下降。"""
+    reference = mapping_clusters(result_payload([[1, 2], [3, 4]]))
+    merged = mapping_clusters(result_payload([[1, 2, 3, 4]]))
+    split = mapping_clusters(result_payload([[1], [2], [3, 4]]))
+
+    merged_metrics = merge_pair_metrics(reference, merged)
+    # 合并：reference 的 2 对全命中，但预测有 C(4,2)=6 对 → precision 低。
+    assert merged_metrics["precision"] == 2 / 6
+    assert merged_metrics["recall"] == 1.0
+
+    split_metrics = merge_pair_metrics(reference, split)
+    # 拆分：reference 的 (1,2) 对被拆 → recall 低。
+    assert split_metrics["recall"] == 1 / 2
+    assert split_metrics["precision"] == 1.0
+
+
+def test_singleton_and_canonical_drift_reports_ranges() -> None:
+    """singleton 比例与 canonical 数量漂移被报告。"""
+    runs = [
+        mapping_clusters(result_payload([[1, 2], [3]])),
+        mapping_clusters(result_payload([[1], [2], [3]])),
+    ]
+
+    drift = singleton_and_canonical_drift(runs)
+
+    assert drift["canonical_counts"] == [2, 3]
+    assert drift["canonical_count_range"] == 1
+    assert drift["singleton_ratios"] == [0.5, 1.0]
+
+
+def test_instance_neighbor_stability_drops_when_cluster_split() -> None:
+    """cluster 拆分后实例同簇邻居稳定性下降。"""
+    stable = (
+        mapping_clusters(result_payload([[1, 2], [3, 4]])),
+        mapping_clusters(result_payload([[1, 2], [3, 4]])),
+    )
+    unstable = (
+        mapping_clusters(result_payload([[1, 2], [3, 4]])),
+        mapping_clusters(result_payload([[1], [2, 3, 4]])),
+    )
+
+    assert instance_neighbor_stability(*stable) == 1.0
+    # 实例 2 的邻居从 {1} 变为 {3,4}：Jaccard=0；实例 1 邻居 {2}→∅ 视为 0；
+    # 3/4 邻居 {4,3}→{2,4}/{2,3} 各 1/2。
+    assert instance_neighbor_stability(*unstable) < 1.0
+
+
+def test_top_k_set_stability_unchanged_and_dropped() -> None:
+    """Top-K 高频要求集合稳定性：无变化 = 1.0；变化 = <1.0。"""
+    names = ["甲", "乙", "丙", "丁", "戊", "己", "庚", "辛"]
+    base = mapping_clusters(
+        result_payload([[1, 2, 3, 4], [5, 6], [7]], names=names)
+    )
+    unchanged = mapping_clusters(
+        result_payload([[1, 2, 3, 4], [5, 6], [7]], names=names)
+    )
+    # 高频要求 (1,2,3,4) 被拆成两组 → Top-2 集合变化。
+    dropped = mapping_clusters(
+        result_payload([[1, 2], [3, 4], [5, 6], [7]], names=names)
+    )
+
+    assert top_k_set_stability(base, unchanged, k=2)["jaccard"] == 1.0
+    assert top_k_set_stability(base, dropped, k=2)["jaccard"] < 1.0
+
+
 def test_edge_jaccard_and_direction_consistency() -> None:
     first = relation_edges_by_name(
         result_payload(
@@ -503,7 +591,7 @@ def test_metamorphic_conservative_fallback_keeps_singletons() -> None:
     assert len(result.mappings) == 2
     assert len(result.canonical_requirements) == 2
     assert {m.canonical_requirement_id for m in result.mappings} == {"cr-0", "cr-1"}
-    assert result.hierarchy_status == "success"
+    assert result.hierarchy_status == "not_run"
 
 
 def test_unreferenced_canonical_is_dropped_deterministically() -> None:
@@ -564,7 +652,7 @@ def test_unreferenced_canonical_is_dropped_deterministically() -> None:
     assert len(result.canonical_requirements) == 1
     assert result.canonical_requirements[0].canonical_requirement_id == "cr-0"
     assert len(result.mappings) == 2
-    assert result.hierarchy_status == "success"
+    assert result.hierarchy_status == "not_run"
 
 
 def test_unreferenced_canonical_with_relations_is_dropped_with_edges() -> None:

@@ -319,6 +319,144 @@ def co_clustering_agreement(
     )
 
 
+def _cluster_members(mapping: dict[int, tuple[str, float]]) -> list[list[int]]:
+    """把映射投影为 canonical 成员列表（成员身份 = requirement_id，跨运行稳定）。"""
+    clusters: dict[str, list[int]] = {}
+    for requirement_id, (canonical_id, _) in mapping.items():
+        clusters.setdefault(canonical_id, []).append(requirement_id)
+    return sorted((sorted(members) for members in clusters.values()), key=len, reverse=True)
+
+
+def _same_cluster_pairs(mapping: dict[int, tuple[str, float]]) -> set[frozenset[int]]:
+    """同一 canonical 的实例对集合（同簇正实例对，不依赖临时 canonical ID）。"""
+    pairs: set[frozenset[int]] = set()
+    for members in _cluster_members(mapping):
+        for first_index in range(len(members)):
+            for second_index in range(first_index + 1, len(members)):
+                pairs.add(frozenset({members[first_index], members[second_index]}))
+    return pairs
+
+
+def positive_pair_jaccard(
+    first: dict[int, tuple[str, float]],
+    second: dict[int, tuple[str, float]],
+) -> float:
+    """同簇正实例对的 Jaccard：|同簇对交集| / |同簇对并集|。
+
+    对 cluster 拆分/合并比总 pairwise agreement 更敏感：拆分会让大量
+    原本同簇的实例对在另一次运行中不再同簇（交集缩小），合并会让并集
+    显著增大。
+    """
+    first_pairs = _same_cluster_pairs(first)
+    second_pairs = _same_cluster_pairs(second)
+    union = first_pairs | second_pairs
+    if not union:
+        return 1.0
+    return len(first_pairs & second_pairs) / len(union)
+
+
+def merge_pair_metrics(
+    reference: dict[int, tuple[str, float]],
+    predicted: dict[int, tuple[str, float]],
+) -> dict[str, float]:
+    """以 reference 的同簇实例对为正例、predicted 的同簇对为预测，计算 P/R/F1。
+
+    - predicted 合并了两个 cluster：产生 reference 中不存在的跨簇对，
+      precision 下降；
+    - predicted 拆开了某个 cluster：丢失 reference 中的对内同簇对，
+      recall 下降。
+    只用于稳定性诊断，不描述语义准确率。
+    """
+    reference_pairs = _same_cluster_pairs(reference)
+    predicted_pairs = _same_cluster_pairs(predicted)
+    true_positive = len(reference_pairs & predicted_pairs)
+    false_positive = len(predicted_pairs - reference_pairs)
+    false_negative = len(reference_pairs - predicted_pairs)
+    precision = true_positive / (true_positive + false_positive) if (true_positive + false_positive) else 1.0
+    recall = true_positive / (true_positive + false_negative) if (true_positive + false_negative) else 1.0
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 1.0
+    return {"precision": precision, "recall": recall, "f1": f1}
+
+
+def singleton_and_canonical_drift(
+    mappings: list[dict[int, tuple[str, float]]],
+) -> dict[str, Any]:
+    """报告每次运行的 canonical 数量、singleton 比例与漂移范围。"""
+    canonical_counts: list[int] = []
+    singleton_ratios: list[float] = []
+    for mapping in mappings:
+        members = _cluster_members(mapping)
+        canonical_counts.append(len(members))
+        singletons = sum(1 for cluster in members if len(cluster) == 1)
+        singleton_ratios.append(singletons / len(members) if members else 0.0)
+    drift = {
+        "canonical_counts": canonical_counts,
+        "canonical_count_min": min(canonical_counts) if canonical_counts else 0,
+        "canonical_count_max": max(canonical_counts) if canonical_counts else 0,
+        "canonical_count_range": (max(canonical_counts) - min(canonical_counts))
+        if canonical_counts
+        else 0,
+        "singleton_ratios": [round(ratio, 4) for ratio in singleton_ratios],
+    }
+    return drift
+
+
+def instance_neighbor_stability(
+    first: dict[int, tuple[str, float]],
+    second: dict[int, tuple[str, float]],
+) -> float:
+    """每个实例的同簇邻居集合（其他同簇实例）的 Jaccard 均值。
+
+    识别"某个实例的邻居在两次运行间大幅变化"（如 cluster 被拆开后
+    部分成员离散）；孤立实例（无邻居）计为一致。
+    """
+    def neighbors(mapping: dict[int, tuple[str, float]]) -> dict[int, frozenset[int]]:
+        result: dict[int, frozenset[int]] = {}
+        for members in _cluster_members(mapping):
+            member_set = frozenset(members)
+            for member in members:
+                result[member] = member_set - {member}
+        return result
+
+    first_neighbors = neighbors(first)
+    second_neighbors = neighbors(second)
+    shared_ids = set(first_neighbors) & set(second_neighbors)
+    scores: list[float] = []
+    for requirement_id in shared_ids:
+        first_set = first_neighbors[requirement_id]
+        second_set = second_neighbors[requirement_id]
+        if not first_set and not second_set:
+            scores.append(1.0)
+        else:
+            scores.append(len(first_set & second_set) / len(first_set | second_set))
+    return sum(scores) / len(scores) if scores else 1.0
+
+
+def top_k_set_stability(
+    first: dict[int, tuple[str, float]],
+    second: dict[int, tuple[str, float]],
+    k: int = 10,
+) -> dict[str, float]:
+    """高频要求集合稳定性：按 canonical 成员数取 Top-K，比较集合 Jaccard。
+
+    canonical 身份 = 成员实例集合（requirement_id 跨运行稳定），不依赖
+    临时 canonical ID；Jaccard < 1 表示有要求因归并波动掉出/进入 Top-K。
+    """
+    def top_k(mapping: dict[int, tuple[str, float]], limit: int) -> set[frozenset[int]]:
+        clusters = _cluster_members(mapping)
+        return {frozenset(members) for members in clusters[:limit]}
+
+    first_top = top_k(first, k)
+    second_top = top_k(second, k)
+    union = first_top | second_top
+    if not union:
+        return {"jaccard": 1.0, "top_count": 0}
+    return {
+        "jaccard": len(first_top & second_top) / len(union),
+        "top_count": min(len(first_top), len(second_top)),
+    }
+
+
 @dataclass(frozen=True)
 class RelationGraphStats:
     """汇总归并关系图的稀疏度与过度生成警戒指标（Warning/Diagnostic）。"""
