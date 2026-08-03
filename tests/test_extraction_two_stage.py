@@ -98,9 +98,6 @@ def judge_payload() -> dict:
     return {
         "role_family": "other",
         "seniority": "unknown",
-        "responsibilities": [
-            {"name": "建设能力甲体系", "evidence": "负责能力甲体系建设"}
-        ],
         "requirements": [
             {
                 "raw_name": "能力甲使用经验",
@@ -153,7 +150,6 @@ def test_judge_prompt_references_stable_rule_ids() -> None:
     for rule_id in (
         "RESP-01",
         "RESP-02",
-        "RESP-06",
         "REQ-01",
         "REQ-02",
         "REQ-06",
@@ -291,11 +287,8 @@ def test_two_stage_extraction_succeeds_with_fake_client() -> None:
     result, raw = extract_job_two_stage(job, client)
 
     assert client.calls == 2
-    assert len(result.responsibilities) == 1
-    assert result.responsibilities[0].name == "建设能力甲体系"
     assert len(result.requirements) == 1
     assert result.requirements[0].raw_name == "能力甲使用经验"
-    assert "responsibilities" in raw
 
 
 def test_discovery_retry_fixes_invalid_response() -> None:

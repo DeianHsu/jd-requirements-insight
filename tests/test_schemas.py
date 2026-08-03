@@ -30,7 +30,6 @@ def extraction_payload(requirements: list[dict[str, object]]) -> dict[str, objec
     return {
         "role_family": "agent_application",
         "seniority": "unknown",
-        "responsibilities": [],
         "requirements": requirements,
     }
 
@@ -81,18 +80,14 @@ def test_year_range_rejects_reversed_bounds() -> None:
         )
 
 
-def test_legacy_years_required_is_loaded_as_min_years() -> None:
-    """验证旧人工标准答案字段仍能读取，但新输出只保留V2字段名。"""
+def test_legacy_years_required_is_rejected() -> None:
+    """验证旧 years_required 字段不再兼容（extra=forbid 拒绝）。"""
     payload = requirement_payload()
     payload.pop("min_years")
     payload["years_required"] = 3
 
-    requirement = RequirementItem.model_validate(payload)
-    serialized = requirement.model_dump(mode="json")
-
-    assert requirement.min_years == 3
-    assert serialized["min_years"] == 3
-    assert "years_required" not in serialized
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        RequirementItem.model_validate(payload)
 
 
 # ---------------------------------------------------------------------------

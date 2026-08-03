@@ -61,9 +61,6 @@ def result_payload() -> dict:
     return {
         "role_family": "other",
         "seniority": "unknown",
-        "responsibilities": [
-            {"name": "建设能力甲体系", "evidence": "负责能力甲体系建设"}
-        ],
         "requirements": [
             {
                 "raw_name": "技术甲",
@@ -206,20 +203,31 @@ def test_contract_reports_unprocessed_block() -> None:
     assert "unprocessed_blocks" in " ".join(contract_hard_gate_failures(contract))
 
 
-def test_contract_reports_type_violation_requirement_block_as_responsibility() -> None:
-    """requirement 块只产出 responsibility 时类型覆盖失败（测试 19）。"""
+def test_contract_reports_type_violation_responsibility_block_produces_requirement() -> None:
+    """responsibility 块产出 requirement 时类型覆盖失败（职责不得误抽为要求）。"""
     payload = result_payload()
-    payload["requirements"] = []
-    payload["responsibilities"].append(
-        {"name": "熟悉技术甲和框架乙", "evidence": "熟悉技术甲和框架乙"}
-    )
+    payload["requirements"] = [
+        {
+            "raw_name": "能力甲体系建设",
+            "category": "other",
+            "importance": "must",
+            "proficiency": "unknown",
+            "group_id": None,
+            "group_logic": "standalone",
+            "min_years": None,
+            "max_years": None,
+            "years_text": None,
+            "evidence": "负责能力甲体系建设",
+            "confidence": 0.9,
+        }
+    ]
     snapshot = make_snapshot(result=payload)
 
     contract = check_contract(
         snapshot.discovery, snapshot.result, RAW_TEXT, identity=full_identity()
     )
     assert contract.type_violations
-    assert "b2" in contract.type_violations[0]
+    assert "b1" in contract.type_violations[0]
     assert "candidate_type_violations" in " ".join(contract_hard_gate_failures(contract))
 
 
@@ -466,20 +474,16 @@ def test_compare_accepts_name_change_with_same_evidence() -> None:
     assert comparison.atomic_item_count_agreement
 
 
-def test_compare_never_pairs_responsibility_with_requirement() -> None:
-    """responsibility 不得和 requirement 配对（测试 19 的配对面）。"""
+def test_compare_requirement_removal_reports_unmatched() -> None:
+    """要求项被删除时报告 unmatched（避免静默接受事实丢失）。"""
     base = make_snapshot()
     payload = result_payload()
-    payload["requirements"] = []
-    payload["responsibilities"].append(
-        {"name": "熟悉技术甲和框架乙", "evidence": "熟悉技术甲和框架乙"}
-    )
+    payload["requirements"] = payload["requirements"][:1]
     variant = make_snapshot(result=payload)
 
     comparison = compare_runs(base, variant)
 
-    # base 的 requirements（2 项）在 variant 中无对应 requirement → unmatched。
-    assert comparison.unmatched_base_count == 2
+    assert comparison.unmatched_base_count == 1
 
 
 def test_compare_anchored_text_replace_alignment() -> None:

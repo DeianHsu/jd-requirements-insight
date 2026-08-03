@@ -53,20 +53,9 @@ DISCOVERY_SYSTEM_PROMPT = """你是招聘JD结构化分析的第一阶段：全�
 # 三级枚举（unknown/basic/advanced），删除旧五级输出说明。
 JUDGE_SYSTEM_PROMPT = """你是招聘JD结构化分析的第二阶段：精细判断。输入是第一阶段的候选块列表（每个块含原文连续证据与归属），请对每个候选块做以下判断并输出完整抽取数据合同JSON。规则编号与 P0-1 语义决策规则对应（docs/annotation/）。
 
-【职责判断（RESP-01～RESP-07）】
-1. RESP-01：只把入职后需要完成的工作抽取为职责；职责中出现的技术只在JD明确要求候选人掌握时才成为要求（否则至多mentioned）。
-2. RESP-02：不同对象、不同交付物或可独立验收的业务结果必须拆成多项；拆分优先于"环节列举概括"，即使多个结果被"全流程自动化"等总结性表达概括，也必须逐项保留。
-3. RESP-03：只有多个动作共同完成同一对象的单一端到端交付、并且拆开后只剩缺少业务含义的通用动作时才合并。
-4. RESP-04：协作对象、使用技术和执行手段通常是实施方式，不单独形成职责，但其承载的交付不能丢失。
-5. RESP-05："如""例如""等"和括号中的内容如果只是上位业务对象的示例，不展开为独立职责。
-6. RESP-06：以"参与/负责/围绕"+同一对象的多个组成部分或环节（如定义、编排、集成、训练、发布、治理，或多个子能力、模块、机制）开头的内容，是同一项研发或建设工作的组成部分，合并为一项概括职责（如"开展XX全生命周期研发""建设XX体系"）；环节列举概括只在列举项属于同一对象的组成部分时适用，不能用来合并不同业务对象。
-7. RESP-07：每项的name使用"动作+对象或结果"的完整简洁表达（一个字符串），只保留动作与核心对象/结果；修饰语和列举内容在evidence中保留，不进入name；不要输出action、object_or_result等结构化子字段。
-8. 正反例（领域中性，按同类结构判断）：
-   - 正："设计、开发与落地同一管理平台"：作用于同一平台和同一端到端结果，整体保留为一项（RESP-03）；
-   - 正："围绕平台的编排、集成、训练、发布和治理等环节开展研发"：概括为一项"开展平台全生命周期研发"，不把每个环节拆成低价值职责（RESP-06）；
-   - 反："设计架构、开发核心代码，实现数据自动化处理"：三者具有不同交付结果，必须拆为三项，不能合并（RESP-02）；
-   - 反："与产品及业务团队协作，构建基础设施"：协作是实施方式，合并为一项"与产品及业务团队协作构建基础设施"（RESP-04）。
-9. evidence必须是最小充分连续原文（EVID-01、EVID-02）。
+【职责边界（RESP-01～RESP-02）】
+1. RESP-01：responsibility 块中的工作内容不是岗位要求，不得从 responsibility 块抽取 requirement；职责中出现的技术只在JD明确要求候选人掌握时才成为要求（否则至多mentioned）。
+2. RESP-02：mixed 块先分离工作部分与条件部分，只把候选人条件部分抽取为 requirement，工作内容不进入 requirement。
 
 【要求原子化（REQ-01～REQ-08）】
 1. REQ-01：只抽取候选人的技能、经验、学历、专业或软能力条件；工资福利、办公地点、招聘者信息、投递提示、公司宣传口号和由常识推断的隐含技能不标注。
@@ -99,23 +88,20 @@ JUDGE_SYSTEM_PROMPT = """你是招聘JD结构化分析的第二阶段：精细�
 5. FIELD-05：不确定的字段使用unknown或null，不得猜测。
 
 【覆盖与证据（COVER-04、EVID-01～EVID-04）】
-1. COVER-04：必须处理所有非excluded候选块；每个实质工作内容都已覆盖为职责/要求或明确排除，不得静默丢弃。
+1. COVER-04：必须处理所有非excluded候选块；每个实质工作内容都已覆盖为要求或明确排除，不得静默丢弃。
 2. EVID-01：每条evidence必须是JD原文中连续出现的最小充分文本，不得改写、拼接或翻译；不得拼接不连续片段。
 3. EVID-02：evidence必须足以支持职责或要求名称及字段判断（重要程度、熟练度、年限）。
 4. EVID-03：多个原子项可以共享同一句证据。
 
-【mixed块】先分离工作部分与条件部分，再分别按上述规则处理。
-
 【岗位信息】role_family与seniority必须直接使用输入中"job_info"字段给出的值，不能省略或置为null，也不要重新判断。
 
 【输出前检查】
-每个实质工作内容都已覆盖为职责或明确排除（COVER-04）；职责没有错误合并或机械拆分；要求没有可继续拆分的并列概念；any_of组成员不少于两个（GROUP-02）；年限上下限未颠倒；每条evidence都能在原文中找到（EVID-01）。
+每个实质工作内容都已覆盖为要求或明确排除（COVER-04）；要求没有可继续拆分的并列概念；any_of组成员不少于两个（GROUP-02）；年限上下限未颠倒；每条evidence都能在原文中找到（EVID-01）。
 
 【输出要求】
-1. 严格按照抽取数据合同的JSON结构输出：responsibilities、requirements、role_family、seniority。
-2. responsibilities中的每一项必须包含name和evidence两个字段。
-3. requirements中的每一项必须包含以下全部字段：raw_name、category、importance、proficiency、group_id、group_logic、min_years、max_years、years_text、evidence、confidence。不要用name替代raw_name，不要省略字段（不适用时用null）。
-4. 不要输出Markdown代码块或额外说明。"""
+1. 严格按照抽取数据合同的JSON结构输出：requirements、role_family、seniority。
+2. requirements中的每一项必须包含以下全部字段：raw_name、category、importance、proficiency、group_id、group_logic、min_years、max_years、years_text、evidence、confidence。不要用name替代raw_name，不要省略字段（不适用时用null）。
+3. 不要输出Markdown代码块或额外说明。"""
 
 
 

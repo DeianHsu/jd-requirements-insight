@@ -6,7 +6,7 @@ from datetime import date
 from enum import StrEnum
 from typing import Any, Self
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class JobDocument(BaseModel):
@@ -126,24 +126,6 @@ class RequirementGroupLogic(StrEnum):
     ANY_OF = "any_of"
 
 
-class ResponsibilityItem(BaseModel):
-    """表示一项岗位职责及其在原始JD中的连续证据文本。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    name: str
-    evidence: str
-
-    @field_validator("name", "evidence")
-    @classmethod
-    def responsibility_must_not_be_blank(cls, value: str) -> str:
-        """拒绝空白职责名称和证据，确保每项职责都可阅读并可追溯。"""
-        cleaned = value.strip()
-        if not cleaned:
-            raise ValueError("不能为空")
-        return cleaned
-
-
 class RequirementItem(BaseModel):
     """表示一项原子岗位要求及其逻辑组、年限范围和可追溯原文证据。"""
 
@@ -155,12 +137,7 @@ class RequirementItem(BaseModel):
     proficiency: ProficiencyLevel = ProficiencyLevel.UNKNOWN
     group_id: str | None = Field(default=None, max_length=100)
     group_logic: RequirementGroupLogic = RequirementGroupLogic.STANDALONE
-    min_years: float | None = Field(
-        default=None,
-        ge=0,
-        le=50,
-        validation_alias=AliasChoices("min_years", "years_required"),
-    )
+    min_years: float | None = Field(default=None, ge=0, le=50)
     max_years: float | None = Field(default=None, ge=0, le=50)
     years_text: str | None = Field(default=None, max_length=100)
     evidence: str
@@ -229,7 +206,6 @@ class JobExtractionResult(BaseModel):
 
     role_family: RoleFamily
     seniority: Seniority
-    responsibilities: list[ResponsibilityItem]
     requirements: list[RequirementItem]
 
     @model_validator(mode="after")
@@ -243,12 +219,3 @@ class JobExtractionResult(BaseModel):
         if invalid_groups:
             raise ValueError(f"any_of组至少需要两个成员：{', '.join(invalid_groups)}")
         return self
-
-
-class GoldenExtractionRecord(BaseModel):
-    """把人工标准答案与原始JD文件名绑定，供自动评测和证据校验使用。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    source_file: str
-    extraction: JobExtractionResult

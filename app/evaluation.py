@@ -1,7 +1,4 @@
-"""该模块提供抽取结果比较的确定性名称相似度工具（仅被 extraction_validation 引用）。
-
-旧人工标准答案评测（Gold/F1）与旧评测方法不再维护，历史由 Git 保存。
-"""
+"""该模块提供抽取结果比较的确定性名称相似度工具（仅被 extraction_validation 引用）。"""
 
 from __future__ import annotations
 
@@ -9,7 +6,7 @@ import re
 import unicodedata
 from difflib import SequenceMatcher
 
-from app.schemas import RequirementItem, ResponsibilityItem
+from app.schemas import RequirementItem
 
 
 def normalize_item_label(text: str) -> str:
@@ -18,9 +15,9 @@ def normalize_item_label(text: str) -> str:
     return re.sub(r"[^0-9a-z+#.\u4e00-\u9fff]", "", normalized)
 
 
-def item_label(item: RequirementItem | ResponsibilityItem) -> str:
-    """统一取得要求的raw_name或职责的name，供同一匹配算法处理。"""
-    return item.raw_name if isinstance(item, RequirementItem) else item.name
+def item_label(item: RequirementItem) -> str:
+    """统一取得要求的raw_name，供同一匹配算法处理。"""
+    return item.raw_name
 
 
 def item_name_similarity(expected: str, predicted: str) -> float:

@@ -5,7 +5,6 @@ from app.schemas import (
     RequirementCategory,
     RequirementImportance,
     RequirementItem,
-    ResponsibilityItem,
 )
 
 
@@ -33,13 +32,11 @@ def test_item_name_similarity_tolerates_whitespace_and_case() -> None:
     assert item_name_similarity("  Python ", "python") == 1.0
 
 
-def test_item_label_extracts_raw_name_or_name() -> None:
-    """要求项取 raw_name，职责项取 name。"""
+def test_item_label_extracts_raw_name() -> None:
+    """要求项取 raw_name。"""
     requirement = make_requirement("技术甲")
-    responsibility = ResponsibilityItem(name="建设能力甲体系", evidence="负责能力甲体系建设")
 
     assert item_label(requirement) == "技术甲"
-    assert item_label(responsibility) == "建设能力甲体系"
 
 
 def test_item_name_similarity_returns_zero_for_empty() -> None:

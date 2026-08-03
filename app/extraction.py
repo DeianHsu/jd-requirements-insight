@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker, selectinload
 
 from app.config import LLMSettings
-from app.models import JobDescription, JobExtraction, JobRequirement, JobResponsibility
+from app.models import JobDescription, JobExtraction, JobRequirement
 from app.schemas import JobExtractionResult
 
 # 当前唯一抽取配置：v0.8 + Schema V3（两段式，三级熟练度）。
@@ -166,18 +166,13 @@ def normalize_evidence(text: str) -> str:
 
 
 def validate_evidence(result: JobExtractionResult, raw_text: str) -> None:
-    """确认每条职责和要求的证据都连续存在于原始JD中，阻止无依据结果入库。"""
+    """确认每条要求的证据都连续存在于原始JD中，阻止无依据结果入库。"""
     normalized_source = normalize_evidence(raw_text)
     missing = []
 
-    # 职责和要求统一执行证据落地检查，避免只约束技能而遗漏职责幻觉。
-    for label, items in (
-        ("responsibility", result.responsibilities),
-        ("requirement", result.requirements),
-    ):
-        for index, item in enumerate(items):
-            if normalize_evidence(item.evidence) not in normalized_source:
-                missing.append(f"{label}[{index}]证据不在JD原文中：{item.evidence}")
+    for index, item in enumerate(result.requirements):
+        if normalize_evidence(item.evidence) not in normalized_source:
+            missing.append(f"requirement[{index}]证据不在JD原文中：{item.evidence}")
 
     if missing:
         raise ExtractionError("；".join(missing))
@@ -212,7 +207,7 @@ def persist_extraction(
     if existing is not None:
         return existing, False
 
-    # 先创建抽取主记录并flush获得ID，再关联职责和要求子记录。
+    # 先创建抽取主记录并flush获得ID，再关联要求子记录。
     extraction = JobExtraction(
         job_id=job.id,
         extractor_version=metadata.extractor_version,
@@ -226,10 +221,6 @@ def persist_extraction(
     session.add(extraction)
     session.flush()
 
-    extraction.responsibilities.extend(
-        JobResponsibility(name=item.name, evidence=item.evidence)
-        for item in result.responsibilities
-    )
     extraction.requirements.extend(
         JobRequirement(
             raw_name=item.raw_name,
@@ -303,13 +294,12 @@ def extract_jobs(
 
 
 def list_extractions(session_factory: sessionmaker[Session]) -> list[JobExtraction]:
-    """返回包含职责、要求和原始JD关系的全部抽取结果。"""
+    """返回包含要求和原始JD关系的全部抽取结果。"""
     with session_factory() as session:
         statement = (
             select(JobExtraction)
             .options(
                 selectinload(JobExtraction.job),
-                selectinload(JobExtraction.responsibilities),
                 selectinload(JobExtraction.requirements),
             )
             .order_by(JobExtraction.id)

@@ -225,8 +225,8 @@ def check_payload_schema(
 ) -> tuple[bool, list[str], list[str]]:
     """检查模型原始输出是否符合抽取数据合同，返回（合法、全部错误、逻辑组错误）。
 
-    旧 Schema V2 五级 proficiency 值经 RequirementItem 校验器确定性映射，
-    不会因为旧值导致合同误判。
+    旧 Schema V2 五级 proficiency 值会被 RequirementItem 校验器明确拒绝，
+    并提示用 v0.8 重新抽取。
     """
     try:
         JobExtractionResult.model_validate(payload)
@@ -242,7 +242,6 @@ def check_payload_schema(
 def _result_items(result: JobExtractionResult) -> list[tuple[str, int, Any]]:
     """返回带类型标签和索引的输出项列表，供块归属与配对使用。"""
     return [
-        *[("responsibility", index, item) for index, item in enumerate(result.responsibilities)],
         *[("requirement", index, item) for index, item in enumerate(result.requirements)],
     ]
 
@@ -295,9 +294,9 @@ def check_contract(
 
     coverage = check_discovery_coverage(discovery, raw_text)
 
-    # 类型化候选块覆盖：responsibility 块必须产出 responsibility；
-    # requirement 块必须产出 requirement；mixed 块允许两者并记录实际产出；
-    # excluded 块不得产出 must/preferred requirement。
+    # 类型化候选块覆盖：requirement 块必须产出 requirement；
+    # responsibility 块不得产出 requirement（职责不得误抽为候选人要求）；
+    # excluded 块不得产出 must/preferred requirement；mixed 块允许产出。
     items = _result_items(result)
     active_blocks = [block for block in discovery.blocks if block.kind != "excluded"]
     produced_kinds: dict[str, list[str]] = {}
@@ -318,15 +317,15 @@ def check_contract(
                         f"{block.block_id} 从排除内容产出 {item.importance.value} 要求"
                     )
             continue
+        if block.kind == "responsibility":
+            if block_items:
+                type_violations.append(
+                    f"{block.block_id} 是 responsibility 块但产出了 requirement"
+                )
+            continue
         if not block_items:
             unprocessed_blocks.append(block.block_id)
             continue
-        if block.kind == "responsibility" and not any(
-            entry[0] == "responsibility" for entry in block_items
-        ):
-            type_violations.append(
-                f"{block.block_id} 是 responsibility 块但未产出 responsibility"
-            )
         if block.kind == "requirement" and not any(
             entry[0] == "requirement" for entry in block_items
         ):
@@ -590,7 +589,7 @@ def _pair_items(
     """重新设计配对：类型隔离 → evidence 锚点分组 → 组内确定性一对一最佳匹配。
 
     返回的索引是传入列表的位置索引；不按列表顺序 zip；输出顺序变化不产生
-    假漂移；responsibility 与 requirement 永不配对。
+    假漂移。
     """
     base_by_type: dict[str, list[tuple[int, tuple[str, int, Any]]]] = {}
     variant_by_type: dict[str, list[tuple[int, tuple[str, int, Any]]]] = {}
@@ -878,9 +877,8 @@ def compare_runs(
         variant_block_count=len(variant_blocks),
         aligned_block_count=len(pairs),
         block_alignment_rate=len(pairs) / len(base_blocks) if base_blocks else 0.0,
-        base_item_count=len(base.result.responsibilities) + len(base.result.requirements),
-        variant_item_count=len(variant.result.responsibilities)
-        + len(variant.result.requirements),
+        base_item_count=len(base.result.requirements),
+        variant_item_count=len(variant.result.requirements),
         base_requirement_count=len(base.result.requirements),
         variant_requirement_count=len(variant.result.requirements),
     )
@@ -1279,8 +1277,8 @@ def check_scenario_properties(
 class ExtractionAcceptanceReport:
     """机器可读验收报告：hard gates / warnings / diagnostics 分级。
 
-    phase：pilot（检查流程、收集指标，不产生批准结论）或 acceptance
-    （使用已冻结的规则、范围与阈值，可用于批准当前版本）。
+    人工直接根据报告判断当前抽取方案是否可以进入下游，不开发额外
+    批准系统。
     """
 
     identity: dict[str, str]
@@ -1288,34 +1286,21 @@ class ExtractionAcceptanceReport:
     warnings: list[str]
     diagnostics: list[str]
     run_count: int = 0
-    phase: str = "pilot"
 
     @property
     def passed(self) -> bool:
         """全部 hard gate 通过才算整体通过。"""
         return not self.hard_gate_failures
 
-    @property
-    def decision_eligible(self) -> bool:
-        """恒为 False：人工审计与阈值冻结接入前，脚本不自动授予批准资格。
-
-        脚本只计算自动 hard gate（passed）；最终批准由人工汇总步骤确认
-        （Track A passed + Track B passed + human audit completed +
-        threshold decision recorded，见 reports/templates/final-review.md）。
-        """
-        return False
-
     def to_dict(self) -> dict[str, Any]:
         """序列化为不含私有 JD 内容的机器可读字典。"""
         return {
             "identity": self.identity,
-            "phase": self.phase,
             "run_count": self.run_count,
             "hard_gate_failures": self.hard_gate_failures,
             "warnings": self.warnings,
             "diagnostics": self.diagnostics,
             "passed": self.passed,
-            "decision_eligible": self.decision_eligible,
         }
 
     def to_json(self) -> str:
@@ -1406,9 +1391,9 @@ def build_acceptance_report(
     scenario_failures: list[str] | None = None,
     run_count: int = 0,
 ) -> ExtractionAcceptanceReport:
-    """组装分级验收报告；多次运行 agreement 第一版只作 warning。
+    """组装分级验收报告；多次运行 agreement 只作 warning。
 
-    注意：验收脚本必须显式汇总各场景与合同报告，不得先以 contract=None
+    注意：验证脚本必须显式汇总各场景与合同报告，不得先以 contract=None
     构造再覆盖失败结果；本函数供独立工具与测试使用。
     """
     hard_gate_failures = (

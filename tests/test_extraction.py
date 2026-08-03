@@ -18,7 +18,7 @@ from app.extraction import (
     persist_extraction,
     validate_evidence,
 )
-from app.models import JobDescription, JobExtraction, JobRequirement, JobResponsibility
+from app.models import JobDescription, JobExtraction, JobRequirement
 from app.schemas import JobExtractionResult
 
 
@@ -81,9 +81,6 @@ def valid_payload(evidence: str = "熟悉 Python 和 RAG。") -> dict[str, objec
     return {
         "role_family": "rag_application",
         "seniority": "junior",
-        "responsibilities": [
-            {"name": "开发RAG应用", "evidence": "负责知识库问答系统开发。"}
-        ],
         "requirements": [
             {
                 "raw_name": "Python",
@@ -254,16 +251,12 @@ def test_persist_extraction_is_idempotent(tmp_path: Path) -> None:
 
     with session_factory() as session:
         extraction_count = session.scalar(select(func.count()).select_from(JobExtraction))
-        responsibility_count = session.scalar(
-            select(func.count()).select_from(JobResponsibility)
-        )
         requirement_count = session.scalar(select(func.count()).select_from(JobRequirement))
 
     assert first.id == second.id
     assert first_created is True
     assert second_created is False
     assert extraction_count == 1
-    assert responsibility_count == 1
     assert requirement_count == 2
     engine.dispose()
 
