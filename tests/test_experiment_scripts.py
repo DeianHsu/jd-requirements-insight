@@ -1,5 +1,6 @@
 """该模块验证实验脚本导入安全性、私有输出边界和真实调用显式确认。"""
 
+import json
 import sys
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from app.schemas import (
     Seniority,
 )
 from scripts.experiments.p0_3 import evaluate_two_stage_results
+from scripts.experiments.p0_3 import run_acceptance
 from scripts.experiments.p0_3 import run_two_stage_extraction
 
 VALIDATION_CASE = {
@@ -162,3 +164,92 @@ def test_two_stage_evaluation_reports_oversplit_cases() -> None:
         {"jd_test.md": _prediction(["Python", "Go", "Rust"])},
     )
     assert "| case_test_001 | requirements | 2 | 3 | 否 | 0 | 1 | - |" in report
+
+
+def test_acceptance_script_requires_explicit_execute(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """验证验收脚本默认不调用外部模型，必须显式--execute。"""
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_acceptance", "--scenarios", str(tmp_path / "missing.json")],
+    )
+    # 场景文件缺失时先报错退出，不涉及模型调用。
+    assert run_acceptance.main() == 1
+
+    scenarios = tmp_path / "scenarios.json"
+    scenarios.write_text(
+        json.dumps(
+            {
+                "protocol_version": "1.0",
+                "scenarios": [
+                    {
+                        "scenario_id": "SCN-TEST",
+                        "rule_ids": ["REQ-02"],
+                        "base_input": "熟悉技术甲。",
+                        "transformation": {
+                            "type": "text_replace",
+                            "replacements": [{"find": "熟悉", "replace": "精通"}],
+                        },
+                        "expected_properties": {"fact_set_preserved": True},
+                        "forbidden_violations": [],
+                        "severity": "medium",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_acceptance", "--scenarios", str(scenarios)],
+    )
+    assert run_acceptance.main() == 2
+    output = capsys.readouterr().out
+    assert "--execute" in output
+    assert "未调用模型" in output
+
+
+def test_acceptance_script_defaults_keep_raw_results_private(
+    monkeypatch,
+) -> None:
+    """验证验收脚本默认原始结果留在私有目录，报告进入实验报告目录。"""
+    assert run_acceptance.DEFAULT_SCENARIOS_PATH == Path(
+        "data/rule_scenarios/extraction_metamorphic_cases.json"
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_acceptance",
+            "--report-dir",
+            "reports/P0-3",
+            "--raw-output-dir",
+            "data/private/experiments/p0_3",
+        ],
+    )
+    args = run_acceptance.parse_args()
+    assert args.raw_output_dir.is_relative_to(Path("data/private/experiments"))
+    assert args.report_dir.is_relative_to(Path("reports"))
+
+
+def test_acceptance_script_supports_independent_runs_and_run_tag(
+    monkeypatch,
+) -> None:
+    """验证--runs与--run-tag参数可解析，保证多次运行独立文件不覆盖历史。"""
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_acceptance",
+            "--runs",
+            "3",
+            "--run-tag",
+            "acceptance-test-run",
+        ],
+    )
+    args = run_acceptance.parse_args()
+    assert args.runs == 3
+    assert args.run_tag == "acceptance-test-run"
