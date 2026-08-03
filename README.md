@@ -66,18 +66,12 @@ python -m app.cli list-jds
 
 导入操作是幂等的：同一份JD重复执行时会按正文内容哈希跳过，不会重复写入数据库。
 
-## 结构化抽取与评测
+## 结构化抽取
 
-准备自己的JD和人工标注数据后，可以校验人工标准答案及其中的原文证据：
-
-```powershell
-python -m app.cli validate-golden data\golden\jd_extractions data\raw_jds
-```
-
-在 `.env` 中配置 `LLM_API_KEY`、`LLM_BASE_URL` 和 `LLM_MODEL` 后执行：
+在 `.env` 中配置 `LLM_API_KEY`、`LLM_BASE_URL` 和 `LLM_MODEL` 后执行（当前唯一抽取配置：v0.8 + Schema V3）：
 
 ```powershell
-# Prompt开发默认最多抽取3份JD，避免一次修改触发全量调用
+# 开发默认最多抽取3份JD，避免一次修改触发全量调用
 python -m app.cli extract-jds
 
 # 针对性调试可指定一个或多个JD；正式回归才显式抽取全部JD
@@ -85,16 +79,10 @@ python -m app.cli extract-jds --job-id 1 --job-id 3
 python -m app.cli extract-jds --all
 
 python -m app.cli list-extractions
-python -m app.cli evaluate-extractions data\golden\jd_extractions
-
-# 使用自己的困难样例文件比较指定抽取版本的分层指标（legacy protocol，仅历史比较）
-python -m app.cli evaluate-cases <annotation_cases.json> `
-  --prompt-version 2.3.1 --schema-version 2.0 --model <模型名称> `
-  --split development
 ```
 
 相同JD使用相同抽取器版本（模型、Prompt和抽取数据合同版本）重复抽取时会自动跳过，避免重复结果污染数据库。
-`evaluate-cases`默认只显示前10条错误摘要，可使用`--max-issues`调整；完整模型JSON保存在本地数据库中，不在终端默认输出。
+旧 Schema（非 V3）数据会被明确拒绝并要求用 v0.8 重新抽取，不会混入归并与统计。
 
 ## 跨JD要求归并与离线验证
 

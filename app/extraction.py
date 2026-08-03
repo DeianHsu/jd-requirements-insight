@@ -186,7 +186,7 @@ def validate_evidence(result: JobExtractionResult, raw_text: str) -> None:
 def extract_job(
     job: JobDescription, client: ExtractionClient, max_attempts: int = 2
 ) -> tuple[JobExtractionResult, dict[str, object]]:
-    """使用当前正式抽取流程（两段式 v0.6）抽取单份JD，并在校验失败时有限重试。
+    """使用当前正式抽取流程（两段式 v0.8 + Schema V3）抽取单份JD，并在校验失败时有限重试。
 
     延迟导入两段式实现以避免与 app/extraction_two_stage.py 的模块级循环依赖。
     """

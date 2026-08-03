@@ -13,12 +13,20 @@
 ## 阶段分层（pilot / acceptance）
 
 ```text
-pilot:      检查流程、收集指标，不产生批准结论（decision_eligible=False）
-acceptance: 使用已冻结的规则、范围与阈值，仅在无 hard gate 失败时
-            decision_eligible=True，可用于批准当前版本
+pilot:      检查流程、收集指标（脚本只算自动 hard gate：passed）
+acceptance: 使用已冻结的规则、范围与阈值；decision_eligible 恒为 False
 ```
 
+**批准须人工汇总确认（DEC-018）**：脚本只计算自动 hard gate（`passed`）；
+`decision_eligible` 恒为 False。最终批准由人工汇总记录
+（`reports/templates/final-review.md`：Track A passed + Track B passed +
+human audit completed + threshold decision recorded）确认后输出。
+
 报告至少记录：`phase`、`prompt_version`、`schema_version`、`protocol_version`、scenario fingerprint（Track A）/ JD set fingerprint（Track B）、`runs`、hard gate failures、`decision_eligible`。
+
+**轻量运行建议（DEC-018）**：Track A 全场景各跑 base+transformed 一次收集
+规则基线；随机稳定性只挑 3～4 个高风险场景用 `--scenarios` 子集各重复
+3 次；真实 JD（Track B）5 份各重复 2～3 次。
 
 ## Track A：合成规则场景验收（run_acceptance.py）
 
@@ -32,7 +40,8 @@ python -m scripts.experiments.p0_3.run_acceptance
 # Pilot（真实模型，检查流程与收集指标；不产生批准结论）
 python -m scripts.experiments.p0_3.run_acceptance --execute --phase pilot
 
-# Acceptance（使用已冻结的规则/范围/阈值；可批准当前版本）
+# Acceptance（使用已冻结的规则/范围/阈值；decision_eligible 恒 False，
+# 最终批准由 final-review.md 人工汇总确认）
 python -m scripts.experiments.p0_3.run_acceptance --execute --phase acceptance `
   --run-tag acceptance-v08-run1
 ```

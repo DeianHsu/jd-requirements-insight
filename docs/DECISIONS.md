@@ -24,6 +24,7 @@
 | DEC-015 | 抽取层取消完整人工 Gold，改为数据合同 + 规则化验证 + 人工违规审计 | 已采纳 |
 | DEC-016 | 熟练度从五级收缩为三级（unknown/basic/advanced），原始措辞由 evidence 保留 | 已采纳 |
 | DEC-017 | 单版本收敛：v0.8 + Schema V3 唯一实现；P0-4B 移出默认流程为实验功能 | 已采纳 |
+| DEC-018 | P0-5 并入 P0-3/P0-4/P0-10；P0-4B 冻结；批准须人工汇总确认 | 已采纳 |
 
 ## DEC-001：产品定位为岗位要求洞察，而不是简历匹配打分器
 
@@ -828,3 +829,58 @@ runs/hard gate failures/decision_eligible。
 当 v0.8 完成 acceptance 阶段验收并获批后，不再需要本决策的“唯一实现”
 约束之外的版本选择；若未来需要区分程度更细的熟练度或恢复层级关系默认
 运行，须用户裁决并重新冻结验收口径。
+
+## DEC-018：收敛验收与冻结（P0-5 并入、P0-4B 冻结、批准须人工汇总确认）
+
+### 问题
+
+外部审核发现：验收脚本仍可能以旧抽取版本运行、P0-4A/P0-4B 共用一组最终
+通过条件、`decision_eligible` 只按 `--phase` 标签判定而并未绑定冻结阈值与
+人工审计、Track B 仍读取已淘汰的 v0.6 结果做对比，且 Track B 成功路径存在
+一个真实运行必触发的类型错误；同时 P0-5 作为独立阶段已与 P0-3/P0-4 职责
+重叠，P0-4B 层级关系被证实非统计必需且不稳定。
+
+### 决策
+
+1. **修复硬问题**：Track B `requirement_count` 类型错误修复；删除 Track B
+   中 v0.6 diagnostic 对比（已淘汰方案不再进入当前运行代码）；P0-4 验收
+   默认使用 v0.8 + Schema V3 并拒绝非 Schema V3 输入；验收脚本增加端到端
+   测试（Track B 成功路径、P0-4A 完整验收、统计投影独立 JD 计数）。
+2. **P0-4A/P0-4B 验收彻底分开**：`scripts/experiments/p0_4/run_acceptance.py`
+   新增 `--track p0-4a|p0-4b`：P0-4A 只验收事实归并（不调用关系轮），
+   新聚类指标（同簇对 Jaccard、合并 P/R/F1、singleton/canonical 漂移、
+   邻居稳定性、Top-cluster 成员集合稳定性）接入报告与 warning；P0-4B 作为
+   实验验收模式，其 edge Jaccard/方向一致率/稀疏度门槛只作用于自身，失败
+   不影响 P0-4A 状态。
+3. **P0-4B 冻结**：不删除历史代码、不继续优化关系 Prompt、不再作为正式
+   验收门槛、不进入报告 MVP；P0-6 统计与 P0-10 报告完成后再评估其价值。
+4. **批准须人工汇总确认**：`decision_eligible` 恒为 False；脚本只计算自动
+   hard gate（`passed`）；最终批准由人工汇总记录
+   （`reports/templates/final-review.md`：Track A passed + Track B passed +
+   human audit completed + threshold decision recorded）确认后输出。
+5. **P0-5 并入**：不再作为独立开发阶段；抽取质量验证并入 P0-3、归并质量
+   验证并入 P0-4、报告质量摘要并入 P0-10；旧评测能力（Gold/F1、legacy CLI）
+   已移除，历史由 Git 保存。
+6. **Top-K 指标更名**：`top_k_set_stability` 更名为
+   `top_cluster_membership_stability`（按实例数排序，不等同市场 Top-K）；
+   P0-6 统计投影完成后另行实现按 distinct job count 的 Top-K stability。
+7. **验收精简方向**：Track A 随机稳定性只挑高风险场景重复（脚本支持
+   `--scenarios` 子集与 `--runs`），不要求全部场景承担多次运行；不继续
+   扩建"验收系统的验收系统"，优先让数据流到 P0-6 统计与 P0-10 报告。
+
+### 主要取舍
+
+- 用"人工汇总确认"替代自动批准状态机：少一层协议、多一次人类负责的确认；
+- 用"冻结 P0-4B"替代继续优化：把资源留给统计与报告闭环；
+- 文档职责收窄（PROJECT_PLAN 只维护状态、P0-X.md 只维护接口与验收标准、
+  DECISIONS 只记录为什么、README 只写如何运行），减少重复维护成本。
+
+### 结果与证据
+
+全量 210 项测试与 Ruff 通过；端到端测试覆盖 Track B 成功路径与 P0-4A 完整
+验收；`reports/templates/final-review.md` 作为批准汇总模板。
+
+### 复审条件
+
+P0-6 统计与 P0-10 报告闭环完成后，由用户裁决是否解冻 P0-4B、是否恢复
+更细粒度熟练度或是否需要新的验收分层。
