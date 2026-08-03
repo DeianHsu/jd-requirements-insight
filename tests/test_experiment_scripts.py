@@ -2,11 +2,13 @@
 
 import json
 import sys
+from datetime import date
 from pathlib import Path
 
 import pytest
 
-
+from app.database import create_database_engine, create_session_factory, initialize_database
+from app.models import JobDescription
 from scripts.experiments.p0_3 import run_acceptance
 from scripts.experiments.p0_3 import run_real_jd_acceptance
 
@@ -201,17 +203,27 @@ def test_acceptance_script_phase_defaults_to_pilot(monkeypatch, tmp_path) -> Non
     assert run_acceptance.parse_args().phase == "pilot"
 
 
-def test_acceptance_phase_is_decision_eligible_only_when_acceptance(monkeypatch, tmp_path, capsys) -> None:
-    """acceptance 阶段且无 hard gate 失败时 decision_eligible=True；pilot 恒 False。"""
+def test_acceptance_phase_decision_eligible_requires_human_review(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """decision_eligible 恒为 False：批准须经人工汇总确认（阈值冻结+审计）。"""
     from app.extraction_validation import ExtractionAcceptanceReport
 
+    # 即使 acceptance 阶段且无 hard gate 失败，也绝不自动授予批准资格。
     assert ExtractionAcceptanceReport(identity={}, hard_gate_failures=[], warnings=[], diagnostics=[]).decision_eligible is False
     assert ExtractionAcceptanceReport(
         identity={}, hard_gate_failures=[], warnings=[], diagnostics=[], phase="acceptance"
-    ).decision_eligible is True
-    assert ExtractionAcceptanceReport(
-        identity={}, hard_gate_failures=["x"], warnings=[], diagnostics=[], phase="acceptance"
     ).decision_eligible is False
+    assert ExtractionAcceptanceReport(
+        identity={}, hard_gate_failures=[], warnings=[], diagnostics=[], phase="acceptance"
+    ).passed is True  # passed 只表示自动 hard gate 通过
+
+    # 最终批准由人工汇总步骤确认（final-review 模板字段）。
+    template = Path("reports/templates/final-review.md")
+    assert template.exists()
+    content = template.read_text(encoding="utf-8")
+    for marker in ("Track A passed", "Track B passed", "human audit completed", "threshold decision recorded"):
+        assert marker in content
 
 
 
@@ -342,3 +354,134 @@ def test_audit_template_exists() -> None:
         "reviewed_at",
     }
     assert required <= set(template["audit_fields"])
+
+def test_track_b_success_path_generates_full_report(monkeypatch, tmp_path) -> None:
+    """Track B 成功路径端到端：假 LLM → 完整报告。
+
+    覆盖审核发现的 requirement_count 类型错误（列表被 sum 相加会 TypeError）
+    与 decision_eligible 恒 False。
+    """
+    database_path = tmp_path / "track_b.db"
+    engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
+    try:
+        initialize_database(engine)
+        session_factory = create_session_factory(engine)
+        with session_factory() as session:
+            session.add(
+                JobDescription(
+                    source_hash="a" * 64,
+                    source_file="job-a.md",
+                    source_type="test",
+                    collected_at=date(2026, 8, 3),
+                    company="示例公司",
+                    title="示例岗位",
+                    company_type="medium_company",
+                    tags=[],
+                    extra_metadata={},
+                    raw_text="# 示例岗位\n\n负责能力甲体系建设。\n\n熟悉技术甲。",
+                )
+            )
+            session.commit()
+    finally:
+        engine.dispose()
+
+    class FakeSettings:
+        model = "test-model"
+        api_key = "test-key"
+        base_url = None
+
+        def missing_fields(self) -> list[str]:
+            return []
+
+    class FakeExtractionClient:
+        def __init__(self, settings) -> None:
+            pass
+
+        def complete(self, system_prompt: str, user_prompt: str) -> str:
+            if "全局发现" in system_prompt:
+                return json.dumps(
+                    {
+                        "role_family": "other",
+                        "seniority": "unknown",
+                        "blocks": [
+                            {"block_id": "b0", "sentence_indexes": [0],
+                             "kind": "excluded",
+                             "source_span": "# 示例岗位",
+                             "note": "标题"},
+                            {"block_id": "b1", "sentence_indexes": [1],
+                             "kind": "responsibility",
+                             "source_span": "负责能力甲体系建设",
+                             "note": "工作内容"},
+                            {"block_id": "b2", "sentence_indexes": [2],
+                             "kind": "requirement",
+                             "source_span": "熟悉技术甲",
+                             "note": "候选人条件"},
+                        ],
+                    },
+                    ensure_ascii=False,
+                )
+            return json.dumps(
+                {
+                    "role_family": "other",
+                    "seniority": "unknown",
+                    "responsibilities": [
+                        {"name": "建设能力甲体系",
+                         "evidence": "负责能力甲体系建设"}
+                    ],
+                    "requirements": [
+                        {
+                            "raw_name": "技术甲",
+                            "category": "programming_language",
+                            "importance": "must",
+                            "proficiency": "basic",
+                            "group_id": None,
+                            "group_logic": "standalone",
+                            "min_years": None,
+                            "max_years": None,
+                            "years_text": None,
+                            "evidence": "熟悉技术甲",
+                            "confidence": 0.9,
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            )
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_real_jd_acceptance",
+            "--database-url",
+            f"sqlite:///{database_path.as_posix()}",
+            "--job-ids",
+            "1",
+            "--execute",
+            "--runs",
+            "3",
+            "--report-dir",
+            str(tmp_path / "reports"),
+            "--raw-output-dir",
+            str(tmp_path / "raw"),
+        ],
+    )
+    monkeypatch.setattr(
+        run_real_jd_acceptance, "load_llm_settings", lambda: FakeSettings()
+    )
+    monkeypatch.setattr(
+        run_real_jd_acceptance,
+        "OpenAICompatibleExtractionClient",
+        FakeExtractionClient,
+    )
+
+    assert run_real_jd_acceptance.main() == 0
+
+    report_path = next((tmp_path / "reports").glob("*-report.json"))
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["passed"] is True
+    assert report["decision_eligible"] is False
+    assert report["jobs"][0]["requirement_count"] == 1
+    assert isinstance(report["jobs"][0]["requirement_count"], int)
+    assert "jd_set_fingerprint" in report["identity"]
+    raw_files = list((tmp_path / "raw").glob("*-raw.json"))
+    assert raw_files

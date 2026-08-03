@@ -1297,12 +1297,13 @@ class ExtractionAcceptanceReport:
 
     @property
     def decision_eligible(self) -> bool:
-        """仅 acceptance 阶段且无 hard gate 失败时才可用于批准当前版本。
+        """恒为 False：人工审计与阈值冻结接入前，脚本不自动授予批准资格。
 
-        阈值冻结（多次运行稳定性等）由用户在 acceptance 前完成；本字段
-        只表达"流程与 hard gates 是否允许作出批准结论"。
+        脚本只计算自动 hard gate（passed）；最终批准由人工汇总步骤确认
+        （Track A passed + Track B passed + human audit completed +
+        threshold decision recorded，见 reports/templates/final-review.md）。
         """
-        return self.phase == "acceptance" and self.passed
+        return False
 
     def to_dict(self) -> dict[str, Any]:
         """序列化为不含私有 JD 内容的机器可读字典。"""

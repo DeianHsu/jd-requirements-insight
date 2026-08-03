@@ -52,7 +52,7 @@ from app.extraction_validation import (
     compute_input_fingerprint,
     contract_hard_gate_failures,
 )
-from app.models import JobDescription, JobExtraction, JobRequirement
+from app.models import JobDescription
 
 
 def parse_args() -> argparse.Namespace:
@@ -171,42 +171,6 @@ def _snapshot_payload(snapshot: RunSnapshot) -> dict[str, Any]:
         ),
         "result": snapshot.result.model_dump(mode="json"),
         "raw_text": snapshot.raw_text,
-    }
-
-
-def _v06_diagnostic_counts(session_factory, job_ids: list[int]) -> dict[str, Any]:
-    """读取 v0.6 抽取结果做 diagnostic 对比（只读统计，不调用模型）。"""
-    with session_factory() as session:
-        extractions = list(
-            session.scalars(
-                select(JobExtraction).where(
-                    JobExtraction.job_id.in_(job_ids),
-                    JobExtraction.prompt_version == "0.6",
-                )
-            )
-        )
-    if not extractions:
-        return {"available": False}
-    extraction_ids = [extraction.id for extraction in extractions]
-    with session_factory() as session:
-        requirements = list(
-            session.scalars(
-                select(JobRequirement).where(
-                    JobRequirement.extraction_id.in_(extraction_ids)
-                )
-            )
-        )
-    requirement_counts: dict[str, int] = Counter()
-    proficiency_counts: Counter[str] = Counter()
-    for requirement in requirements:
-        requirement_counts[requirement.extraction_id] += 1
-        proficiency_counts[requirement.proficiency] += 1
-    return {
-        "available": True,
-        "extractor_version": extractions[0].extractor_version,
-        "requirement_count_by_extraction": dict(requirement_counts),
-        "total_requirements": len(requirements),
-        "proficiency_counts_raw": dict(proficiency_counts),
     }
 
 
@@ -410,7 +374,7 @@ def main() -> int:
                 "hard_gate_failures": sorted(set(job_hard)),
                 "diagnostics": job_diagnostics,
                 "stability": stability,
-                "requirement_count": snapshots[0].result.requirements
+                "requirement_count": len(snapshots[0].result.requirements)
                 if snapshots
                 else 0,
                 "proficiency_counts": dict(proficiency_counts),
@@ -418,28 +382,11 @@ def main() -> int:
         )
         hard_gate_failures.extend(job_hard)
 
-    # 与 v0.6 的 diagnostic 对比（只读统计，不把 v0.6 当标准答案）。
-    job_ids = [job.id for job in jobs]
-    v06 = _v06_diagnostic_counts(session_factory, job_ids)
     candidate_total = sum(
         report["requirement_count"] for report in job_reports
     )
     diagnostics.append(f"candidate_requirement_total={candidate_total}")
-    if v06.get("available"):
-        v06_total = v06["total_requirements"]
-        diagnostics.append(
-            f"v06_requirement_total={v06_total} "
-            f"delta={candidate_total - v06_total}（diagnostic，非标准答案）"
-        )
-        diagnostics.append(
-            f"v06_proficiency_counts={v06['proficiency_counts_raw']}（五级原值）"
-        )
-        diagnostics.append(
-            f"p0_4_input_instances: v0.6={v06_total} candidate={candidate_total} "
-            "（只读统计，未执行归并）"
-        )
-    else:
-        diagnostics.append("v06_对比：数据库无 v0.6 抽取结果，跳过")
+    diagnostics.append("p0_4_input_instances: 以 v0.8 抽取结果重新验收为准（只读统计，未执行归并）")
 
     identity = {
         "model": metadata.model_name,
@@ -458,7 +405,11 @@ def main() -> int:
     hard_gate_failures = sorted(set(hard_gate_failures))
     warnings = sorted(set(warnings))
     diagnostics = sorted(set(diagnostics))
-    decision_eligible = args.phase == "acceptance" and not hard_gate_failures
+    # decision_eligible 在人工审计与阈值冻结真正接入前恒为 False：
+    # 脚本只计算自动 hard gate（passed），最终批准由人工汇总步骤确认
+    # （Track A passed + Track B passed + human audit completed +
+    #  threshold decision recorded，见 reports/templates/final-review.md）。
+    decision_eligible = False
     payload = {
         "identity": identity,
         "track": "B",

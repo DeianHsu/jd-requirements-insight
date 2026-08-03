@@ -675,7 +675,10 @@ def main() -> int:
     hard_gate_failures = sorted(set(hard_gate_failures))
     warnings = sorted(set(warnings))
     diagnostics = sorted(set(diagnostics))
-    decision_eligible = args.phase == "acceptance" and not hard_gate_failures
+    # decision_eligible 在人工审计与阈值冻结真正接入前恒为 False：
+    # 脚本只计算自动 hard gate（passed），最终批准由人工汇总步骤确认
+    # （见 reports/templates/final-review.md）。
+    decision_eligible = False
     payload = {
         "identity": identity,
         "phase": args.phase,
