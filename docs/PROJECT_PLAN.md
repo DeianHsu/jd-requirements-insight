@@ -19,11 +19,12 @@ requirement → 独立 JD 统计 → 原文证据追溯 → Markdown 市场分�
 
 ## 当前下一步
 
-1. 用户备份 `data/raw_jds/` 并重建数据库（当前库为旧版本派生数据）；
-2. 授权后执行 P0-3B 小规模真实 JD 验证；
-3. 授权后执行 P0-4 归并验收（v0.8 输入）；
-4. 实现 `generate-report`：消费 `app/market_analysis.py` 输出
-   Markdown 市场分析报告。
+1. 使用当前代码重新导入 `data/raw_jds/`；
+2. 对 1～3 份 JD 执行 v0.8 + Schema V3 小规模真实抽取验证；
+3. P0-3B 通过后持久化当前抽取结果；
+4. 执行 P0-4 小规模预检与正式验收；
+5. 生成并离线验证正式归并批次；
+6. 验收通过后实现 `generate-report`。
 
 ## MVP 完成条件
 
