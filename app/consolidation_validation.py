@@ -20,7 +20,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
-from app.models import JobConsolidation
+from app.models import JobConsolidation, JobRequirement
 from app.requirement_consolidation import (
     CanonicalRequirement,
     RequirementConsolidationResult,
@@ -30,13 +30,20 @@ from app.requirement_consolidation import (
 
 @dataclass(frozen=True)
 class PersistedConsolidationResult:
-    """保存指定持久化批次的可复现身份与重建后的归并结果。"""
+    """保存指定持久化批次的可复现身份与重建后的归并结果。
+
+    `expected_requirement_ids` 由批次记录的 extraction_ids 回查
+    job_requirements 得到，是离线验证的真实输入集合；不得用当前
+    mappings 反推。
+    """
 
     consolidation_id: int
     scope_key: str
     consolidator_version: str
     extractor_version: str
     input_fingerprint: str
+    occurrence_count: int
+    expected_requirement_ids: frozenset[int]
     result: RequirementConsolidationResult
 
 
@@ -80,12 +87,25 @@ def load_persisted_consolidation_result(
                 for item in record.mappings
             ],
         )
+        # 回查批次真实输入：批次记录的 extraction_ids 下全部要求实例。
+        expected_requirement_ids: set[int] = set()
+        extraction_ids = list(record.extraction_ids or [])
+        if extraction_ids:
+            rows = session.scalars(
+                select(JobRequirement.id).where(
+                    JobRequirement.extraction_id.in_(extraction_ids)
+                )
+            ).all()
+            expected_requirement_ids = set(rows)
+
         return PersistedConsolidationResult(
             consolidation_id=record.id,
             scope_key=record.scope_key,
             consolidator_version=record.consolidator_version,
             extractor_version=record.extractor_version,
             input_fingerprint=record.input_fingerprint,
+            occurrence_count=record.occurrence_count,
+            expected_requirement_ids=frozenset(expected_requirement_ids),
             result=result,
         )
 
@@ -160,6 +180,66 @@ def validate_contract(
         unknown_reference_count=unknown_reference_count,
         empty_cluster_count=empty_cluster_count,
     )
+
+
+def validate_persisted_consistency(
+    persisted: PersistedConsolidationResult,
+) -> list[str]:
+    """校验持久化批次与真实输入集合的一致性，返回违规列表。
+
+    使用批次记录回查得到的 expected_requirement_ids 作为真值：
+
+    - record.occurrence_count == len(expected_requirement_ids)；
+    - mapping requirement ID 集合 == expected_requirement_ids；
+    - 全部 source_requirement_ids 的并集 == expected_requirement_ids；
+    - 每个 source_requirement_id 只出现一次；
+    - mapping 的 canonical 归属 == source_requirement_ids 声明的归属。
+
+    不重新构造抽取输入；本函数是面向 persisted result 的轻量确定性
+    验证。
+    """
+    failures: list[str] = []
+    expected = persisted.expected_requirement_ids
+
+    if persisted.occurrence_count != len(expected):
+        failures.append(
+            f"occurrence_count 与真实输入不一致："
+            f"{persisted.occurrence_count} != {len(expected)}"
+        )
+
+    mapping_ids = {mapping.requirement_id for mapping in persisted.result.mappings}
+    missing_mappings = sorted(expected - mapping_ids)
+    unexpected_mappings = sorted(mapping_ids - expected)
+    if missing_mappings:
+        failures.append(f"缺失 mapping requirement_id：{missing_mappings}")
+    if unexpected_mappings:
+        failures.append(f"多余 mapping requirement_id：{unexpected_mappings}")
+
+    declared: dict[int, str] = {}
+    for canonical in persisted.result.canonical_requirements:
+        for requirement_id in canonical.source_requirement_ids:
+            if requirement_id in declared:
+                failures.append(
+                    f"来源分区重复归属 requirement_id：{requirement_id}"
+                )
+            declared[requirement_id] = canonical.canonical_requirement_id
+    source_ids = set(declared)
+    missing_source = sorted(expected - source_ids)
+    unknown_source = sorted(source_ids - expected)
+    if missing_source:
+        failures.append(f"来源分区遗漏 requirement_id：{missing_source}")
+    if unknown_source:
+        failures.append(f"来源分区包含未知 requirement_id：{unknown_source}")
+
+    for mapping in persisted.result.mappings:
+        declared_canonical = declared.get(mapping.requirement_id)
+        if mapping.canonical_requirement_id != declared_canonical:
+            failures.append(
+                f"mapping 与来源分区归属冲突：实例{mapping.requirement_id} "
+                f"（mapping→{mapping.canonical_requirement_id}，"
+                f"来源→{declared_canonical}）"
+            )
+    return failures
 
 
 def mapping_clusters(

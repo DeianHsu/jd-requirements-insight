@@ -19,6 +19,7 @@ from app.consolidation import (
 from app.consolidation_validation import (
     load_persisted_consolidation_result,
     validate_contract,
+    validate_persisted_consistency,
 )
 from app.database import create_database_engine, create_session_factory, initialize_database
 from app.extraction import (
@@ -315,9 +316,11 @@ def validate_consolidation_cmd(
         help="显式指定要验证的持久化归并批次ID",
     ),
 ) -> None:
-    """离线验证一个已持久化归并批次：合同与稳定性检查。
+    """离线验证一个已持久化归并批次：合同与真实输入集合一致性。
 
-    不调用LLM、不隐式选择最新批次；输出 P0-4 合同违规计数。
+    不调用LLM、不隐式选择最新批次；coverage 以批次真实输入集合
+    （由 extraction_ids 回查 job_requirements）为分母计算，而不是用
+    已有 mappings 自证。任何一致性失败都会返回非零。
     """
     engine, session_factory = database_resources()
     try:
@@ -332,12 +335,14 @@ def validate_consolidation_cmd(
 
     contract = validate_contract(
         persisted.result,
-        expected_requirement_count=len(persisted.result.mappings),
+        expected_ids=persisted.expected_requirement_ids,
     )
+    consistency_failures = validate_persisted_consistency(persisted)
 
     console.print(f"归并批次ID [bold]{persisted.consolidation_id}[/bold]")
     console.print(f"范围 [bold]{persisted.scope_key}[/bold]")
     console.print(f"归并器版本 [bold]{persisted.consolidator_version}[/bold]")
+    console.print(f"真实输入实例数 [bold]{len(persisted.expected_requirement_ids)}[/bold]")
     console.print(
         "P0-4 完整覆盖 "
         + (f"[green]{contract.coverage:.2%}[/green]"
@@ -350,6 +355,19 @@ def validate_consolidation_cmd(
            if contract.structural_violation_count == 0 else
            f"[red]{contract.structural_violation_count}[/red]")
     )
+
+    failures: list[str] = []
+    if contract.coverage != 1.0:
+        failures.append(f"coverage={contract.coverage:.2%}")
+    if contract.structural_violation_count != 0:
+        failures.append(
+            f"structural_violations={contract.structural_violation_count}"
+        )
+    failures.extend(consistency_failures)
+    for failure in failures:
+        console.print(f"  [red]- {failure}[/red]")
+    if failures:
+        raise typer.Exit(code=1)
 
 
 @cli.command("list-extractions")
