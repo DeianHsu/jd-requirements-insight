@@ -57,7 +57,7 @@ implementation_baseline: 5c3255e（仓库收缩完成；Git 是当前 HEAD 的�
 
 ## 付费与私有数据依赖
 
-- 付费：抽取（v0.8 两段式）与归并（标准项轮 + 映射轮）调用 LLM，必须
+- 付费：抽取（v0.8 两段式）与归并（单次 LLM 聚类）调用 LLM，必须
   显式 `--execute`；`validate-consolidation`、合同检查、变形测试不付费。
 - 私有：真实 JD（`data/raw_jds/`）、数据库、原始模型响应
   （`data/private/`）与验收原始结果不提交 Git。

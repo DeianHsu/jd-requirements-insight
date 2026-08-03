@@ -22,7 +22,7 @@ JD 导入
 | `app/extraction.py` / `app/extraction_two_stage.py` | v0.8 两段式抽取（发现段全局扫描、判断段局部判断）、证据校验、有限重试 |
 | `app/extraction_validation.py` | 抽取合同检查、锚点化变形比较、规则场景属性检查 |
 | `app/requirement_consolidation.py` | 归并输入/输出合同与确定性一致性校验 |
-| `app/consolidation.py` | 分阶段归并（标准项轮 + 映射轮）、幂等持久化 |
+| `app/consolidation.py` | 单次 LLM 聚类归并（canonical + 来源分区）、确定性 mappings、幂等持久化 |
 | `app/consolidation_validation.py` | 归并合同校验、positive-pair Jaccard、canonical/singleton 漂移、验收报告 |
 | `app/market_analysis.py` | 市场统计：实例数、独立 JD 数、importance 双口径（实例级/JD 级）、来源 JD 集合、原始 requirement/evidence、稳定排序（独立 JD 数优先） |
 | `app/cli.py` | 本地 CLI（import-jds / extract-jds / consolidate-requirements / list-* / validate-consolidation） |
@@ -58,10 +58,10 @@ canonical 层支持跨 JD 统计。两者通过唯一映射连接。
 
 ### 为什么每个实例必须唯一映射
 
-归并为两阶段合同：阶段 1（标准项生成轮）提出 canonical requirement 并
-声明每个实例的来源归属（`source_requirement_ids`，无法合并的实例创建
-singleton）；阶段 2（映射轮）只能引用阶段 1 给出的 canonical，不得创建
-新的 canonical。确定性校验保证来源声明与映射完全一致。唯一映射使统计
+归并模型一次输出 canonical requirements 和来源实例分区
+（`source_requirement_ids`，无法合并的实例创建 singleton）；分区校验
+通过后，mappings 由确定性代码从来源分区生成并持久化。模型只负责决定
+cluster，确定性代码负责把 cluster 展开为 mappings。唯一映射使统计
 口径确定：每个实例计数一次，每份 JD 对一个 canonical 只计一次独立 JD 数。
 
 ### 市场频率口径

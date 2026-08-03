@@ -11,8 +11,9 @@ requirement → 独立 JD 统计 → 原文证据追溯 → Markdown 市场分�
   三级熟练度、any_of 逻辑组、原文证据强制校验、有限重试、幂等持久化；
 - **抽取质量验证**：P0-3A 规则场景变形测试（领域中性场景 + 确定性变换）、
   P0-3B 真实 JD 验证（合同检查、漂移、异常项索引）；
-- **要求事实归并**：requirement instance → canonical requirement →
-  唯一映射（不确定时创建 singleton），幂等批次；
+- **要求事实归并**：单次 LLM 聚类输出 canonical requirement 与来源
+  实例分区（不确定时创建 singleton）；mappings 由确定性代码生成并
+  幂等持久化；
 - **归并验证**：coverage、结构违规、positive-pair Jaccard、canonical/
   singleton 漂移、顺序/分块变形、人工 cluster 复核；
 - **市场统计**：每个 canonical requirement 的实例数、独立 JD 数、

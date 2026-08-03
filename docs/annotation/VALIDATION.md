@@ -69,6 +69,8 @@ RAG       → 有RAG项目经验者优先
 ## 5. P0-4 归并验证
 
 P0-4 只表达 requirement instance → canonical requirement → unique mapping。
+归并模型一次输出 canonical requirements 和来源实例分区（模型只负责决定
+cluster）；mappings 由确定性代码从来源分区生成并持久化。
 保留真正影响统计可信度的检查：
 
 - coverage = 100%；
