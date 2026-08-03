@@ -6,9 +6,12 @@ unique mapping），输出结构直接供后续 `generate-report` 命令消费�
 
 - 每个 canonical requirement 的实例数量与独立 JD 数量（同一 JD 多个
   实例只计一次）；
-- must / preferred / mentioned / unknown 分布；
+- importance 双口径：实例级（诊断抽取与映射分布）与 JD 级（市场报告
+  默认展示，同一 JD 只按 must > preferred > mentioned > unknown 优先级
+  贡献一次）；
 - 来源 JD 集合、对应原始 requirement 与 evidence（证据追溯）；
-- 稳定排序（实例数降序、名称升序，不依赖数据库行序）。
+- 稳定排序：distinct_job_count 降序 → instance_count 降序 →
+  canonical_name 升序。市场高频口径是独立 JD 数，实例数只作补充信息。
 """
 
 from __future__ import annotations
@@ -19,11 +22,20 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
+from app.extraction import assert_current_extractor_version
 from app.models import (
     JobConsolidation,
     JobRequirement,
     RequirementMappingRecord,
 )
+
+# JD 级 importance 归并优先级：数值越小越优先。
+IMPORTANCE_PRIORITY = {
+    "must": 0,
+    "preferred": 1,
+    "mentioned": 2,
+    "unknown": 3,
+}
 
 
 @dataclass(frozen=True)
@@ -34,7 +46,8 @@ class CanonicalMarketStats:
     canonical_name: str
     instance_count: int
     distinct_job_count: int
-    importance_counts: dict[str, int]
+    importance_instance_counts: dict[str, int]
+    importance_job_counts: dict[str, int]
     source_job_ids: tuple[int, ...]
     source_requirements: tuple[dict[str, Any], ...]
 
@@ -68,7 +81,8 @@ class MarketStatistics:
                     "canonical_name": item.canonical_name,
                     "instance_count": item.instance_count,
                     "distinct_job_count": item.distinct_job_count,
-                    "importance_counts": item.importance_counts,
+                    "importance_instance_counts": item.importance_instance_counts,
+                    "importance_job_counts": item.importance_job_counts,
                     "source_job_ids": list(item.source_job_ids),
                     "source_requirements": list(item.source_requirements),
                 }
@@ -84,8 +98,8 @@ def build_market_statistics(
     """按显式归并批次ID计算市场统计；批次不存在时抛出 ValueError。
 
     统计只依赖（实例 → canonical）映射与实例来源，结果稳定可复现：
-    canonical 按（实例数降序、canonical_name 升序）排序，来源 JD 集合
-    与原始 requirement/evidence 按 requirement_id 升序。
+    canonical 按（独立 JD 数降序、实例数降序、canonical_name 升序）
+    排序，来源 JD 集合与原始 requirement/evidence 按 requirement_id 升序。
     """
     with session_factory() as session:
         record = session.scalar(
@@ -98,6 +112,8 @@ def build_market_statistics(
         )
         if record is None:
             raise ValueError(f"归并批次不存在：{consolidation_id}")
+        # 市场统计只消费 v0.8 + Schema V3 归并批次。
+        assert_current_extractor_version(record.extractor_version)
 
         canonical_by_id = {
             item.canonical_requirement_id: item
@@ -141,7 +157,9 @@ def build_market_statistics(
         for canonical_id, member_ids in members.items():
             canonical = canonical_by_id[canonical_id]
             member_ids_sorted = sorted(member_ids)
-            importance_counts: dict[str, int] = {}
+            importance_instance_counts: dict[str, int] = {}
+            # JD 级 importance：同一 JD 只按优先级贡献一次。
+            job_importance: dict[int, str] = {}
             source_jobs: set[int] = set()
             source_requirements: list[dict[str, Any]] = []
             for requirement_id in member_ids_sorted:
@@ -149,11 +167,19 @@ def build_market_statistics(
                 if requirement is None:
                     continue
                 importance = requirement.importance
-                importance_counts[importance] = importance_counts.get(importance, 0) + 1
+                importance_instance_counts[importance] = (
+                    importance_instance_counts.get(importance, 0) + 1
+                )
                 extraction_id = job_by_requirement.get(requirement_id)
                 job_id = extraction_job.get(extraction_id) if extraction_id else None
                 if job_id is not None:
                     source_jobs.add(job_id)
+                    current = job_importance.get(job_id)
+                    if (
+                        current is None
+                        or IMPORTANCE_PRIORITY[importance] < IMPORTANCE_PRIORITY[current]
+                    ):
+                        job_importance[job_id] = importance
                 source_requirements.append(
                     {
                         "requirement_id": requirement_id,
@@ -166,21 +192,32 @@ def build_market_statistics(
                         "confidence": requirement.confidence,
                     }
                 )
+            importance_job_counts: dict[str, int] = {}
+            for importance in job_importance.values():
+                importance_job_counts[importance] = (
+                    importance_job_counts.get(importance, 0) + 1
+                )
             items.append(
                 CanonicalMarketStats(
                     canonical_requirement_id=canonical.canonical_requirement_id,
                     canonical_name=canonical.canonical_name,
                     instance_count=len(member_ids_sorted),
                     distinct_job_count=len(source_jobs),
-                    importance_counts=importance_counts,
+                    importance_instance_counts=importance_instance_counts,
+                    importance_job_counts=importance_job_counts,
                     source_job_ids=tuple(sorted(source_jobs)),
                     source_requirements=tuple(source_requirements),
                 )
             )
 
-        # 稳定排序：实例数降序 → 名称升序。
+        # 稳定排序：独立 JD 数降序 → 实例数降序 → 名称升序。
+        # 市场高频口径是独立 JD 数（覆盖多少份 JD），实例数只作补充。
         items.sort(
-            key=lambda item: (-item.instance_count, item.canonical_name)
+            key=lambda item: (
+                -item.distinct_job_count,
+                -item.instance_count,
+                item.canonical_name,
+            )
         )
         return MarketStatistics(
             consolidation_id=record.id,

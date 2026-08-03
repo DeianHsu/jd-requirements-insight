@@ -6,6 +6,7 @@
 """
 
 import json
+from datetime import date
 from pathlib import Path
 
 from app.cli import cli
@@ -15,7 +16,12 @@ from app.database import (
     initialize_database,
 )
 from app.market_analysis import build_market_statistics
-from app.models import JobConsolidation, JobDescription, JobExtraction
+from app.models import (
+    JobConsolidation,
+    JobDescription,
+    JobExtraction,
+    JobRequirement,
+)
 from typer.testing import CliRunner
 
 runner = CliRunner()
@@ -153,18 +159,21 @@ def _consolidation_payload() -> dict:
             {
                 "canonical_requirement_id": "cr-tech",
                 "canonical_name": "技术甲",
+                "source_requirement_ids": [1, 3],
                 "rationale": "多份JD要求技术甲",
                 "confidence": 0.95,
             },
             {
                 "canonical_requirement_id": "cr-framework",
                 "canonical_name": "框架乙",
+                "source_requirement_ids": [2],
                 "rationale": "独立条件",
                 "confidence": 0.9,
             },
             {
                 "canonical_requirement_id": "cr-skill-d",
                 "canonical_name": "能力丁",
+                "source_requirement_ids": [4],
                 "rationale": "独立条件",
                 "confidence": 0.85,
             },
@@ -276,12 +285,12 @@ def test_full_pipeline_import_extract_consolidate_statistics(
     result = runner.invoke(cli, ["import-jds", str(jd_dir)])
     assert result.exit_code == 0, result.output
 
-    # 2. extract-jds（全部）
-    result = runner.invoke(cli, ["extract-jds", "--all"])
+    # 2. extract-jds（全部；付费调用显式 --execute）
+    result = runner.invoke(cli, ["extract-jds", "--all", "--execute"])
     assert result.exit_code == 0, result.output
 
-    # 3. consolidate-requirements
-    result = runner.invoke(cli, ["consolidate-requirements", "--all"])
+    # 3. consolidate-requirements（付费调用显式 --execute）
+    result = runner.invoke(cli, ["consolidate-requirements", "--all", "--execute"])
     assert result.exit_code == 0, result.output
 
     # 4. statistics：读取归并批次并验证独立 JD 计数。
@@ -309,8 +318,10 @@ def test_full_pipeline_import_extract_consolidate_statistics(
         # 技术甲在 2 份 JD 中各出现一次 → 独立 JD 数 = 2。
         assert tech.distinct_job_count == 2
         assert tech.instance_count == 2
-        assert tech.importance_counts == {"must": 2}
-        # 稳定排序：技术甲（2实例）最前。
+        # 两套 importance 口径：实例级与 JD 级一致（每 JD 仅 must）。
+        assert tech.importance_instance_counts == {"must": 2}
+        assert tech.importance_job_counts == {"must": 2}
+        # 稳定排序：技术甲（2 JD）最前（独立 JD 数优先）。
         assert stats.canonical_items[0].canonical_name == "技术甲"
     finally:
         engine.dispose()
@@ -321,6 +332,106 @@ def select_latest_consolidation():
     from sqlalchemy import select
 
     return select(JobConsolidation).order_by(JobConsolidation.id.desc()).limit(1)
+
+
+def test_extract_jds_requires_execute_confirmation(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """extract-jds 无 --execute 时不初始化客户端、不调用模型并返回非零。"""
+    jd_dir = tmp_path / "jds"
+    jd_dir.mkdir()
+    _write_jd_files(jd_dir)
+    database_path = tmp_path / "execute.db"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{database_path.as_posix()}")
+
+    import app.cli as cli_module
+
+    monkeypatch.setattr(cli_module, "load_llm_settings", lambda: FakeSettings())
+
+    # 若没有 --execute 仍会调用客户端，则下面断言失败（客户端构造会报错）。
+    monkeypatch.setattr(
+        cli_module, "OpenAICompatibleExtractionClient", FakeExtractionClient
+    )
+    result = runner.invoke(cli, ["import-jds", str(jd_dir)])
+    assert result.exit_code == 0, result.output
+
+    result = runner.invoke(cli, ["extract-jds", "--all"])
+    assert result.exit_code == 2
+    assert "未执行" in result.output
+    assert "--execute" in result.output
+    assert "模型" in result.output
+
+
+def test_consolidate_requires_execute_confirmation(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """consolidate-requirements 无 --execute 时返回非零并打印计划。"""
+    import app.cli as cli_module
+
+    database_path = tmp_path / "consolidate_execute.db"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{database_path.as_posix()}")
+    monkeypatch.setattr(cli_module, "load_llm_settings", lambda: FakeSettings())
+    monkeypatch.setattr(
+        cli_module, "OpenAICompatibleConsolidationClient", FakeConsolidationClient
+    )
+
+    # 构造一份含 v0.8 抽取结果的数据库，使计划阶段可完成。
+    engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
+    try:
+        initialize_database(engine)
+        session_factory = create_session_factory(engine)
+        with session_factory() as session:
+            job = JobDescription(
+                source_hash="b" * 64,
+                source_file="job-x.md",
+                source_type="test",
+                collected_at=date(2026, 8, 3),
+                company="示例公司",
+                title="示例岗位",
+                company_type="medium_company",
+                tags=[],
+                extra_metadata={},
+                raw_text="# 示例岗位\n\n熟悉技术甲。",
+            )
+            session.add(job)
+            session.flush()
+            extraction = JobExtraction(
+                job_id=job.id,
+                extractor_version="test-model|prompt:0.8|schema:3.0",
+                model_name="test-model",
+                prompt_version="0.8",
+                schema_version="3.0",
+                role_family="other",
+                seniority="unknown",
+                raw_response={},
+            )
+            session.add(extraction)
+            session.flush()
+            session.add(
+                JobRequirement(
+                    extraction_id=extraction.id,
+                    raw_name="技术甲",
+                    category="other",
+                    importance="must",
+                    proficiency="basic",
+                    group_id=None,
+                    group_logic="standalone",
+                    min_years=None,
+                    max_years=None,
+                    years_text=None,
+                    evidence="熟悉技术甲",
+                    confidence=0.9,
+                )
+            )
+            session.commit()
+    finally:
+        engine.dispose()
+
+    result = runner.invoke(cli, ["consolidate-requirements", "--all"])
+    assert result.exit_code == 2
+    assert "未执行" in result.output
+    assert "--execute" in result.output
+    assert "1 条要求实例" in result.output
 
 
 def test_documented_commands_and_paths_exist() -> None:
@@ -354,3 +465,22 @@ def test_documented_commands_and_paths_exist() -> None:
     assert Path("docs/GLOSSARY.md").exists()
     assert Path("docs/annotation/REQUIREMENTS.md").exists()
     assert Path("docs/annotation/VALIDATION.md").exists()
+
+    # 关键示例命令包含脚本要求的必要参数（文档合同）。
+    readme = Path("README.md").read_text(encoding="utf-8")
+    assert "extract-jds --all --execute" in readme
+    assert "consolidate-requirements --all --execute" in readme
+    assert (
+        "run_real_jd_acceptance --use-project-database --all --execute"
+        in readme
+    )
+    current_state = Path("docs/CURRENT_STATE.md").read_text(encoding="utf-8")
+    assert (
+        "run_real_jd_acceptance --use-project-database --all --execute"
+        in current_state
+    )
+    validation = Path("docs/annotation/VALIDATION.md").read_text(
+        encoding="utf-8"
+    )
+    assert "--use-project-database" in validation
+    assert "--database-url" in validation

@@ -24,7 +24,7 @@ JD 导入
 | `app/requirement_consolidation.py` | 归并输入/输出合同与确定性一致性校验 |
 | `app/consolidation.py` | 分阶段归并（标准项轮 + 映射轮）、幂等持久化 |
 | `app/consolidation_validation.py` | 归并合同校验、positive-pair Jaccard、canonical/singleton 漂移、验收报告 |
-| `app/market_analysis.py` | 市场统计：实例数、独立 JD 数、importance 分布、来源 JD 集合、原始 requirement/evidence、稳定排序 |
+| `app/market_analysis.py` | 市场统计：实例数、独立 JD 数、importance 双口径（实例级/JD 级）、来源 JD 集合、原始 requirement/evidence、稳定排序（独立 JD 数优先） |
 | `app/cli.py` | 本地 CLI（import-jds / extract-jds / consolidate-requirements / list-* / validate-consolidation） |
 | `app/models.py` / `app/database.py` | ORM 模型与数据库初始化 |
 
@@ -58,9 +58,20 @@ canonical 层支持跨 JD 统计。两者通过唯一映射连接。
 
 ### 为什么每个实例必须唯一映射
 
-当前合同要求每个 requirement instance 恰好映射到一个 canonical
-requirement（不确定时创建 singleton）。唯一映射使统计口径确定：
-每个实例计数一次，每份 JD 对一个 canonical 只计一次独立 JD 数。
+归并为两阶段合同：阶段 1（标准项生成轮）提出 canonical requirement 并
+声明每个实例的来源归属（`source_requirement_ids`，无法合并的实例创建
+singleton）；阶段 2（映射轮）只能引用阶段 1 给出的 canonical，不得创建
+新的 canonical。确定性校验保证来源声明与映射完全一致。唯一映射使统计
+口径确定：每个实例计数一次，每份 JD 对一个 canonical 只计一次独立 JD 数。
+
+### 市场频率口径
+
+市场高频以**独立 JD 数**为准（覆盖多少份 JD），不是 requirement instance
+数；实例数只作补充信息。排序为 distinct_job_count 降序 → instance_count
+降序 → canonical_name 升序。importance 分布提供两套口径：实例级（诊断
+抽取与映射分布）与 JD 级（市场报告默认展示，同一 JD 按
+must > preferred > mentioned > unknown 优先级只贡献一次，总数不超过
+独立 JD 数）。
 
 ### 为什么当前不引入 Agent、RAG、Web 服务
 
