@@ -10,10 +10,12 @@
 抽取验收协议已迁移为规则化验证（DEC-015）：数据合同 + 规则 ID + 稳定性 +
 规则场景变形测试 + 人工违规审计；旧人工标准答案与 F1 指标降级为 legacy
 历史材料。
-P0-1 与 P0-3 按新协议重开为部分完成（v0.6 原批准标注 approved under legacy
-Gold protocol，仍是当前正式可运行版本；v0.7 Prompt 已规则化，真实模型验收
-待授权运行）；P0-4 implementation acceptance 真实验收已执行，scale
-acceptance 待 P0-8 扩充。
+抽取版本矩阵：active = v0.6 + Schema V2（正式可运行）；candidate = v0.8 +
+Schema V3（三级熟练度 unknown/basic/advanced，DEC-016）；v0.7 为历史未批准
+候选版本。
+P0-1 与 P0-3 按新协议为部分完成（v0.8 真实模型验收 Track A/B 待授权运行）；
+P0-4 implementation acceptance 真实验收已执行（含第三次关系边修复），
+scale acceptance 待 P0-8 扩充。
 详细状态、指标和下一步见 [docs/PROJECT_PLAN.md](docs/PROJECT_PLAN.md) 与 [docs/work/](docs/work/)。
 
 ## 环境
@@ -111,8 +113,8 @@ python -m app.cli validate-consolidation --consolidation-id <批次ID>
 
 ## 实验性脚本
 
-开发期实验和临时验收脚本位于`scripts/experiments/p0_x/`，并以`python -m ...`运行；真实外部调用使用`--execute`并选择数据库目标。目录和输出说明见[scripts/experiments/README.md](scripts/experiments/README.md)。
-P0-3 新协议验收入口为 `scripts/experiments/p0_3/run_acceptance.py`（规则场景 + 稳定性 + 变形测试，默认不调用外部模型）。
+开发期实验和临时验收脚本位于`scripts/experiments/p0_x/`，并以`python -m ...`运行；真实外部调用使用`--execute`（预检使用`--dry-run`）。目录和输出说明见[scripts/experiments/README.md](scripts/experiments/README.md)。
+P0-3 新协议验收为双轨道：Track A 合成规则场景 `scripts/experiments/p0_3/run_acceptance.py`（显式使用 candidate v0.8 + Schema V3）；Track B 真实 JD `scripts/experiments/p0_3/run_real_jd_acceptance.py`。两个 Track 都通过并完成人工审计后，才能讨论 v0.8 替换 v0.6。
 
 ## 方法文档
 
