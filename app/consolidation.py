@@ -831,17 +831,23 @@ def consolidate_with_correction(
     max_attempts: int = 2,
     mapping_chunk_size: int = CONSOLIDATION_MAPPING_CHUNK_SIZE,
     degrade_hierarchy_failure: bool = False,
+    include_relations: bool = False,
 ) -> tuple[RequirementConsolidationResult, dict[str, object]]:
     """分阶段执行跨JD归并，并在内存合成完整结果后统一校验。
 
-    阶段1提出标准要求项，阶段2按块完成实例映射，阶段3生成标准项关系；
-    每个阶段请求的输出规模都远离单次完整请求的截断边界。各阶段结果
-    先在内存合成为完整结果，再统一执行合同、冲突、完整覆盖和关系图
-    校验，成功后返回；任何阶段失败都不产生可持久化的部分批次。
+    阶段1提出标准要求项，阶段2按块完成实例映射；include_relations=True
+    时额外执行阶段3生成标准项关系（P0-4B 实验功能）。各阶段请求的输出
+    规模都远离单次完整请求的截断边界。各阶段结果先在内存合成为完整结果，
+    再统一执行合同、冲突、完整覆盖和关系图校验，成功后返回；任何阶段
+    失败都不产生可持久化的部分批次。
 
-    degrade_hierarchy_failure=True 时，关系阶段失败会降级：P0-4A 事实层
-    （标准项+映射）仍通过校验并返回，hierarchy_status="failed" 且正式
-    关系为空；P0-4B 失败不阻塞 P0-4A 落库与 P0-6 统计。
+    include_relations=False（默认）：不调用关系轮，relations 为空、
+    hierarchy_status="not_run"；P0-4B 未运行不影响 P0-4A 持久化与 P0-6。
+
+    degrade_hierarchy_failure=True 且 include_relations=True 时，关系阶段
+    失败会降级：P0-4A 事实层（标准项+映射）仍通过校验并返回，
+    hierarchy_status="failed" 且正式关系为空；P0-4B 失败不阻塞 P0-4A
+    落库与 P0-6 统计。
     """
     if mapping_chunk_size <= 0:
         raise ValueError("mapping_chunk_size必须大于0")
@@ -858,20 +864,25 @@ def consolidate_with_correction(
                 chunk, canonical_requirements, client, system_prompt, max_attempts
             )
         )
-    try:
-        relations, uncertain_relations = _request_relations(
-            consolidation_input,
-            canonical_requirements,
-            client,
-            max_attempts,
-        )
-        hierarchy_status = "success"
-    except ConsolidationError:
-        if not degrade_hierarchy_failure:
-            raise
-        relations = []
-        uncertain_relations = []
-        hierarchy_status = "failed"
+    if not include_relations:
+        relations: list[RequirementRelation] = []
+        uncertain_relations: list[RequirementRelation] = []
+        hierarchy_status = "not_run"
+    else:
+        try:
+            relations, uncertain_relations = _request_relations(
+                consolidation_input,
+                canonical_requirements,
+                client,
+                max_attempts,
+            )
+            hierarchy_status = "success"
+        except ConsolidationError:
+            if not degrade_hierarchy_failure:
+                raise
+            relations = []
+            uncertain_relations = []
+            hierarchy_status = "failed"
 
     try:
         result = RequirementConsolidationResult(
@@ -1073,14 +1084,16 @@ def consolidate_requirements(
     job_ids: set[int] | None = None,
     extractor_version: str | None = None,
     mapping_chunk_size: int = CONSOLIDATION_MAPPING_CHUNK_SIZE,
+    include_relations: bool = False,
 ) -> ConsolidationSummary:
     """对选定JD范围执行一次跨JD归并并幂等持久化，失败隔离不中断。
 
-    模型调用采用分阶段/受控分块输出边界：标准项生成、按块映射和关系
-    生成分多轮请求，各阶段先在内存合成完整结果并统一执行合同、冲突、
-    完整覆盖和关系图校验，通过后一次性原子持久化；任一阶段失败不写入
-    部分批次。同范围同归并器版本同输入指纹已有结果时跳过模型调用并
-    计入skipped。
+    模型调用采用分阶段/受控分块输出边界：标准项生成与按块映射默认执行
+    （P0-4A）；include_relations=True 时额外执行关系生成（P0-4B 实验
+    功能）。各阶段先在内存合成完整结果并统一执行合同、冲突、完整覆盖
+    和关系图校验，通过后一次性原子持久化；任一阶段失败不写入部分批次。
+    同范围同归并器版本同输入指纹已有结果时跳过模型调用并计入skipped。
+    P0-4B 未运行或失败不影响 P0-4A 落库与 P0-6 统计。
     """
     scope = scope_key_for(job_ids)
     summary = ConsolidationSummary()
@@ -1124,6 +1137,7 @@ def consolidate_requirements(
             max_attempts=max_attempts,
             mapping_chunk_size=mapping_chunk_size,
             degrade_hierarchy_failure=True,
+            include_relations=include_relations,
         )
     except (ConsolidationError, ValueError) as exc:
         summary.errors.append(ConsolidationFailure(scope, str(exc)))

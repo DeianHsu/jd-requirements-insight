@@ -21,15 +21,6 @@ from app.consolidation_validation import (
     validate_contract,
 )
 from app.database import create_database_engine, create_session_factory, initialize_database
-from app.evaluation import (
-    ItemMatchMetrics,
-    combine_metrics,
-    evaluate_annotation_cases,
-    evaluate_extraction,
-    load_annotation_cases_file,
-    load_golden_file,
-    validate_golden_directory,
-)
 from app.extraction import (
     ExtractorMetadata,
     OpenAICompatibleExtractionClient,
@@ -37,28 +28,9 @@ from app.extraction import (
     list_extractions,
 )
 from app.ingestion import import_directory, list_jobs
-from app.schemas import JobExtractionResult
 
 cli = typer.Typer(no_args_is_help=True, help="JD Skill Insight 本地数据工具")
 console = Console()
-
-
-def format_accuracy(value: float, total: int) -> str:
-    """把无适用样本的准确率显示为N/A，避免与真实零准确率混淆。"""
-    return f"{value:.2%}" if total else "N/A"
-
-
-def format_item_metrics(metrics: ItemMatchMetrics) -> str:
-    """格式化原子项P/R/F1，并在预测与期望都为空时显示N/A。"""
-    if metrics.predicted == 0 and metrics.expected == 0:
-        return "N/A"
-    return f"{metrics.precision:.2%} / {metrics.recall:.2%} / {metrics.f1:.2%}"
-
-
-def select_visible_issues(issues: list[str], max_issues: int) -> tuple[list[str], int]:
-    """限制终端展示的错误条数，并返回被省略的数量。"""
-    visible = issues[:max_issues]
-    return visible, len(issues) - len(visible)
 
 
 def database_resources():
@@ -130,26 +102,6 @@ def show_jds() -> None:
     console.print(table)
 
 
-@cli.command("validate-golden")
-def validate_golden(
-    golden_directory: Path = typer.Argument(..., help="人工标准答案JSON所在目录（legacy Gold 数据）"),
-    raw_jd_directory: Path = typer.Argument(..., help="原始Markdown JD所在目录"),
-) -> None:
-    """[legacy] 验证人工标准答案的抽取数据合同、来源文件和原文证据是否有效。
-
-    legacy protocol（DEC-015）：仅用于历史数据管理与案例分析，不属于
-    当前正式验收。
-    """
-    summary = validate_golden_directory(golden_directory, raw_jd_directory)
-    console.print(f"发现 [bold]{summary.discovered}[/bold] 个人工标准答案文件")
-    console.print(f"校验通过 [green]{summary.valid}[/green]")
-    console.print(f"失败 [red]{summary.failed}[/red]")
-    for error in summary.errors:
-        console.print(f"  [red]- {error}[/red]")
-    if summary.failed:
-        raise typer.Exit(code=1)
-
-
 @cli.command("extract-jds")
 def extract_jds(
     max_attempts: int = typer.Option(2, min=1, max=5),
@@ -209,8 +161,17 @@ def consolidate_requirements_cmd(
         "--extractor-version",
         help="选择覆盖全部目标JD的抽取器版本；存在多个共同版本时必须指定",
     ),
+    with_relations: bool = typer.Option(
+        False,
+        "--with-relations",
+        help="P0-4B 实验功能：同时生成 broader_than 标准项层级关系（默认不运行，不进入默认统计）",
+    ),
 ) -> None:
-    """对选定JD范围内的要求实例执行跨JD原子要求归并并幂等保存。"""
+    """对选定JD范围内的要求实例执行跨JD原子要求归并并幂等保存。
+
+    默认只完成 canonical requirements 与 instance mappings（P0-4A）；
+    broader_than 层级关系（P0-4B）是显式实验功能，需 --with-relations。
+    """
     if all_jobs == bool(job_ids):
         console.print("[red]必须且只能选择--all或--job-id之一。[/red]")
         raise typer.Exit(code=2)
@@ -234,6 +195,7 @@ def consolidate_requirements_cmd(
             max_attempts=max_attempts,
             job_ids=set(job_ids) if job_ids else None,
             extractor_version=extractor_version,
+            include_relations=with_relations,
         )
     finally:
         engine.dispose()
@@ -398,166 +360,6 @@ def show_extractions() -> None:
             extraction.model_name,
         )
     console.print(table)
-
-
-@cli.command("evaluate-extractions")
-def evaluate_extractions(
-    golden_directory: Path = typer.Argument(..., help="人工标准答案JSON所在目录（legacy Gold 数据）"),
-) -> None:
-    """[legacy] 把数据库中每份JD的最新抽取结果与人工标准答案进行对比评测。
-
-    legacy protocol（DEC-015）：仅用于历史比较和案例分析，不属于当前
-    正式验收，不得用于批准新的 Prompt。
-    """
-    engine, session_factory = database_resources()
-    try:
-        persisted = list_extractions(session_factory)
-    finally:
-        engine.dispose()
-
-    # 同一JD存在多个版本时选取ID最大的最新记录，避免重复计入总体指标。
-    latest_by_source = {}
-    for extraction in persisted:
-        latest_by_source[extraction.job.source_file] = extraction
-
-    metrics = []
-    missing_sources = []
-    for path in sorted(golden_directory.glob("*.json")):
-        golden = load_golden_file(path)
-        extraction = latest_by_source.get(golden.source_file)
-        if extraction is None:
-            missing_sources.append(golden.source_file)
-            continue
-        predicted = JobExtractionResult.model_validate(extraction.raw_response)
-        metrics.append(evaluate_extraction(predicted, golden.extraction))
-
-    if not metrics:
-        console.print("[yellow]没有可与人工标准答案对比的抽取结果。[/yellow]")
-        raise typer.Exit(code=1)
-
-    combined = combine_metrics(metrics)
-    console.print(f"参与评测JD：[bold]{len(metrics)}[/bold]")
-    console.print(f"Precision：[cyan]{combined.precision:.2%}[/cyan]")
-    console.print(f"Recall：[cyan]{combined.recall:.2%}[/cyan]")
-    console.print(f"F1：[cyan]{combined.f1:.2%}[/cyan]")
-    console.print(f"重要程度准确率：[cyan]{combined.importance_accuracy:.2%}[/cyan]")
-    if missing_sources:
-        console.print(f"[yellow]缺少抽取结果：{', '.join(missing_sources)}[/yellow]")
-
-
-@cli.command("evaluate-cases")
-def evaluate_cases(
-    cases_file: Path = typer.Argument(..., help="困难样例annotation_cases.json路径（legacy Gold 数据）"),
-    prompt_version: str = typer.Option(..., "--prompt-version", help="待评测Prompt版本（历史版本）"),
-    schema_version: str = typer.Option("2.0", "--schema-version"),
-    model_name: str | None = typer.Option(None, "--model", help="待评测模型名称"),
-    dataset_split: str | None = typer.Option(
-        None, "--split", help="只评测指定数据集分组，如development或validation"
-    ),
-    max_issues: int = typer.Option(
-        10, "--max-issues", min=0, help="最多显示的错误摘要条数"
-    ),
-) -> None:
-    """[legacy] 对指定抽取版本运行困难样例的原子项和字段级分层评测。
-
-    legacy protocol：仅用于历史比较和案例分析，不属于当前正式验收
-    （DEC-015），不得用于批准新的 Prompt。当前正式验收见
-    scripts/experiments/p0_3/run_acceptance.py。
-    """
-    engine, session_factory = database_resources()
-    try:
-        persisted = list_extractions(session_factory)
-    finally:
-        engine.dispose()
-
-    selected = [
-        extraction
-        for extraction in persisted
-        if extraction.prompt_version == prompt_version
-        and extraction.schema_version == schema_version
-        and (model_name is None or extraction.model_name == model_name)
-    ]
-    if model_name is None:
-        model_names = {extraction.model_name for extraction in selected}
-        if len(model_names) > 1:
-            console.print("[red]同版本存在多个模型，请使用--model明确指定。[/red]")
-            raise typer.Exit(code=1)
-        if model_names:
-            model_name = next(iter(model_names))
-    if not selected:
-        console.print("[yellow]没有找到符合指定抽取器版本的结果。[/yellow]")
-        raise typer.Exit(code=1)
-
-    try:
-        payload = load_annotation_cases_file(cases_file)
-        predictions = {
-            extraction.job.source_file: JobExtractionResult.model_validate(
-                extraction.raw_response
-            )
-            for extraction in selected
-        }
-        source_texts = {
-            extraction.job.source_file: extraction.job.raw_text for extraction in selected
-        }
-        summary = evaluate_annotation_cases(
-            payload, predictions, source_texts, dataset_split=dataset_split
-        )
-    except (OSError, ValueError) as exc:
-        console.print(f"[red]分层评测失败：{exc}[/red]")
-        raise typer.Exit(code=1) from exc
-
-    console.print(
-        f"评测版本：[bold]{model_name} / prompt:{prompt_version} / "
-        f"schema:{schema_version}[/bold]"
-    )
-    console.print(f"数据分组：[bold]{dataset_split or 'all'}[/bold]")
-    console.print(
-        f"困难样例：[bold]{summary.evaluated_cases}/{summary.discovered_cases}[/bold]"
-    )
-    console.print(
-        "要求名称代理 P/R/F1："
-        f"[cyan]{format_item_metrics(summary.requirement_metrics)}[/cyan]"
-    )
-    console.print(
-        "职责名称代理 P/R/F1："
-        f"[cyan]{format_item_metrics(summary.responsibility_metrics)}[/cyan]"
-    )
-    console.print(
-        f"原子项数量一致样例：[cyan]{summary.exact_count_cases}/"
-        f"{summary.evaluated_cases}[/cyan]"
-    )
-    console.print(
-        "重要程度准确率："
-        f"[cyan]{format_accuracy(summary.importance_accuracy, summary.importance_total)}[/cyan]"
-    )
-    console.print(
-        "熟练度准确率："
-        f"[cyan]{format_accuracy(summary.proficiency_accuracy, summary.proficiency_total)}[/cyan]"
-    )
-    console.print(
-        "类别准确率："
-        f"[cyan]{format_accuracy(summary.category_accuracy, summary.category_total)}[/cyan]"
-    )
-    console.print(
-        f"年限准确率：[cyan]{format_accuracy(summary.years_accuracy, summary.years_total)}[/cyan]"
-    )
-    console.print(
-        "any_of组准确率："
-        f"[cyan]{format_accuracy(summary.any_of_group_accuracy, summary.any_of_groups_total)}[/cyan]"
-    )
-    console.print(
-        "完整结果证据存在率："
-        f"[cyan]{format_accuracy(summary.evidence_accuracy, summary.evidence_total)}[/cyan]"
-    )
-    if summary.missing_sources:
-        console.print(
-            f"[yellow]缺少来源结果：{', '.join(summary.missing_sources)}[/yellow]"
-        )
-    visible_issues, omitted_issues = select_visible_issues(summary.issues, max_issues)
-    for issue in visible_issues:
-        console.print(f"  [yellow]- {issue}[/yellow]")
-    if omitted_issues:
-        console.print(f"  [yellow]其余 {omitted_issues} 条错误已省略。[/yellow]")
 
 
 def main() -> None:

@@ -206,7 +206,7 @@ def test_valid_response_parses_and_passes_coverage() -> None:
 
     result, raw = consolidate_with_correction(consolidation_input(), client)
 
-    assert client.calls == 3
+    assert client.calls == 2
     assert len(result.canonical_requirements) == 1
     assert result.canonical_requirements[0].canonical_name == "能力甲使用经验"
     assert len(result.mappings) == 2
@@ -277,7 +277,7 @@ def test_retry_feeds_correction_and_succeeds() -> None:
 
     result, _ = consolidate_with_correction(consolidation_input(), client)
 
-    assert client.calls == 4
+    assert client.calls == 3
     assert len(result.mappings) == 2
     assert "上次校验错误" in client.prompts[1]
 
@@ -291,7 +291,7 @@ def test_retry_repeats_original_prompt_after_llm_call_error() -> None:
 
     result, _ = consolidate_with_correction(consolidation_input(), client)
 
-    assert client.calls == 4
+    assert client.calls == 3
     assert len(result.mappings) == 2
     assert client.prompts[1] == client.prompts[0]
 

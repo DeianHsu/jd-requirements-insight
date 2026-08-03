@@ -153,7 +153,7 @@ def test_successful_run_reports_counts(tmp_path: Path) -> None:
     assert summary.canonical_count == 1
     assert summary.relation_count == 0
     assert summary.failed == 0
-    assert client.calls == 3
+    assert client.calls == 2
 
 
 def test_failed_run_isolates_error_without_raising(tmp_path: Path) -> None:

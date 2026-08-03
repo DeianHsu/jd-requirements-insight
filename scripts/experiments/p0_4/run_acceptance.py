@@ -59,7 +59,10 @@ def build_input(selection, job_ids: set[int] | None = None):
 
 
 def run_once(client_factory, consolidation_input, chunk_size, max_attempts):
-    """执行一次独立归并运行，返回（result, metadata, raw）。"""
+    """执行一次独立归并运行，返回（result, metadata, raw）。
+
+    P0-4B 是显式实验功能：本脚本（P0-4B 验收）显式开启关系轮。
+    """
     client = client_factory()
     metadata = ConsolidatorMetadata(model_name=client.model_name)
     result, raw = consolidate_with_correction(
@@ -68,6 +71,7 @@ def run_once(client_factory, consolidation_input, chunk_size, max_attempts):
         max_attempts=max_attempts,
         mapping_chunk_size=chunk_size,
         degrade_hierarchy_failure=True,
+        include_relations=True,
     )
     return result, metadata, raw
 

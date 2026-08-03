@@ -236,7 +236,7 @@ class RequirementConsolidationResult(BaseModel):
     uncertain_relations: list[RequirementRelation] = Field(default_factory=list)
     # P0-4B 层级状态：success（关系阶段完成）或 failed（关系阶段失败但
     # P0-4A 事实层有效，已降级保存；不阻塞 P0-6 统计）。
-    hierarchy_status: str = Field(default="success", pattern="^(success|failed)$")
+    hierarchy_status: str = Field(default="not_run", pattern="^(success|failed|not_run)$")
 
     @model_validator(mode="after")
     def result_must_be_internally_consistent(self) -> Self:

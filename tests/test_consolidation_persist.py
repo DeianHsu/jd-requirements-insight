@@ -187,7 +187,7 @@ def test_second_run_is_skipped_without_model_call(tmp_path: Path) -> None:
     assert first.consolidated == 2
     assert second.skipped == 2
     assert second.consolidated == 0
-    assert client.calls == 3
+    assert client.calls == 2
     assert first.consolidation_id == second.consolidation_id == 1
     assert first.input_fingerprint == second.input_fingerprint
     assert consolidation_count(session_factory) == 1
@@ -234,7 +234,7 @@ def test_changed_input_creates_new_batch_with_same_consolidator(
     assert first.consolidated == 2
     assert second.consolidated == 3
     assert second.skipped == 0
-    assert client.calls == 6
+    assert client.calls == 5
     assert first.consolidation_id == 1
     assert second.consolidation_id == 2
     assert first.input_fingerprint != second.input_fingerprint
@@ -248,7 +248,9 @@ def test_persisted_fields_match_contract(tmp_path: Path) -> None:
     client = FakeConsolidationClient(stage_payloads(valid_result_payload()))
     metadata = ConsolidatorMetadata(model_name="test-model")
 
-    consolidate_requirements(session_factory, client, metadata)
+    consolidate_requirements(
+        session_factory, client, metadata, include_relations=True
+    )
 
     with session_factory() as session:
         consolidation = session.scalar(
@@ -452,7 +454,11 @@ def test_relation_stage_failure_saves_facts_with_failed_hierarchy(
     metadata = ConsolidatorMetadata(model_name="test-model")
 
     summary = consolidate_requirements(
-        session_factory, client, metadata, max_attempts=1
+        session_factory,
+        client,
+        metadata,
+        max_attempts=1,
+        include_relations=True,
     )
 
     assert summary.failed == 0
@@ -490,7 +496,9 @@ def test_uncertain_relations_create_no_persisted_edges(tmp_path: Path) -> None:
     client = FakeConsolidationClient(stage_payloads(payload))
     metadata = ConsolidatorMetadata(model_name="test-model")
 
-    summary = consolidate_requirements(session_factory, client, metadata)
+    summary = consolidate_requirements(
+        session_factory, client, metadata, include_relations=True
+    )
 
     assert summary.relation_count == 1
     assert summary.uncertain_count == 1
@@ -517,7 +525,9 @@ def test_none_relations_persist_no_records(tmp_path: Path) -> None:
     client = FakeConsolidationClient(stage_payloads(payload))
     metadata = ConsolidatorMetadata(model_name="test-model")
 
-    summary = consolidate_requirements(session_factory, client, metadata)
+    summary = consolidate_requirements(
+        session_factory, client, metadata, include_relations=True
+    )
 
     assert summary.relation_count == 0
     assert summary.uncertain_count == 0
