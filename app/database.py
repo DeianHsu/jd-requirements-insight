@@ -22,6 +22,60 @@ _DELETED_COLUMNS = {
     "requirement_mappings": ("status", "candidate_requirement_ids"),
 }
 
+# 当前主线依赖的关键表与关键列（现行归并 Schema）。
+_REQUIRED_TABLES = (
+    "job_descriptions",
+    "job_extractions",
+    "job_requirements",
+    "job_consolidations",
+    "canonical_requirements",
+    "requirement_mappings",
+)
+_REQUIRED_COLUMNS = {
+    "job_descriptions": {"id", "source_hash", "source_file", "raw_text"},
+    "job_extractions": {
+        "id",
+        "job_id",
+        "extractor_version",
+        "prompt_version",
+        "schema_version",
+    },
+    "job_requirements": {
+        "id",
+        "extraction_id",
+        "raw_name",
+        "importance",
+        "proficiency",
+        "group_logic",
+        "evidence",
+    },
+    "job_consolidations": {
+        "id",
+        "scope_key",
+        "consolidator_version",
+        "input_fingerprint",
+        "extractor_version",
+        "occurrence_count",
+    },
+    "canonical_requirements": {
+        "id",
+        "consolidation_id",
+        "canonical_requirement_id",
+        "canonical_name",
+        "source_requirement_ids",
+        "rationale",
+        "confidence",
+    },
+    "requirement_mappings": {
+        "id",
+        "consolidation_id",
+        "requirement_id",
+        "canonical_requirement_id",
+        "rationale",
+        "confidence",
+    },
+}
+
 
 @event.listens_for(Engine, "connect")
 def _enable_sqlite_foreign_keys(dbapi_connection, connection_record) -> None:
@@ -60,20 +114,24 @@ def create_session_factory(engine: Engine) -> sessionmaker[Session]:
 
 
 def assert_current_database_schema(engine: Engine) -> None:
-    """检测旧派生数据库结构并明确拒绝。
+    """检查数据库属于当前结构；发现缺失或旧结构时明确拒绝。
 
-    当前代码只支持 v0.8 + Schema V3 对应的现行数据库结构。发现已删除的
-    表（job_responsibilities、requirement_relations）或旧列
-    （job_consolidations.hierarchy_status、requirement_mappings.status、
-    requirement_mappings.candidate_requirement_ids）时立即抛出清晰错误：
-    不迁移、不兼容、不自动删除，要求用户备份原始 JD 后重建。
+    只允许两种状态：完全空数据库（无任何项目业务表，可 create_all 创建
+    当前结构），或已存在当前完整结构（关键表齐全且含关键列）。存在部分
+    业务表、旧表、旧列、当前业务表缺少必需列时立即抛出清晰错误：
+
+    - 不自动迁移、不自动补列、不自动删除；
+    - 不在旧数据库上静默执行 create_all()；
+    - 错误必须在主要业务查询或写入之前出现。
     """
     inspector = inspect(engine)
     existing_tables = set(inspector.get_table_names())
     violations: list[str] = []
+
+    # 1. 旧结构拒绝。
     for table in _DELETED_TABLES:
         if table in existing_tables:
-            violations.append(f"表 {table}")
+            violations.append(f"旧表 {table}")
     for table, columns in _DELETED_COLUMNS.items():
         if table not in existing_tables:
             continue
@@ -82,20 +140,38 @@ def assert_current_database_schema(engine: Engine) -> None:
         }
         for column in columns:
             if column in existing_columns:
-                violations.append(f"表 {table}.{column}")
+                violations.append(f"旧列 {table}.{column}")
+
+    # 2. 部分业务表拒绝（非空库必须包含全部当前必需表）。
+    business_tables = existing_tables & set(_REQUIRED_TABLES)
+    if business_tables and business_tables != set(_REQUIRED_TABLES):
+        missing_tables = sorted(set(_REQUIRED_TABLES) - business_tables)
+        violations.append(f"缺少必需表：{missing_tables}")
+
+    # 3. 当前必需列缺失拒绝。
+    for table in _REQUIRED_TABLES:
+        if table not in existing_tables:
+            continue
+        existing_columns = {
+            column["name"] for column in inspector.get_columns(table)
+        }
+        missing_columns = sorted(_REQUIRED_COLUMNS[table] - existing_columns)
+        if missing_columns:
+            violations.append(f"表 {table} 缺少必需列：{missing_columns}")
+
     if violations:
         raise RuntimeError(
-            "检测到旧派生数据库结构（" + "、".join(violations) + "）。\n"
-            "当前代码只支持 v0.8 + Schema V3。\n"
+            "检测到非当前数据库结构：" + "；".join(violations) + "。\n"
+            "当前代码只支持现行归并 Schema。\n"
             "请先备份 data/raw_jds/，删除旧派生数据库并重新生成。"
         )
 
 
 def initialize_database(engine: Engine) -> None:
-    """创建当前数据库结构；检测到旧派生结构时明确拒绝，不静默继续。
+    """创建当前数据库结构；检测到缺失或旧派生结构时明确拒绝。
 
-    旧抽取结果或旧数据库结构不做兼容或迁移；遇到旧数据时明确提示
-    备份原始 JD、删除旧派生数据库并重新生成。
+    完全空数据库由 `Base.metadata.create_all()` 创建当前结构；非空库
+    必须已具备当前完整结构，否则报错要求用户备份重建。
     """
     assert_current_database_schema(engine)
     Base.metadata.create_all(engine)

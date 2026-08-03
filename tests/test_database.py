@@ -80,7 +80,7 @@ def test_legacy_relation_table_is_rejected(tmp_path: Path) -> None:
     )
     engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
 
-    with pytest.raises(RuntimeError, match="旧派生数据库结构"):
+    with pytest.raises(RuntimeError, match="非当前数据库结构"):
         initialize_database(engine)
     engine.dispose()
 
@@ -96,7 +96,7 @@ def test_legacy_mapping_columns_are_rejected(tmp_path: Path) -> None:
     )
     engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
 
-    with pytest.raises(RuntimeError, match="旧派生数据库结构"):
+    with pytest.raises(RuntimeError, match="非当前数据库结构"):
         initialize_database(engine)
     engine.dispose()
 
@@ -111,29 +111,31 @@ def test_legacy_hierarchy_column_is_rejected(tmp_path: Path) -> None:
     )
     engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
 
-    with pytest.raises(RuntimeError, match="旧派生数据库结构"):
+    with pytest.raises(RuntimeError, match="非当前数据库结构"):
         initialize_database(engine)
     engine.dispose()
 
 
-def test_rejection_message_includes_backup_and_rebuild_hint() -> None:
-    """错误信息包含备份与重新生成提示（不自动删除、不迁移）。"""
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as directory:
-        database_path = Path(directory) / "legacy.db"
-        _create_legacy_table(
-            database_path,
-            "CREATE TABLE requirement_relations (id INTEGER PRIMARY KEY)",
-        )
-        engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
-
+def test_rejection_message_includes_backup_and_rebuild_hint(
+    tmp_path: Path,
+) -> None:
+    """错误信息包含具体结构问题与备份重建提示（不自动删除、不迁移）。"""
+    database_path = tmp_path / "legacy.db"
+    _create_legacy_table(
+        database_path,
+        "CREATE TABLE requirement_relations (id INTEGER PRIMARY KEY)",
+    )
+    engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
+    try:
         with pytest.raises(RuntimeError) as exc_info:
             initialize_database(engine)
         message = str(exc_info.value)
-        assert "当前代码只支持 v0.8 + Schema V3" in message
+        assert "非当前数据库结构" in message
+        assert "旧表 requirement_relations" in message
+        assert "当前代码只支持现行归并 Schema" in message
         assert "备份 data/raw_jds/" in message
         assert "删除旧派生数据库并重新生成" in message
+    finally:
         engine.dispose()
 
 
@@ -147,3 +149,37 @@ def test_assert_current_database_schema_passes_on_fresh_database(
 
     assert_current_database_schema(engine)  # 不抛异常
     engine.dispose()
+
+
+def test_missing_source_requirement_ids_column_is_rejected(
+    tmp_path: Path,
+) -> None:
+    """存在 canonical_requirements 但缺少 source_requirement_ids 时拒绝。"""
+    database_path = tmp_path / "missing_source.db"
+    _create_legacy_table(
+        database_path,
+        "CREATE TABLE canonical_requirements ("
+        "id INTEGER PRIMARY KEY, canonical_requirement_id VARCHAR(100), "
+        "canonical_name VARCHAR(255))",
+    )
+    engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
+    try:
+        with pytest.raises(RuntimeError, match="source_requirement_ids"):
+            initialize_database(engine)
+    finally:
+        engine.dispose()
+
+
+def test_partial_business_tables_are_rejected(tmp_path: Path) -> None:
+    """只存在部分当前业务表时拒绝（不允许在残缺库上静默建表）。"""
+    database_path = tmp_path / "partial.db"
+    _create_legacy_table(
+        database_path,
+        "CREATE TABLE job_descriptions (id INTEGER PRIMARY KEY)",
+    )
+    engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
+    try:
+        with pytest.raises(RuntimeError, match="缺少必需表"):
+            initialize_database(engine)
+    finally:
+        engine.dispose()
