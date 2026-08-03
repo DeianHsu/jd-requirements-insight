@@ -17,12 +17,17 @@ from app.config import LLMSettings
 from app.models import JobDescription, JobExtraction, JobRequirement, JobResponsibility
 from app.schemas import JobExtractionResult, ResponsibilityItem
 
-PROMPT_VERSION = "0.7"
+# active 正式抽取版本：v0.6 + Schema V2（两段式，LEGACY Gold protocol 下批准）。
+# candidate：v0.8 + Schema V3（三级熟练度，见 app/extraction_two_stage.py 的
+# CANDIDATE_EXTRACTION_PROFILE）；v0.7 为历史未批准候选版本。
+# PROMPT_VERSION / SCHEMA_VERSION 必须与 extraction_two_stage.py 的
+# TWO_STAGE_PROMPT_VERSION / TWO_STAGE_SCHEMA_VERSION 保持同步。
+PROMPT_VERSION = "0.6"
 SCHEMA_VERSION = "2.0"
 
-# 正式版本已切换为两段式 v0.6（见 app/extraction_two_stage.py 的
-# TWO_STAGE_PROMPT_VERSION，两者必须保持同步）；下方 SYSTEM_PROMPT 为
-# 被替换的历史版本 V2.3.1，仅保留用于实验对比与历史结果复现。
+# 正式版本仍为两段式 v0.6（见 app/extraction_two_stage.py 的
+# ACTIVE_EXTRACTION_PROFILE）；下方 SYSTEM_PROMPT 为被替换的历史版本
+# V2.3.1，仅保留用于实验对比与历史结果复现。
 SYSTEM_PROMPT = """你是招聘JD结构化抽取器，只能依据用户提供的JD原文输出JSON。
 
 【任务边界】

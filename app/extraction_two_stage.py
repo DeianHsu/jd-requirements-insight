@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -23,10 +24,16 @@ from app.extraction import (
 from app.models import JobDescription
 from app.schemas import JobExtractionResult, RoleFamily, Seniority
 
-# 两段式正式版本号（v0.7 起 Prompt 引用 P0-1 稳定规则 ID 并删除案例式补丁；
-# v0.6 在 legacy Gold protocol 下批准，历史 Prompt 见 LEGACY_*_V06 常量）。
-# 必须与 app/extraction.py 的 PROMPT_VERSION 保持同步。
-TWO_STAGE_PROMPT_VERSION = "0.7"
+# 版本身份：
+# - active：v0.6 + Schema V2（LEGACY_*_V06 Prompt，正式可运行版本）
+# - candidate：v0.8 + Schema V3（规则化 Prompt + 三级熟练度，未验收不得替换 active）
+# - v0.7：历史未批准候选版本（规则化 Prompt 引入规则 ID），无实际结果，
+#   Prompt 全文由 Git 历史（提交 8a6e373）承担复现，不保留额外常量。
+# 必须与 app/extraction.py 的 PROMPT_VERSION / SCHEMA_VERSION 保持同步。
+TWO_STAGE_PROMPT_VERSION = "0.6"
+TWO_STAGE_SCHEMA_VERSION = "2.0"
+CANDIDATE_PROMPT_VERSION = "0.8"
+CANDIDATE_SCHEMA_VERSION = "3.0"
 
 # 发现段Prompt：只做全局扫描与分句归属，不做拆分与字段判断。
 DISCOVERY_SYSTEM_PROMPT = """你是招聘JD结构化分析的第一阶段：全局发现。通读用户提供的完整JD原文，只完成三件事，不做任何拆分、原子化或字段判断。
@@ -66,8 +73,8 @@ LEGACY_DISCOVERY_SYSTEM_PROMPT_V06 = """你是招聘JD结构化分析的第一�
 4. 严格按照用户提供的JSON结构输出一个JSON对象，不要输出Markdown代码块或额外说明。"""
 
 # 判断段Prompt：只做局部语义判断，直接输出完整抽取数据合同。
-# v0.7：规则引用 docs/annotation/ 的稳定规则 ID（RESP/REQ/GROUP/FIELD/EVID/COVER），
-# 删除针对单个历史 case 的补丁式示例，保留少量领域中性正反例。
+# v0.8：基于 v0.7 规则化 Prompt（规则 ID 引用），FIELD-03 熟练度收缩为
+# 三级枚举（unknown/basic/advanced），删除旧五级输出说明。
 JUDGE_SYSTEM_PROMPT = """你是招聘JD结构化分析的第二阶段：精细判断。输入是第一阶段的候选块列表（每个块含原文连续证据与归属），请对每个候选块做以下判断并输出完整抽取数据合同JSON。规则编号与 P0-1 语义决策规则对应（docs/annotation/）。
 
 【职责判断（RESP-01～RESP-07）】
@@ -98,7 +105,7 @@ JUDGE_SYSTEM_PROMPT = """你是招聘JD结构化分析的第二阶段：精细�
 2. GROUP-02：any_of组内各成员输出相同group_id（字符串，如"group_1"）和group_logic="any_of"，且同一组至少包含两个成员；普通独立要求必须输出group_logic="standalone"、group_id=null。group_logic不允许为null，group_id不允许输出数字。
 3. GROUP-03：多个候选项共同受"优先""加分"或"相关项目经验者优先"修饰，并且具备任一项即可形成同类加分时，各候选项使用preferred并共享同一个any_of组。
 4. 正反例（领域中性，按同类结构判断）：
-   - 正："至少精通一门主流后端开发语言（如 甲、乙 等）"：括号内容是非穷举示例，只保留"主流后端开发语言"standalone，proficiency=expert（GROUP-01）；
+   - 正："至少精通一门主流后端开发语言（如 甲、乙 等）"：括号内容是非穷举示例，只保留"主流后端开发语言"standalone，proficiency=advanced（GROUP-01）；
    - 正："熟悉至少一种开发框架（甲 / 乙 / 丙 等）"：甲、乙、丙被"至少一种"直接修饰，拆成3个any_of成员（GROUP-01）；
    - 反："熟悉 甲、乙 等主流框架"：甲、乙被候选条件直接修饰，必须逐项保留为standalone，不得改写成上位概念（REQ-07）。
 5. REQ-08：具体模型名只用于修饰上位经验类型时，不单独标注模型（保留在证据中）。
@@ -106,7 +113,12 @@ JUDGE_SYSTEM_PROMPT = """你是招聘JD结构化分析的第二阶段：精细�
 【字段判断（FIELD-01～FIELD-05）】
 1. FIELD-01：category必须输出枚举值（programming_language、backend_engineering、agent_framework、agent_capability、rag、llm_application、model_training、ml_framework、retrieval、deployment、software_engineering、domain_knowledge、education、experience、soft_skill、other），不要输出中文类别名；无法归类时用other。
 2. FIELD-02：importance：任职要求普通条件为must；明确"优先""加分"为preferred；只提及未要求为mentioned；无法判断为unknown。必须输出枚举值，不要输出中文。
-3. FIELD-03：proficiency：只按明确程度词判断并输出枚举值："了解"→understand、"熟悉"→familiar、"熟练/扎实"→proficient、"精通"→expert、无明确程度词→unknown；"使用经验""项目经验"不得推断熟练度，使用unknown。不要输出"熟悉""精通"等中文程度词。
+3. FIELD-03：proficiency 使用三级枚举并输出枚举值（unknown/basic/advanced）：
+   - unknown：没有明确程度词，或仅出现使用经验、项目经验、有经验、参与过等表达（不得推断程度）；
+   - basic：了解、理解、熟悉、能够使用、具备基础使用能力；
+   - advanced：掌握、熟练、扎实、精通、专家级。
+   不要输出中文程度词，也不要输出旧五级枚举值；
+   "使用经验""项目经验"不得推断熟练度，使用unknown；原始程度词保留在evidence中。
 4. FIELD-04：年限只提取原文明示的数字，不估算年限；min_years为下限，max_years只保存原文上限，years_text保留完整年限表达；无法判断使用null；年限上下限不得颠倒。
 5. FIELD-05：不确定的字段使用unknown或null，不得猜测。
 
@@ -129,7 +141,7 @@ JUDGE_SYSTEM_PROMPT = """你是招聘JD结构化分析的第二阶段：精细�
 3. requirements中的每一项必须包含以下全部字段：raw_name、category、importance、proficiency、group_id、group_logic、min_years、max_years、years_text、evidence、confidence。不要用name替代raw_name，不要省略字段（不适用时用null）。
 4. 不要输出Markdown代码块或额外说明。"""
 
-# v0.6 历史判断段Prompt（legacy Gold protocol 下批准的正式版本，仅保留供历史复现）。
+# v0.6 历史判断段Prompt（legacy Gold protocol 下批准的正式版本，active 使用）。
 LEGACY_JUDGE_SYSTEM_PROMPT_V06 = """你是招聘JD结构化分析的第二阶段：精细判断。输入是第一阶段的候选块列表（每个块含原文连续证据与归属），请对每个候选块做以下判断并输出完整抽取数据合同JSON。
 
 【职责判断：先覆盖、后分组】
@@ -194,6 +206,38 @@ LEGACY_JUDGE_SYSTEM_PROMPT_V06 = """你是招聘JD结构化分析的第二阶段
 2. responsibilities中的每一项必须包含name和evidence两个字段。
 3. requirements中的每一项必须包含以下全部字段：raw_name、category、importance、proficiency、group_id、group_logic、min_years、max_years、years_text、evidence、confidence。不要用name替代raw_name，不要省略字段（不适用时用null）。
 4. 不要输出Markdown代码块或额外说明。"""
+
+
+@dataclass(frozen=True)
+class ExtractionProfile:
+    """一组可显式选择的抽取配置：版本身份 + 发现/判断 Prompt 文本。
+
+    区分 active（正式可运行）、candidate（待验收候选）与 legacy/historical
+    （历史版本，由 Git 或常量复现）；验收脚本必须显式选择 profile，
+    不得依赖全局常量间接选择。
+    """
+
+    prompt_version: str
+    schema_version: str
+    discovery_prompt: str
+    judge_prompt: str
+
+
+# 正式可运行版本：v0.6 + Schema V2（LEGACY Gold protocol 下批准）。
+ACTIVE_EXTRACTION_PROFILE = ExtractionProfile(
+    prompt_version=TWO_STAGE_PROMPT_VERSION,
+    schema_version=TWO_STAGE_SCHEMA_VERSION,
+    discovery_prompt=LEGACY_DISCOVERY_SYSTEM_PROMPT_V06,
+    judge_prompt=LEGACY_JUDGE_SYSTEM_PROMPT_V06,
+)
+
+# 待验收候选版本：v0.8 + Schema V3（规则化 Prompt + 三级熟练度）。
+CANDIDATE_EXTRACTION_PROFILE = ExtractionProfile(
+    prompt_version=CANDIDATE_PROMPT_VERSION,
+    schema_version=CANDIDATE_SCHEMA_VERSION,
+    discovery_prompt=DISCOVERY_SYSTEM_PROMPT,
+    judge_prompt=JUDGE_SYSTEM_PROMPT,
+)
 
 
 class CandidateBlock(BaseModel):
@@ -351,9 +395,12 @@ def extract_job_two_stage(
     job: JobDescription,
     client: ExtractionClient,
     max_attempts: int = 2,
+    profile: ExtractionProfile = ACTIVE_EXTRACTION_PROFILE,
 ) -> tuple[JobExtractionResult, dict[str, object]]:
-    """对一份JD执行发现段与判断段两次调用，并做确定性覆盖与证据校验。"""
-    _, result, raw = extract_job_two_stage_with_discovery(job, client, max_attempts)
+    """按指定 profile 对一份JD执行发现段与判断段两次调用，默认 active v0.6。"""
+    _, result, raw = extract_job_two_stage_with_discovery(
+        job, client, max_attempts, profile
+    )
     return result, raw
 
 
@@ -361,8 +408,9 @@ def extract_job_two_stage_with_discovery(
     job: JobDescription,
     client: ExtractionClient,
     max_attempts: int = 2,
+    profile: ExtractionProfile = ACTIVE_EXTRACTION_PROFILE,
 ) -> tuple[DiscoveryResult, JobExtractionResult, dict[str, object]]:
-    """两段式抽取并返回发现段结果，供验证与审计记录使用（接口与两段式原版兼容）。"""
+    """两段式抽取并返回发现段结果，供验证与审计记录使用（profile 显式选择）。"""
     # 发现段：全局扫描，失败时把校验错误反馈重试。
     correction = None
     discovery: DiscoveryResult | None = None
@@ -370,7 +418,7 @@ def extract_job_two_stage_with_discovery(
         prompt = build_discovery_user_prompt(job)
         if correction is not None:
             prompt = f"{prompt}\n\n【上次校验错误，请修正后重新输出】\n{correction}"
-        response_text = client.complete(DISCOVERY_SYSTEM_PROMPT, prompt)
+        response_text = client.complete(profile.discovery_prompt, prompt)
         try:
             candidate = parse_discovery_response(response_text)
             validate_discovery_coverage(candidate, job.raw_text)
@@ -389,7 +437,7 @@ def extract_job_two_stage_with_discovery(
         prompt = build_judge_user_prompt(job, discovery)
         if correction is not None:
             prompt = f"{prompt}\n\n【上次校验错误，请修正后重新输出】\n{correction}"
-        response_text = client.complete(JUDGE_SYSTEM_PROMPT, prompt)
+        response_text = client.complete(profile.judge_prompt, prompt)
         try:
             result = parse_model_response(response_text)
             validate_evidence(result, job.raw_text)
