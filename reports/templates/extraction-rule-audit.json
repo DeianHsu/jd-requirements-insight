@@ -1,0 +1,32 @@
+{
+  "template_version": "1.0",
+  "description": "抽取规则人工审计记录模板（P0-3 新协议，DEC-015）。人工审计是正式验收的组成部分，但不是完整 Gold：不提供唯一答案，只按规则 ID 检查输出是否违反规则、证据是否支持结论（evidence semantic support）。真实 JD 内容不得写入本模板或公开报告；evidence_reference 只引用私有输出位置。",
+  "audit_fields": [
+    "audit_id",
+    "extractor_version",
+    "scenario_or_job_id",
+    "rule_id",
+    "violation",
+    "severity",
+    "evidence_reference",
+    "reason",
+    "recommended_action",
+    "reviewer",
+    "reviewed_at"
+  ],
+  "severity_enum": ["high", "medium", "low"],
+  "recommended_action_enum": ["modify_rule", "modify_prompt", "modify_code", "accept_difference"],
+  "example": {
+    "audit_id": "AUD-2026-0001",
+    "extractor_version": "deepseek-v4-flash|prompt:0.8|schema:3.0",
+    "scenario_or_job_id": "SCN-005",
+    "rule_id": "FIELD-03",
+    "violation": "目标项 proficiency 未从 basic 变为 advanced",
+    "severity": "medium",
+    "evidence_reference": "data/private/experiments/p0_3/<run-identifier>-raw.json",
+    "reason": "熟悉->精通 应映射 basic->advanced；模型输出未变化",
+    "recommended_action": "modify_prompt",
+    "reviewer": "",
+    "reviewed_at": ""
+  }
+}

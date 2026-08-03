@@ -23,6 +23,7 @@ data/private/
 # 本地生成的分析报告不默认上传。
 reports/*
 !reports/README.md
+!reports/templates/
 
 # Reasonix本地会话、记忆与配置，不上传
 .reasonix/
