@@ -7,18 +7,11 @@ import pytest
 
 from app.extraction import PROMPT_VERSION, SCHEMA_VERSION, ExtractionError
 from app.extraction_two_stage import (
-    ACTIVE_EXTRACTION_PROFILE,
-    CANDIDATE_EXTRACTION_PROFILE,
-    CANDIDATE_PROMPT_VERSION,
-    CANDIDATE_SCHEMA_VERSION,
     DISCOVERY_SYSTEM_PROMPT,
     JUDGE_SYSTEM_PROMPT,
-    LEGACY_DISCOVERY_SYSTEM_PROMPT_V06,
-    LEGACY_JUDGE_SYSTEM_PROMPT_V06,
     TWO_STAGE_PROMPT_VERSION,
     TWO_STAGE_SCHEMA_VERSION,
     extract_job_two_stage,
-    extract_job_two_stage_with_discovery,
     parse_discovery_response,
     split_sentences,
     validate_discovery_coverage,
@@ -134,9 +127,10 @@ def test_split_sentences_is_deterministic() -> None:
 
 
 def test_two_stage_prompts_are_domain_agnostic() -> None:
-    """验证两段Prompt不绑定任何具体领域技能，active 版本号与抽取器一致。"""
-    assert TWO_STAGE_PROMPT_VERSION == "0.6"
+    """验证两段Prompt不绑定任何具体领域技能，当前版本号与抽取器一致。"""
+    assert TWO_STAGE_PROMPT_VERSION == "0.8"
     assert PROMPT_VERSION == TWO_STAGE_PROMPT_VERSION
+    assert SCHEMA_VERSION == TWO_STAGE_SCHEMA_VERSION == "3.0"
     for domain_word in ("Python", "RAG", "LangChain", "Agent", "大模型", "AI"):
         assert domain_word not in DISCOVERY_SYSTEM_PROMPT
         assert domain_word not in JUDGE_SYSTEM_PROMPT
@@ -145,24 +139,8 @@ def test_two_stage_prompts_are_domain_agnostic() -> None:
     assert "proficiency" in JUDGE_SYSTEM_PROMPT
 
 
-def test_active_and_candidate_profiles_are_isolated() -> None:
-    """active（v0.6+Schema V2）与 candidate（v0.8+Schema V3）版本隔离。"""
-    assert ACTIVE_EXTRACTION_PROFILE.prompt_version == "0.6"
-    assert ACTIVE_EXTRACTION_PROFILE.schema_version == "2.0"
-    assert ACTIVE_EXTRACTION_PROFILE.discovery_prompt == LEGACY_DISCOVERY_SYSTEM_PROMPT_V06
-    assert ACTIVE_EXTRACTION_PROFILE.judge_prompt == LEGACY_JUDGE_SYSTEM_PROMPT_V06
-    assert CANDIDATE_EXTRACTION_PROFILE.prompt_version == "0.8"
-    assert CANDIDATE_EXTRACTION_PROFILE.schema_version == "3.0"
-    assert CANDIDATE_EXTRACTION_PROFILE.discovery_prompt == DISCOVERY_SYSTEM_PROMPT
-    assert CANDIDATE_EXTRACTION_PROFILE.judge_prompt == JUDGE_SYSTEM_PROMPT
-    assert CANDIDATE_PROMPT_VERSION == "0.8"
-    assert CANDIDATE_SCHEMA_VERSION == "3.0"
-    assert TWO_STAGE_SCHEMA_VERSION == "2.0"
-    assert SCHEMA_VERSION == "2.0"
-
-
 def test_judge_prompt_uses_three_level_proficiency() -> None:
-    """候选 Judge Prompt 使用三级熟练度且不输出旧五级枚举。"""
+    """Judge Prompt 使用三级熟练度且不输出旧五级枚举。"""
     for value in ("unknown", "basic", "advanced"):
         assert value in JUDGE_SYSTEM_PROMPT
     for old_value in ("understand", "familiar", "proficient", "expert"):
@@ -170,18 +148,8 @@ def test_judge_prompt_uses_three_level_proficiency() -> None:
     assert "项目经验" in JUDGE_SYSTEM_PROMPT
 
 
-def test_default_extraction_uses_active_profile() -> None:
-    """普通抽取默认使用 active v0.6，不调用 candidate v0.8。"""
-    import inspect
-
-    signature = inspect.signature(extract_job_two_stage_with_discovery)
-    assert signature.parameters["profile"].default is ACTIVE_EXTRACTION_PROFILE
-    signature = inspect.signature(extract_job_two_stage)
-    assert signature.parameters["profile"].default is ACTIVE_EXTRACTION_PROFILE
-
-
 def test_judge_prompt_references_stable_rule_ids() -> None:
-    """v0.7 判断段 Prompt 引用 P0-1 稳定规则 ID，便于测试与审计追溯。"""
+    """判断段 Prompt 引用 P0-1 稳定规则 ID，便于测试与审计追溯。"""
     for rule_id in (
         "RESP-01",
         "RESP-02",
@@ -208,25 +176,13 @@ def test_discovery_prompt_references_coverage_rule_ids() -> None:
 
 
 def test_judge_prompt_removed_historical_case_patches() -> None:
-    """v0.7 删除针对单个历史 case 的补丁式示例，历史内容保留在 LEGACY 常量。"""
+    """当前 Prompt 不包含针对单个历史 case 的补丁式示例。"""
     for case_patch_marker in (
         "新一代架构",
         "能力模型的调研",
         "信息检索",
     ):
         assert case_patch_marker not in JUDGE_SYSTEM_PROMPT
-        assert case_patch_marker in LEGACY_JUDGE_SYSTEM_PROMPT_V06
-
-
-def test_legacy_v06_prompts_are_preserved() -> None:
-    """v0.6 历史 Prompt 全文保留为 LEGACY 常量，active 正式使用。"""
-    assert LEGACY_DISCOVERY_SYSTEM_PROMPT_V06
-    assert LEGACY_JUDGE_SYSTEM_PROMPT_V06
-    assert "每个分句都必须出现在某个候选块的sentence_indexes中" in (
-        LEGACY_DISCOVERY_SYSTEM_PROMPT_V06
-    )
-    assert "参与设计和实现新一代架构" in LEGACY_JUDGE_SYSTEM_PROMPT_V06
-    assert "新一代架构" not in JUDGE_SYSTEM_PROMPT
 
 
 def test_discovery_coverage_passes_when_all_sentences_covered() -> None:

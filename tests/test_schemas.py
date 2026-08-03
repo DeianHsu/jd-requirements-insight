@@ -3,13 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from app.schemas import (
-    JobExtractionResult,
-    LEGACY_PROFICIENCY_MAP,
-    ProficiencyLevel,
-    RequirementItem,
-    map_legacy_proficiency,
-)
+from app.schemas import JobExtractionResult, ProficiencyLevel, RequirementItem
 
 
 def requirement_payload(**overrides: object) -> dict[str, object]:
@@ -18,7 +12,7 @@ def requirement_payload(**overrides: object) -> dict[str, object]:
         "raw_name": "Python",
         "category": "programming_language",
         "importance": "must",
-        "proficiency": "familiar",
+        "proficiency": "basic",
         "group_id": None,
         "group_logic": "standalone",
         "min_years": None,
@@ -107,7 +101,7 @@ def test_legacy_years_required_is_loaded_as_min_years() -> None:
 
 
 def test_proficiency_enum_has_only_three_levels() -> None:
-    """Schema V3 熟练度只包含 unknown/basic/advanced（测试 12 的枚举面）。"""
+    """Schema V3 熟练度只包含 unknown/basic/advanced。"""
     assert {level.value for level in ProficiencyLevel} == {
         "unknown",
         "basic",
@@ -115,66 +109,40 @@ def test_proficiency_enum_has_only_three_levels() -> None:
     }
 
 
-def test_basic_words_map_to_basic() -> None:
-    """了解、熟悉 → basic（测试 6）。"""
-    assert map_legacy_proficiency("understand") is ProficiencyLevel.BASIC
-    assert map_legacy_proficiency("familiar") is ProficiencyLevel.BASIC
-    assert map_legacy_proficiency("basic") is ProficiencyLevel.BASIC
+def test_three_level_values_are_accepted() -> None:
+    """unknown/basic/advanced 均被接受。"""
+    for value in ("unknown", "basic", "advanced"):
+        requirement = RequirementItem.model_validate(
+            requirement_payload(proficiency=value)
+        )
+        assert requirement.proficiency.value == value
 
 
-def test_advanced_words_map_to_advanced() -> None:
-    """掌握、熟练、精通 → advanced（测试 7）。"""
-    assert map_legacy_proficiency("proficient") is ProficiencyLevel.ADVANCED
-    assert map_legacy_proficiency("expert") is ProficiencyLevel.ADVANCED
-    assert map_legacy_proficiency("advanced") is ProficiencyLevel.ADVANCED
-
-
-def test_experience_expressions_map_to_unknown() -> None:
-    """项目经验、使用经验表达在抽取语义上映射为 unknown（测试 8）。"""
-    # 抽取层输出 unknown 是模型职责；这里验证 old 值 unknown 与三级值一致。
-    assert map_legacy_proficiency("unknown") is ProficiencyLevel.UNKNOWN
-
-
-def test_legacy_map_covers_all_five_values() -> None:
-    """V2 五种值均可正确映射（测试 10）。"""
-    assert set(LEGACY_PROFICIENCY_MAP) == {
-        "understand",
-        "familiar",
-        "proficient",
-        "expert",
-    }
-    assert LEGACY_PROFICIENCY_MAP["understand"] is ProficiencyLevel.BASIC
-    assert LEGACY_PROFICIENCY_MAP["familiar"] is ProficiencyLevel.BASIC
-    assert LEGACY_PROFICIENCY_MAP["proficient"] is ProficiencyLevel.ADVANCED
-    assert LEGACY_PROFICIENCY_MAP["expert"] is ProficiencyLevel.ADVANCED
+def test_legacy_five_level_values_are_rejected() -> None:
+    """旧 Schema V2 五级值明确拒绝，不再兼容映射，提示重新抽取。"""
+    for old_value in ("understand", "familiar", "proficient", "expert"):
+        with pytest.raises(ValidationError, match="重新抽取"):
+            RequirementItem.model_validate(
+                requirement_payload(proficiency=old_value)
+            )
 
 
 def test_none_value_is_rejected() -> None:
-    """none 被 Schema V3 拒绝（测试 9）。"""
-    with pytest.raises(ValidationError, match="未知熟练度值"):
+    """none 被 Schema V3 拒绝。"""
+    with pytest.raises(ValidationError, match="重新抽取"):
         RequirementItem.model_validate(requirement_payload(proficiency="none"))
 
 
 def test_unknown_illegal_value_fails_explicitly() -> None:
     """未知非法值明确失败，不静默归入 unknown。"""
-    with pytest.raises(ValidationError, match="未知熟练度值"):
+    with pytest.raises(ValidationError, match="重新抽取"):
         RequirementItem.model_validate(requirement_payload(proficiency="beginner"))
-    with pytest.raises(ValidationError, match="未知熟练度值"):
+    with pytest.raises(ValidationError, match="重新抽取"):
         RequirementItem.model_validate(requirement_payload(proficiency="intermediate"))
 
 
-def test_legacy_five_level_payload_still_readable() -> None:
-    """旧 V2 五级结果仍可按当前合同读取（测试 11）。"""
-    payload = requirement_payload(proficiency="familiar")
-    requirement = RequirementItem.model_validate(payload)
-    assert requirement.proficiency is ProficiencyLevel.BASIC
-
-    expert = RequirementItem.model_validate(requirement_payload(proficiency="expert"))
-    assert expert.proficiency is ProficiencyLevel.ADVANCED
-
-
 def test_new_result_serializes_only_three_levels() -> None:
-    """新结果只保存三级值（测试 12）。"""
+    """新结果只保存三级值。"""
     requirement = RequirementItem.model_validate(
         requirement_payload(proficiency="basic")
     )

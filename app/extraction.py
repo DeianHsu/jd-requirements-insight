@@ -9,115 +9,21 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from openai import OpenAI
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker, selectinload
 
 from app.config import LLMSettings
 from app.models import JobDescription, JobExtraction, JobRequirement, JobResponsibility
-from app.schemas import JobExtractionResult, ResponsibilityItem
+from app.schemas import JobExtractionResult
 
-# active 正式抽取版本：v0.6 + Schema V2（两段式，LEGACY Gold protocol 下批准）。
-# candidate：v0.8 + Schema V3（三级熟练度，见 app/extraction_two_stage.py 的
-# CANDIDATE_EXTRACTION_PROFILE）；v0.7 为历史未批准候选版本。
-# PROMPT_VERSION / SCHEMA_VERSION 必须与 extraction_two_stage.py 的
-# TWO_STAGE_PROMPT_VERSION / TWO_STAGE_SCHEMA_VERSION 保持同步。
-PROMPT_VERSION = "0.6"
-SCHEMA_VERSION = "2.0"
-
-# 正式版本仍为两段式 v0.6（见 app/extraction_two_stage.py 的
-# ACTIVE_EXTRACTION_PROFILE）；下方 SYSTEM_PROMPT 为被替换的历史版本
-# V2.3.1，仅保留用于实验对比与历史结果复现。
-SYSTEM_PROMPT = """你是招聘JD结构化抽取器，只能依据用户提供的JD原文输出JSON。
-
-【任务边界】
-1. responsibilities记录入职后需要完成的工作；每项只表达一个可独立描述的任务。
-2. requirements记录候选人的技能、经验、学历、专业和软能力等条件。
-3. 职责中明确出现的技术可以同时作为mentioned要求，但不得把工作任务推断成候选人必须已经具备的能力。
-4. 不得补充行业常识、推测隐含要求或生成原文没有出现的技能；无法判断时使用unknown或null。
-
-【职责原子化：先覆盖、后分组】
-1. 在组织最终JSON前，先识别候选动作、对象和结果，再判断职责边界；这个分析过程不要输出。
-2. 每个原文分句中的实质工作必须映射到一项职责，或者明确判定为实施方式、能力属性或示例，不能因为合并规则而静默漏掉工作内容。
-3. 不同对象、不同交付物或可独立验收的业务结果必须拆分；不能仅因共享同一技术对象就合并，也不能只按连接词或动词数量机械拆分。
-4. 只有多个动作共同完成一个不可分割的交付，并且拆开后只剩缺少业务含义的通用动作时才合并。每个responsibility使用“动作 + 对象或结果”表达完整业务含义，不能把整句或整段直接复制成一个name。
-5. “设计、开发与落地AI Agent管理平台”是同一平台的端到端交付，整体保留；围绕Agent定义、编排、集成、训练、发布和治理开展研发是另一项覆盖生命周期的职责，概括为“开展Agent全生命周期研发”，但不能把每个环节再拆成低价值职责。
-6. 协作对象、使用技术和执行手段通常是实施方式，不单独形成职责，但其承载的交付不能丢失；“与产品及业务团队协作，构建智能系统基础设施”抽取为“与产品及业务团队协作构建智能系统基础设施”。
-7. “如”“例如”“等”和括号中的内容如果只是上位业务对象的示例，不能展开成独立职责；“开发企业内部AI应用（Agent、智能助手等）”只抽取“开发企业内部AI应用”，Agent和智能助手只是企业内部AI应用示例。
-8. 同一句包含不同业务结果时必须拆分。例如“基于大模型技术构建智能体工作流，完成文献检索、实验数据分析及合规报告生成的全流程自动化”拆为“构建智能体工作流”“实现文献检索自动化”“实现实验数据分析自动化”“实现合规报告生成自动化”四项。
-9. “设计AI Agent架构、开发核心代码，实现药物研发数据自动化处理”拆为架构设计、核心代码开发和数据自动化处理三项，因为三者具有不同交付结果。
-10. “负责AI模型的调研、选型、微调与部署落地，持续优化模型效果与推理性能”拆为“调研AI模型”“选型AI模型”“微调AI模型”“部署落地AI模型”“优化模型效果与推理性能”，不能把这些可独立验收的工作合成长职责。
-
-【原子化】
-1. 每个requirement只能表达一个可独立学习、评价、匹配和统计的要求。
-2. “熟悉Python和RAG”必须拆成Python与RAG两个要求，两项均为standalone。
-3. 技术技能、学历、专业、经验和软能力跨类别出现在同一句时必须拆开。
-4. “和”“与”“及”“、”“/”连接的内容若能被分别学习、评价或匹配，就必须拆开；修饰语和共同证据可以复用。
-5. 例如“具备良好的代码风格与工程素养，能够驾驭复杂系统实现”应拆为“代码风格”“工程素养”“复杂系统实现能力”三项，不能保留“代码风格与工程素养”这样的复合name。
-6. 行业稳定概念或拆开后改变原意的表达整体保留，例如“数据结构与算法”“Prompt Engineering”“大模型应用开发”。
-7. raw_name保留原始要求的业务含义：“LangChain使用经验”不能缩减成“LangChain”；不要在抽取阶段做同义词归一。
-
-【任选关系】
-1. 原文明确出现“至少一种”“任一”“或”等任选含义时，候选项分别拆成原子要求，使用相同group_id和group_logic=any_of。
-2. 同一any_of组至少包含两个成员；group_id在当前JD中使用group_1、group_2等简短唯一编号。
-3. 普通独立要求使用group_id=null、group_logic=standalone。
-4. “熟悉Python、Java中至少一种”是两个any_of成员；“熟悉Python和Java”是两个standalone要求。
-5. 完整上位要求后由“如”“例如”或括号引出的非穷举内容只作为示例，不能自动成为独立要求或any_of成员；“等”字本身不能决定是否为示例。
-6. 多个候选项共同受“优先”“加分”或“相关项目经验者优先”修饰，并且具备其中任一项即可形成同类加分时，各候选项使用preferred并共享同一个any_of组。
-7. “Python / Node.js 优先”应拆为Python与Node.js两个preferred成员并共享同一个any_of组。
-8. “大模型微调、RAG架构搭建、Prompt Engineering等实际项目经验者优先”应拆为三个preferred成员并共享同一个any_of组；不能因为句中使用顿号而把它们设为standalone。
-
-【示例与完整概念】
-1. “至少精通一门主流后端开发语言（如Go、Java、C++、Python等）”中的括号列表是非穷举示例，只抽取“主流后端开发语言”，使用proficiency=expert、group_logic=standalone，不能把四种语言建成封闭any_of组。
-2. 具体技术名被“熟悉”“掌握”“使用经验”等候选条件直接修饰时必须逐项保留；后面的“等”只表示名单未穷尽，不能把已点名技术改写成上位概念。
-3. “熟悉LangChain、AutoGen等主流Agent开发框架”分别抽取LangChain和AutoGen，均为standalone；不能只抽取“主流Agent开发框架”。
-4. “有LangChain等Agent框架使用经验”抽取“LangChain框架使用经验”；raw_name保留使用经验，不能退化成泛化的“Agent框架使用经验”。
-5. “有Llama、ChatGLM等大模型微调经验”抽取“大模型微调经验”，Llama和ChatGLM只是模型示例。
-6. “有大语言模型（如GPT、GLM等）微调、RAG架构搭建经验”拆成“大语言模型微调”和“RAG架构搭建”。
-7. 只有当JD明确要求掌握某个具体模型、工具或框架时，才把它单独标成要求。
-
-【重要程度与熟练度】
-1. 任职要求中的普通条件为must；明确出现“优先”“加分”时为preferred。
-2. 只在职责或业务场景中提及、没有要求候选人掌握时为mentioned；仍无法判断时为unknown。
-3. “了解”对应understand，“熟悉”对应familiar，“熟练/扎实”对应proficient，“精通”对应expert。
-4. “使用经验”“项目经验”不能自行推断成熟练度，proficiency使用unknown。
-
-【经验年限】
-1. 只提取原文明示的数字，不估算年限。
-2. “3年以上”填写min_years=3、max_years=null；“3-5年”填写min_years=3、max_years=5。
-3. years_text保留完整年限表达；max_years只记录原文上限，不推断为淘汰条件。
-
-【证据与输出】
-1. 每条evidence必须是JD原文中连续出现的最小充分文本，不得改写、拼接或翻译。
-2. 同一句证据可以支持拆分后的多个原子项。
-3. requirements的所有字段都必须输出；不适用的group_id、年限字段使用null，不能省略。
-4. 输出前检查：每个实质工作分句都已覆盖；职责没有把独立交付错误合并，也没有把端到端动作、实施方式或示例机械拆开；要求没有可继续拆分的并列概念；any_of组成员不少于两个；年限上下限未颠倒；每条证据都能在原文中直接找到。
-5. 严格按照用户提供的JSON Schema输出一个JSON对象，不要输出Markdown代码块或额外说明。"""
-
-# 该指令只用于架构实验，通过先冻结职责再处理要求来测试单次调用中的跨任务干扰。
-REORDERED_EXPERIMENT_INSTRUCTION = """【实验执行顺序】
-1. 先扫描全部职责原文，建立职责候选清单并完成覆盖、拆分和证据检查。
-2. 冻结responsibilities后再处理requirements，不得因要求侧规则删改已确认职责。
-3. 最后一次性输出完整JSON，不要输出中间分析。"""
-
-# 该Prompt只抽取职责，用于判断移除要求任务后能否恢复遗漏职责，不作为正式版本。
-RESPONSIBILITY_ONLY_SYSTEM_PROMPT = """你是招聘JD职责抽取器，只能依据JD原文输出JSON。
-1. responsibilities只记录入职后需要完成的工作，忽略候选人资格、技能和经验要求。
-2. 先扫描每个实质工作分句，确保所有工作都有对应职责或被明确判定为实施方式、能力属性或示例。
-3. 不同对象、交付物或可独立验收结果必须拆分；只有共同完成不可分割交付时才合并。
-4. 每项使用“动作+对象或结果”表达；协作方式和技术手段不单独成项，但其承载的交付不能遗漏。
-5. “如”“例如”“等”及括号中的上位业务示例不展开为独立职责。
-6. evidence必须是原文连续出现的最小充分文本，不得改写、拼接或翻译。
-7. 严格按照JSON Schema输出一个JSON对象，不要输出Markdown或额外说明。"""
-
-
-class ResponsibilityExperimentResult(BaseModel):
-    """定义职责隔离实验返回的最小结构。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    responsibilities: list[ResponsibilityItem]
-
+# 当前唯一抽取配置：v0.8 + Schema V3（两段式，三级熟练度）。
+# 旧 Prompt（V2.3.1、v0.6、v0.7）与旧 Schema V2 不再维护，历史由 Git 与
+# 已有报告保存。PROMPT_VERSION / SCHEMA_VERSION 必须与
+# extraction_two_stage.py 的 TWO_STAGE_PROMPT_VERSION /
+# TWO_STAGE_SCHEMA_VERSION 保持同步。
+PROMPT_VERSION = "0.8"
+SCHEMA_VERSION = "3.0"
 
 class ExtractionError(ValueError):
     """表示结构化抽取在模型调用、JSON校验或证据校验阶段失败。"""
@@ -240,32 +146,6 @@ JD原文：
 """
 
 
-def build_responsibility_experiment_prompt(
-    job: JobDescription, correction: str | None = None
-) -> str:
-    """为职责隔离实验组合压缩JSON Schema、JD原文和可选校验反馈。"""
-    schema_json = json.dumps(
-        compact_json_schema(ResponsibilityExperimentResult.model_json_schema()),
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-    correction_text = ""
-    if correction:
-        correction_text = f"\n\n上一次输出未通过校验，请修正：\n{correction}"
-    return f"""请只抽取以下招聘JD中的岗位职责。
-
-公司：{job.company}
-岗位：{job.title}
-
-JSON Schema：
-{schema_json}
-
-JD原文：
-{job.raw_text}
-{correction_text}
-"""
-
-
 def parse_model_response(response_text: str) -> JobExtractionResult:
     """把模型JSON文本解析并校验为严格的JobExtractionResult。"""
     try:
@@ -303,31 +183,6 @@ def validate_evidence(result: JobExtractionResult, raw_text: str) -> None:
         raise ExtractionError("；".join(missing))
 
 
-def extract_job_with_system_prompt(
-    job: JobDescription,
-    client: ExtractionClient,
-    system_prompt: str,
-    max_attempts: int = 2,
-) -> tuple[JobExtractionResult, dict[str, object]]:
-    """使用指定系统Prompt抽取完整JD，并在校验失败时有限重试。"""
-    correction = None
-    last_error: ExtractionError | None = None
-
-    for _ in range(max_attempts):
-        prompt = build_user_prompt(job, correction)
-        response_text = client.complete(system_prompt, prompt)
-        try:
-            result = parse_model_response(response_text)
-            validate_evidence(result, job.raw_text)
-            return result, result.model_dump(mode="json")
-        except ExtractionError as exc:
-            # 将校验错误反馈给下一次请求，让模型只修正具体结构或证据问题。
-            last_error = exc
-            correction = str(exc)
-
-    raise ExtractionError(f"经过{max_attempts}次尝试仍未通过校验：{last_error}")
-
-
 def extract_job(
     job: JobDescription, client: ExtractionClient, max_attempts: int = 2
 ) -> tuple[JobExtractionResult, dict[str, object]]:
@@ -338,36 +193,6 @@ def extract_job(
     from app.extraction_two_stage import extract_job_two_stage
 
     return extract_job_two_stage(job, client, max_attempts)
-
-
-def extract_responsibilities_for_experiment(
-    job: JobDescription, client: ExtractionClient, max_attempts: int = 1
-) -> tuple[ResponsibilityExperimentResult, dict[str, object]]:
-    """仅抽取职责供架构实验比较，不写入正式抽取版本。"""
-    correction = None
-    last_error: ExtractionError | None = None
-    normalized_source = normalize_evidence(job.raw_text)
-
-    for _ in range(max_attempts):
-        prompt = build_responsibility_experiment_prompt(job, correction)
-        response_text = client.complete(RESPONSIBILITY_ONLY_SYSTEM_PROMPT, prompt)
-        try:
-            payload = json.loads(response_text)
-            result = ResponsibilityExperimentResult.model_validate(payload)
-            missing = [
-                item.evidence
-                for item in result.responsibilities
-                if normalize_evidence(item.evidence) not in normalized_source
-            ]
-            if missing:
-                raise ExtractionError(f"职责证据不在JD原文中：{'；'.join(missing)}")
-            return result, result.model_dump(mode="json")
-        except (json.JSONDecodeError, ValidationError, ExtractionError) as exc:
-            # 实验默认不重试；显式增加次数时只反馈当前结构或证据错误。
-            last_error = ExtractionError(str(exc))
-            correction = str(exc)
-
-    raise ExtractionError(f"经过{max_attempts}次尝试仍未通过校验：{last_error}")
 
 
 def persist_extraction(

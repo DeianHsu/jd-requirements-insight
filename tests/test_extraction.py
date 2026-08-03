@@ -9,19 +9,12 @@ from sqlalchemy import func, select
 
 from app.database import create_database_engine, create_session_factory, initialize_database
 from app.extraction import (
-    PROMPT_VERSION,
-    REORDERED_EXPERIMENT_INSTRUCTION,
-    RESPONSIBILITY_ONLY_SYSTEM_PROMPT,
-    SCHEMA_VERSION,
-    SYSTEM_PROMPT,
     ExtractionError,
     ExtractorMetadata,
     build_user_prompt,
     compact_json_schema,
     extract_job,
-    extract_job_with_system_prompt,
     extract_jobs,
-    extract_responsibilities_for_experiment,
     persist_extraction,
     validate_evidence,
 )
@@ -96,7 +89,7 @@ def valid_payload(evidence: str = "熟悉 Python 和 RAG。") -> dict[str, objec
                 "raw_name": "Python",
                 "category": "programming_language",
                 "importance": "must",
-                "proficiency": "familiar",
+                "proficiency": "basic",
                 "group_id": None,
                 "group_logic": "standalone",
                 "min_years": None,
@@ -109,7 +102,7 @@ def valid_payload(evidence: str = "熟悉 Python 和 RAG。") -> dict[str, objec
                 "raw_name": "RAG",
                 "category": "rag",
                 "importance": "must",
-                "proficiency": "familiar",
+                "proficiency": "basic",
                 "group_id": None,
                 "group_logic": "standalone",
                 "min_years": None,
@@ -178,64 +171,7 @@ def make_database(tmp_path: Path):
     return engine, create_session_factory(engine)
 
 
-def test_formal_prompt_version_is_two_stage_v0_6() -> None:
-    """验证 active 正式版本号为两段式v0.6，历史V2.3.1规则仍被锁定保留。"""
-    assert PROMPT_VERSION == "0.6"
-    assert SCHEMA_VERSION == "2.0"
-    # SYSTEM_PROMPT 是已替换的历史版本 V2.3.1，保留规则锁定以便复现历史结果。
-    assert "熟悉Python和RAG" in SYSTEM_PROMPT
-    assert "LangChain使用经验" in SYSTEM_PROMPT
-    assert "Llama和ChatGLM只是模型示例" in SYSTEM_PROMPT
-    assert "proficiency使用unknown" in SYSTEM_PROMPT
-
-
-def test_prompt_v2_3_1_distinguishes_examples_from_named_technologies() -> None:
-    """验证Prompt V2.3.1区分括号非穷举示例与被候选条件直接修饰的技术名。"""
-    assert "至少精通一门主流后端开发语言（如Go、Java、C++、Python等）" in SYSTEM_PROMPT
-    assert "只抽取“主流后端开发语言”" in SYSTEM_PROMPT
-    assert "熟悉LangChain、AutoGen等主流Agent开发框架" in SYSTEM_PROMPT
-    assert "分别抽取LangChain和AutoGen" in SYSTEM_PROMPT
-    assert "有LangChain等Agent框架使用经验" in SYSTEM_PROMPT
-    assert "LangChain框架使用经验" in SYSTEM_PROMPT
-    assert "名单未穷尽" in SYSTEM_PROMPT
-
-
-def test_prompt_v2_3_balances_responsibility_atomicity_and_business_boundaries() -> None:
-    """验证Prompt V2.3先识别交付结果，再平衡职责拆分与合并边界。"""
-    assert "构建智能体工作流" in SYSTEM_PROMPT
-    assert "实现文献检索自动化" in SYSTEM_PROMPT
-    assert "实现实验数据分析自动化" in SYSTEM_PROMPT
-    assert "实现合规报告生成自动化" in SYSTEM_PROMPT
-    assert "不同对象、不同交付物或可独立验收的业务结果" in SYSTEM_PROMPT
-    assert "设计、开发与落地AI Agent管理平台" in SYSTEM_PROMPT
-    assert "实施方式" in SYSTEM_PROMPT
-    assert "Agent和智能助手只是企业内部AI应用示例" in SYSTEM_PROMPT
-    assert "先识别候选动作、对象和结果，再判断职责边界" in SYSTEM_PROMPT
-    assert "不能仅因共享同一技术对象就合并" in SYSTEM_PROMPT
-    assert "每个原文分句" in SYSTEM_PROMPT
-    assert "调研AI模型" in SYSTEM_PROMPT
-    assert "选型AI模型" in SYSTEM_PROMPT
-    assert "微调AI模型" in SYSTEM_PROMPT
-    assert "部署落地AI模型" in SYSTEM_PROMPT
-    assert "优化模型效果与推理性能" in SYSTEM_PROMPT
-
-
-def test_prompt_v2_3_splits_independently_evaluable_conjunctions() -> None:
-    """验证Prompt V2.3继续拆开由连接词并列的可独立评价要求。"""
-    assert "代码风格" in SYSTEM_PROMPT
-    assert "工程素养" in SYSTEM_PROMPT
-    assert "复杂系统实现能力" in SYSTEM_PROMPT
-    assert "不能把整句或整段直接复制成一个name" in SYSTEM_PROMPT
-
-
-def test_prompt_v2_3_groups_preferred_alternatives() -> None:
-    """验证Prompt V2.3继续把任选加分语言和项目经验放入any_of组。"""
-    assert "Python / Node.js 优先" in SYSTEM_PROMPT
-    assert "相关项目经验者优先" in SYSTEM_PROMPT
-    assert "共享同一个any_of组" in SYSTEM_PROMPT
-
-
-def test_build_user_prompt_contains_schema_v2_and_retry_feedback() -> None:
+def test_build_user_prompt_contains_schema_v3_and_retry_feedback() -> None:
     """验证用户Prompt携带V2字段、JD原文和上一轮错误以支持定向修正。"""
     prompt = build_user_prompt(make_job(), "any_of组至少需要两个成员")
 
@@ -284,40 +220,6 @@ def test_extract_job_retries_after_invalid_evidence() -> None:
 
     assert result.requirements[0].evidence == "熟悉 Python 和 RAG。"
     assert client.calls == 3
-
-
-def test_reordered_experiment_keeps_single_complete_extraction_call() -> None:
-    """验证单次重组实验仍用一次完整抽取数据合同调用并通过既有校验。"""
-    client = FakeExtractionClient([valid_payload()])
-    experimental_prompt = f"{REORDERED_EXPERIMENT_INSTRUCTION}\n\n{SYSTEM_PROMPT}"
-
-    result, _ = extract_job_with_system_prompt(
-        make_job(), client, experimental_prompt, max_attempts=1
-    )
-
-    assert result.requirements
-    assert client.calls == 1
-
-
-def test_responsibility_experiment_uses_smaller_isolated_contract() -> None:
-    """验证职责隔离实验不发送要求字段，并比完整混合Prompt更短。"""
-    response = {
-        "responsibilities": [
-            {"name": "开发RAG应用", "evidence": "负责知识库问答系统开发。"}
-        ]
-    }
-    client = RecordingExperimentClient(response)
-
-    result, _ = extract_responsibilities_for_experiment(make_job(), client)
-    system_prompt, user_prompt = client.calls[0]
-    mixed_length = len(SYSTEM_PROMPT) + len(build_user_prompt(make_job()))
-    isolated_length = len(system_prompt) + len(user_prompt)
-
-    assert result.responsibilities[0].name == "开发RAG应用"
-    assert system_prompt == RESPONSIBILITY_ONLY_SYSTEM_PROMPT
-    assert '"requirements"' not in user_prompt
-    assert isolated_length < mixed_length
-    assert len(client.calls) == 1
 
 
 def test_validate_evidence_rejects_hallucinated_quote() -> None:
