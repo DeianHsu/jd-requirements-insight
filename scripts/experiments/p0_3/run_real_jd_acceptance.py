@@ -38,11 +38,13 @@ from sqlalchemy import select
 
 from app.config import load_llm_settings
 from app.database import create_database_engine, create_session_factory, initialize_database
-from app.extraction import ExtractorMetadata, OpenAICompatibleExtractionClient
-from app.extraction_two_stage import (
-    CANDIDATE_EXTRACTION_PROFILE,
-    extract_job_two_stage_with_discovery,
+from app.extraction import (
+    PROMPT_VERSION,
+    SCHEMA_VERSION,
+    ExtractorMetadata,
+    OpenAICompatibleExtractionClient,
 )
+from app.extraction_two_stage import extract_job_two_stage_with_discovery
 from app.extraction_validation import (
     RunSnapshot,
     check_contract,
@@ -116,6 +118,13 @@ def parse_args() -> argparse.Namespace:
         help="供人工审计的脱敏样本索引数量（每份 JD 按固定种子抽样）",
     )
     parser.add_argument(
+        "--phase",
+        type=str,
+        choices=("pilot", "acceptance"),
+        default="pilot",
+        help="pilot：检查流程、收集指标，不产生批准结论；acceptance：使用已冻结的规则/范围/阈值，可用于批准当前版本",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="只做确定性预检（加载 JD、打印计划），不调用模型",
@@ -140,12 +149,9 @@ def _run_extraction(
     job: JobDescription,
     max_attempts: int,
 ) -> RunSnapshot:
-    """使用 candidate profile（v0.8 + Schema V3）抽取一份真实 JD。"""
+    """使用当前唯一配置（v0.8 + Schema V3）抽取一份真实 JD。"""
     discovery, result, raw_payload = extract_job_two_stage_with_discovery(
-        job,
-        client,
-        max_attempts=max_attempts,
-        profile=CANDIDATE_EXTRACTION_PROFILE,
+        job, client, max_attempts=max_attempts
     )
     return RunSnapshot(
         discovery=discovery,
@@ -234,10 +240,10 @@ def main() -> int:
         print("没有选中任何 JD。")
         return 1
 
-    profile = CANDIDATE_EXTRACTION_PROFILE
     job_scope = "全部" if args.all else args.job_ids
     print(f"真实 JD 验收（Track B）：{len(jobs)} 份 JD（{job_scope}）")
-    print(f"candidate profile：prompt={profile.prompt_version} schema={profile.schema_version}")
+    print(f"当前抽取配置：prompt={PROMPT_VERSION} schema={SCHEMA_VERSION}（v0.8 + Schema V3）")
+    print(f"验收阶段：{args.phase}")
     print(f"每份 JD 独立运行：{args.runs} 次")
 
     if not args.execute:
@@ -260,8 +266,8 @@ def main() -> int:
     client = OpenAICompatibleExtractionClient(settings)
     metadata = ExtractorMetadata(
         model_name=settings.model,
-        prompt_version=profile.prompt_version,
-        schema_version=profile.schema_version,
+        prompt_version=PROMPT_VERSION,
+        schema_version=SCHEMA_VERSION,
     )
 
     job_reports: list[dict[str, Any]] = []
@@ -437,8 +443,12 @@ def main() -> int:
 
     identity = {
         "model": metadata.model_name,
+        "phase": args.phase,
         "prompt_version": metadata.prompt_version,
         "schema_version": metadata.schema_version,
+        "jd_set_fingerprint": compute_input_fingerprint(
+            "\n".join(job.raw_text for job in jobs)
+        ),
         "job_count": str(len(jobs)),
         "runs": str(args.runs),
         "max_attempts": str(args.max_attempts),
@@ -448,15 +458,18 @@ def main() -> int:
     hard_gate_failures = sorted(set(hard_gate_failures))
     warnings = sorted(set(warnings))
     diagnostics = sorted(set(diagnostics))
+    decision_eligible = args.phase == "acceptance" and not hard_gate_failures
     payload = {
         "identity": identity,
         "track": "B",
+        "phase": args.phase,
         "jobs": job_reports,
         "audit_samples": audit_samples,
         "hard_gate_failures": hard_gate_failures,
         "warnings": warnings,
         "diagnostics": diagnostics,
         "passed": not hard_gate_failures,
+        "decision_eligible": decision_eligible,
     }
     args.report_dir.mkdir(parents=True, exist_ok=True)
     report_path.write_text(

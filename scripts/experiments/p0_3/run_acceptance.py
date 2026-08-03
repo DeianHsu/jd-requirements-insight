@@ -36,12 +36,13 @@ from pathlib import Path
 from typing import Any
 
 from app.config import load_llm_settings
-from app.extraction import ExtractorMetadata, OpenAICompatibleExtractionClient
-from app.extraction_two_stage import (
-    CANDIDATE_EXTRACTION_PROFILE,
-    extract_job_two_stage_with_discovery,
-    split_sentences,
+from app.extraction import (
+    PROMPT_VERSION,
+    SCHEMA_VERSION,
+    ExtractorMetadata,
+    OpenAICompatibleExtractionClient,
 )
+from app.extraction_two_stage import extract_job_two_stage_with_discovery, split_sentences
 from app.extraction_validation import (
     RunSnapshot,
     TransformationResult,
@@ -312,6 +313,13 @@ def parse_args() -> argparse.Namespace:
         help="原始运行结果目录（含完整输入与模型响应，私有）",
     )
     parser.add_argument(
+        "--phase",
+        type=str,
+        choices=("pilot", "acceptance"),
+        default="pilot",
+        help="pilot：检查流程、收集指标，不产生批准结论；acceptance：使用已冻结的规则/范围/阈值，可用于批准当前版本",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="只做确定性预检（加载场景、应用变换、打印计划），不调用模型",
@@ -350,13 +358,10 @@ def _run_extraction(
     source_file: str,
     max_attempts: int,
 ) -> RunSnapshot:
-    """使用 candidate profile（v0.8 + Schema V3）执行一次两段式抽取。"""
+    """使用当前唯一配置（v0.8 + Schema V3）执行一次两段式抽取。"""
     job = make_job(raw_text, source_file)
     discovery, result, raw_payload = extract_job_two_stage_with_discovery(
-        job,
-        client,
-        max_attempts=max_attempts,
-        profile=CANDIDATE_EXTRACTION_PROFILE,
+        job, client, max_attempts=max_attempts
     )
     return RunSnapshot(
         discovery=discovery,
@@ -429,16 +434,16 @@ def main() -> int:
     report_path = args.report_dir / f"{run_identifier}-report.json"
     raw_path = args.raw_output_dir / f"{run_identifier}-raw.json"
 
-    profile = CANDIDATE_EXTRACTION_PROFILE
     client = OpenAICompatibleExtractionClient(settings)
     metadata = ExtractorMetadata(
         model_name=settings.model,
-        prompt_version=profile.prompt_version,
-        schema_version=profile.schema_version,
+        prompt_version=PROMPT_VERSION,
+        schema_version=SCHEMA_VERSION,
     )
 
     print(f"模型：{settings.model}")
-    print(f"candidate profile：prompt={profile.prompt_version} schema={profile.schema_version}")
+    print(f"当前抽取配置：prompt={PROMPT_VERSION} schema={SCHEMA_VERSION}（v0.8 + Schema V3）")
+    print(f"验收阶段：{args.phase}（acceptance 且 hard gates 全过时才 decision_eligible）")
     print(f"运行标识：{run_identifier}")
     print(f"场景数：{len(scenario_list)}；base 独立运行：{args.runs} 次")
 
@@ -654,6 +659,7 @@ def main() -> int:
 
     identity = {
         "model": metadata.model_name,
+        "phase": args.phase,
         "prompt_version": metadata.prompt_version,
         "schema_version": metadata.schema_version,
         "scenario_protocol_version": protocol_version,
@@ -669,14 +675,17 @@ def main() -> int:
     hard_gate_failures = sorted(set(hard_gate_failures))
     warnings = sorted(set(warnings))
     diagnostics = sorted(set(diagnostics))
+    decision_eligible = args.phase == "acceptance" and not hard_gate_failures
     payload = {
         "identity": identity,
+        "phase": args.phase,
         "run_count": args.runs,
         "scenarios": scenario_reports,
         "hard_gate_failures": hard_gate_failures,
         "warnings": warnings,
         "diagnostics": diagnostics,
         "passed": not hard_gate_failures,
+        "decision_eligible": decision_eligible,
     }
     args.report_dir.mkdir(parents=True, exist_ok=True)
     report_path.write_text(

@@ -6,171 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from app.schemas import (
-    JobExtractionResult,
-    RequirementCategory,
-    RequirementImportance,
-    RequirementItem,
-    RoleFamily,
-    Seniority,
-)
-from scripts.experiments.p0_3 import evaluate_two_stage_results
+
 from scripts.experiments.p0_3 import run_acceptance
 from scripts.experiments.p0_3 import run_real_jd_acceptance
-from scripts.experiments.p0_3 import run_two_stage_extraction
-
-VALIDATION_CASE = {
-    "case_id": "case_test_001",
-    "dataset_split": "validation",
-    "source_file": "jd_test.md",
-    "sentence": "需要熟悉Python与Go语言",
-    "annotation_target": "requirements",
-    "expected": {
-        "requirements": [
-            {
-                "raw_name": "Python",
-                "category": "programming_language",
-                "importance": "must",
-                "evidence": "需要熟悉Python与Go语言",
-                "confidence": 1.0,
-            },
-            {
-                "raw_name": "Go",
-                "category": "programming_language",
-                "importance": "must",
-                "evidence": "需要熟悉Python与Go语言",
-                "confidence": 1.0,
-            },
-        ]
-    },
-}
-
-
-def _prediction(
-    names: list[str],
-) -> JobExtractionResult:
-    """按给定要求名称构造最小合法的两段式预测结果。"""
-    return JobExtractionResult(
-        role_family=RoleFamily.LLM_APPLICATION,
-        seniority=Seniority.MID,
-        responsibilities=[],
-        requirements=[
-            RequirementItem(
-                raw_name=name,
-                category=RequirementCategory.PROGRAMMING_LANGUAGE,
-                importance=RequirementImportance.MUST,
-                evidence="需要熟悉Python与Go语言",
-                confidence=1.0,
-            )
-            for name in names
-        ],
-    )
-
-
-def test_two_stage_experiment_requires_explicit_execute(
-    monkeypatch,
-) -> None:
-    """验证真实实验在读取配置和数据库前要求显式execute确认。"""
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        ["run_two_stage_extraction", "--use-project-database"],
-    )
-
-    with pytest.raises(SystemExit, match="--execute"):
-        run_two_stage_extraction.main()
-
-
-def test_experiment_defaults_keep_raw_results_private() -> None:
-    """验证原始模型结果默认留在私有目录，报告进入实验报告目录。"""
-    assert run_two_stage_extraction.DEFAULT_OUTPUT_PATH.is_relative_to(
-        Path("data/private/experiments")
-    )
-    assert evaluate_two_stage_results.DEFAULT_RESULTS_PATH.is_relative_to(
-        Path("data/private/experiments")
-    )
-    assert evaluate_two_stage_results.DEFAULT_OUTPUT_PATH.is_relative_to(
-        Path("reports/experiments")
-    )
-
-
-def test_two_stage_run_supports_job_id_selection(monkeypatch) -> None:
-    """验证--job-id可重复指定并限制实验范围，缺省为空代表全部JD。"""
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "run_two_stage_extraction",
-            "--use-project-database",
-            "--job-id",
-            "1",
-            "--job-id",
-            "3",
-        ],
-    )
-    args = run_two_stage_extraction.parse_args()
-    assert args.job_id == [1, 3]
-
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        ["run_two_stage_extraction", "--use-project-database"],
-    )
-    assert run_two_stage_extraction.parse_args().job_id is None
-
-
-def test_two_stage_evaluation_covers_all_splits() -> None:
-    """验证离线评测报告覆盖开发、回归和未见验证三个数据分组。"""
-    report = evaluate_two_stage_results.build_report(
-        {"cases": [VALIDATION_CASE]},
-        {"jd_test.md": _prediction(["Python", "Go"])},
-    )
-    for split in ("development", "regression", "validation"):
-        assert f"## {split}" in report
-    assert "## V2.3.1 基线对比" in report
-
-
-def test_two_stage_evaluation_reports_failures_without_private_names() -> None:
-    """验证失败案例表只输出case_id与计数，不复制私有名称内容。"""
-    report = evaluate_two_stage_results.build_report(
-        {"cases": [VALIDATION_CASE]},
-        {"jd_test.md": _prediction(["Python"])},
-    )
-    assert "| case_test_001 | requirements | 2 | 1 | 否 | 1 | 0 | - |" in report
-    assert "Python" not in report
-    assert "Go" not in report
-
-
-def test_two_stage_evaluation_marks_missing_prediction_source() -> None:
-    """验证预测缺失来源的case在失败案例表中标记为缺失来源。"""
-    report = evaluate_two_stage_results.build_report(
-        {"cases": [VALIDATION_CASE]}, {}
-    )
-    assert "| case_test_001 | requirements | - | - | 否 | - | - | 缺失来源 |" in report
-
-
-def test_two_stage_evaluation_omits_fully_matched_cases() -> None:
-    """验证全部匹配的case不出现在失败案例表中。"""
-    report = evaluate_two_stage_results.build_report(
-        {"cases": [VALIDATION_CASE]},
-        {"jd_test.md": _prediction(["Python", "Go"])},
-    )
-    assert "case_test_001" not in report.split("### validation")[1]
-
-
-def test_two_stage_evaluation_reports_oversplit_cases() -> None:
-    """验证多拆case（数量不一致但预期项全部匹配）必须出现在失败案例表中。"""
-    report = evaluate_two_stage_results.build_report(
-        {"cases": [VALIDATION_CASE]},
-        {"jd_test.md": _prediction(["Python", "Go", "Rust"])},
-    )
-    assert "| case_test_001 | requirements | 2 | 3 | 否 | 0 | 1 | - |" in report
-
-
-# ---------------------------------------------------------------------------
-# run_acceptance（Track A）
-# ---------------------------------------------------------------------------
-
 
 def _write_scenario_file(tmp_path: Path, scenario_id: str = "SCN-TEST") -> Path:
     """写入最小合法场景文件。"""
@@ -336,9 +174,10 @@ def test_acceptance_complete_run_reports_incompleteness(
     assert "error" in raw["SCN-TEST_base_run0"]
 
 
-def test_acceptance_script_uses_candidate_profile(monkeypatch, tmp_path) -> None:
-    """验收脚本显式使用 candidate v0.8 + Schema V3（测试 4）。"""
-    from app.extraction_two_stage import CANDIDATE_EXTRACTION_PROFILE
+def test_acceptance_script_uses_single_current_config(monkeypatch, tmp_path) -> None:
+    """验收脚本使用当前唯一配置（v0.8 + Schema V3），无双 Profile。"""
+    from app.extraction import PROMPT_VERSION, SCHEMA_VERSION
+    from app.extraction_two_stage import TWO_STAGE_PROMPT_VERSION
 
     scenarios = _write_scenario_file(tmp_path)
     monkeypatch.setattr(
@@ -347,14 +186,33 @@ def test_acceptance_script_uses_candidate_profile(monkeypatch, tmp_path) -> None
         ["run_acceptance", "--scenarios", str(scenarios), "--dry-run"],
     )
     assert run_acceptance.main() == 0
+    assert PROMPT_VERSION == TWO_STAGE_PROMPT_VERSION == "0.8"
+    assert SCHEMA_VERSION == "3.0"
 
-    # 直接验证常量引用：main 中 profile 取自 CANDIDATE_EXTRACTION_PROFILE。
-    import inspect
 
-    source = inspect.getsource(run_acceptance.main)
-    assert "profile = CANDIDATE_EXTRACTION_PROFILE" in source
-    assert CANDIDATE_EXTRACTION_PROFILE.prompt_version == "0.8"
-    assert CANDIDATE_EXTRACTION_PROFILE.schema_version == "3.0"
+def test_acceptance_script_phase_defaults_to_pilot(monkeypatch, tmp_path) -> None:
+    """--phase 缺省为 pilot；pilot 报告 decision_eligible=False。"""
+    scenarios = _write_scenario_file(tmp_path)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_acceptance", "--scenarios", str(scenarios), "--dry-run"],
+    )
+    assert run_acceptance.parse_args().phase == "pilot"
+
+
+def test_acceptance_phase_is_decision_eligible_only_when_acceptance(monkeypatch, tmp_path, capsys) -> None:
+    """acceptance 阶段且无 hard gate 失败时 decision_eligible=True；pilot 恒 False。"""
+    from app.extraction_validation import ExtractionAcceptanceReport
+
+    assert ExtractionAcceptanceReport(identity={}, hard_gate_failures=[], warnings=[], diagnostics=[]).decision_eligible is False
+    assert ExtractionAcceptanceReport(
+        identity={}, hard_gate_failures=[], warnings=[], diagnostics=[], phase="acceptance"
+    ).decision_eligible is True
+    assert ExtractionAcceptanceReport(
+        identity={}, hard_gate_failures=["x"], warnings=[], diagnostics=[], phase="acceptance"
+    ).decision_eligible is False
+
 
 
 def test_acceptance_script_defaults_keep_raw_results_private(

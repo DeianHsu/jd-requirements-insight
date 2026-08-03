@@ -1277,28 +1277,44 @@ def check_scenario_properties(
 
 @dataclass
 class ExtractionAcceptanceReport:
-    """机器可读验收报告：hard gates / warnings / diagnostics 分级。"""
+    """机器可读验收报告：hard gates / warnings / diagnostics 分级。
+
+    phase：pilot（检查流程、收集指标，不产生批准结论）或 acceptance
+    （使用已冻结的规则、范围与阈值，可用于批准当前版本）。
+    """
 
     identity: dict[str, str]
     hard_gate_failures: list[str]
     warnings: list[str]
     diagnostics: list[str]
     run_count: int = 0
+    phase: str = "pilot"
 
     @property
     def passed(self) -> bool:
         """全部 hard gate 通过才算整体通过。"""
         return not self.hard_gate_failures
 
+    @property
+    def decision_eligible(self) -> bool:
+        """仅 acceptance 阶段且无 hard gate 失败时才可用于批准当前版本。
+
+        阈值冻结（多次运行稳定性等）由用户在 acceptance 前完成；本字段
+        只表达"流程与 hard gates 是否允许作出批准结论"。
+        """
+        return self.phase == "acceptance" and self.passed
+
     def to_dict(self) -> dict[str, Any]:
         """序列化为不含私有 JD 内容的机器可读字典。"""
         return {
             "identity": self.identity,
+            "phase": self.phase,
             "run_count": self.run_count,
             "hard_gate_failures": self.hard_gate_failures,
             "warnings": self.warnings,
             "diagnostics": self.diagnostics,
             "passed": self.passed,
+            "decision_eligible": self.decision_eligible,
         }
 
     def to_json(self) -> str:
