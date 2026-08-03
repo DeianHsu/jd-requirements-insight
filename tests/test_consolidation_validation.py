@@ -567,6 +567,79 @@ def test_unreferenced_canonical_is_dropped_deterministically() -> None:
     assert result.hierarchy_status == "success"
 
 
+def test_unreferenced_canonical_with_relations_is_dropped_with_edges() -> None:
+    """无来源噪声标准项被剔除时，指向它的关系边一并删除。"""
+    from app.consolidation import consolidate_with_correction
+
+    class NoisyRelationClient:
+        """标准项轮多提一个噪声项，关系轮还给噪声项建了边。"""
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def complete(self, system_prompt: str, user_prompt: str) -> str:
+            self.calls += 1
+            if self.calls == 1:
+                return json.dumps(
+                    {
+                        "canonical_requirements": [
+                            {
+                                "canonical_requirement_id": "cr-0",
+                                "canonical_name": "能力甲",
+                                "rationale": "独立要求",
+                                "confidence": 0.8,
+                            },
+                            {
+                                "canonical_requirement_id": "cr-noise",
+                                "canonical_name": "噪声条件",
+                                "rationale": "模型幻觉",
+                                "confidence": 0.5,
+                            },
+                        ]
+                    },
+                    ensure_ascii=False,
+                )
+            if self.calls == 2:
+                return json.dumps(
+                    {
+                        "mappings": [
+                            {
+                                "requirement_id": requirement_id,
+                                "status": "mapped",
+                                "canonical_requirement_id": "cr-0",
+                                "candidate_requirement_ids": [],
+                                "rationale": "测试映射",
+                                "confidence": 0.8,
+                            }
+                            for requirement_id in (1, 2)
+                        ]
+                    },
+                    ensure_ascii=False,
+                )
+            return json.dumps(
+                {
+                    "relations": [
+                        {
+                            "source_requirement_id": "cr-0",
+                            "target_requirement_id": "cr-noise",
+                            "relation_type": "broader_than",
+                            "rationale": "指向噪声项的边",
+                            "confidence": 0.6,
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            )
+
+    source = consolidation_input(["能力甲", "能力乙"])
+
+    result, _ = consolidate_with_correction(source, NoisyRelationClient(), max_attempts=1)
+
+    assert len(result.canonical_requirements) == 1
+    assert result.canonical_requirements[0].canonical_requirement_id == "cr-0"
+    assert result.relations == []
+
+
 def test_mapping_reference_to_unknown_canonical_is_rejected_and_retried() -> None:
     """映射轮引用清单外标准项ID时被块级校验拒绝，并在重试修正后成功。"""
     from app.consolidation import consolidate_with_correction

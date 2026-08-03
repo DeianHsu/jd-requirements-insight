@@ -908,20 +908,15 @@ def _drop_unreferenced_canonicals(
 ) -> RequirementConsolidationResult | None:
     """剔除没有实例来源的标准项并重建结果；无法安全剔除时返回None。
 
-    只剔除未被任何 mapping 引用且未被任何 relation/uncertain 引用的标准项；
-    有引用时说明模型输出自相矛盾，不能静默修复（返回None交由上层报错）。
+    只剔除未被任何 mapping 引用的标准项；关系轮可能基于标准项清单给
+    这些噪声标准项建边，这些边没有实例事实基础，一并删除。若剔除后
+    没有剩余标准项（输出完全自相矛盾）则返回None交由上层报错。
     """
     referenced_by_mapping = {
         mapping.canonical_requirement_id
         for mapping in mappings
         if mapping.canonical_requirement_id is not None
     }
-    referenced_by_relation = {
-        relation.source_requirement_id for relation in relations
-    } | {relation.target_requirement_id for relation in relations}
-    referenced_by_relation |= {
-        relation.source_requirement_id for relation in uncertain_relations
-    } | {relation.target_requirement_id for relation in uncertain_relations}
     dropped = [
         item.canonical_requirement_id
         for item in canonical_requirements
@@ -929,21 +924,32 @@ def _drop_unreferenced_canonicals(
     ]
     if not dropped:
         return None
-    if any(item in referenced_by_relation for item in dropped):
-        return None
+    dropped_set = set(dropped)
     kept = [
         item
         for item in canonical_requirements
-        if item.canonical_requirement_id not in dropped
+        if item.canonical_requirement_id not in dropped_set
     ]
     if not kept:
         return None
+    kept_relations = [
+        relation
+        for relation in relations
+        if relation.source_requirement_id not in dropped_set
+        and relation.target_requirement_id not in dropped_set
+    ]
+    kept_uncertain = [
+        relation
+        for relation in uncertain_relations
+        if relation.source_requirement_id not in dropped_set
+        and relation.target_requirement_id not in dropped_set
+    ]
     try:
         return RequirementConsolidationResult(
             canonical_requirements=kept,
             mappings=mappings,
-            relations=relations,
-            uncertain_relations=uncertain_relations,
+            relations=kept_relations,
+            uncertain_relations=kept_uncertain,
             hierarchy_status=hierarchy_status,
         )
     except ValueError:
