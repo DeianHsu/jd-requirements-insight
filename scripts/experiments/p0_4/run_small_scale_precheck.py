@@ -1,9 +1,9 @@
-﻿"""P0-4 分阶段/分块归并：小规模预检入口（不依赖任何人工 Gold）。
+﻿"""P0-4 分阶段/分块归并：小规模预检入口。
 
 从选定抽取器版本的实例池中按 requirement_id 升序取前 target_size 条，
 调用`consolidate_with_correction`执行分阶段/受控分块归并，记录每阶段
-请求的实例数、输入输出字符数与耗时，并输出 P0-4A 合同违规、P0-4B
-关系图稀疏度与下游事实投影。必须显式`--execute`确认付费模型调用。
+请求的实例数、输入输出字符数与耗时，并输出 P0-4 合同违规与事实统计。
+必须显式`--execute`确认付费模型调用。
 
 输出：脱敏验收指标写入`reports/P0-4/`（仅统计数字，不含真实证据）；
 完整归并结果（含原始名称与证据）写入`data/private/experiments/P0-4/`。
@@ -26,8 +26,7 @@ from app.consolidation import (
     load_consolidation_selection,
 )
 from app.consolidation_validation import (
-    fact_projection,
-    relation_graph_stats,
+    mapping_clusters,
     validate_contract,
 )
 from app.database import create_database_engine, create_session_factory
@@ -93,8 +92,8 @@ def main() -> int:
     parser.add_argument(
         "--extractor-version",
         type=str,
-        default="deepseek-v4-flash|prompt:2.3.1|schema:2.0",
-        help="选择覆盖全部JD的抽取器版本（默认P0-2正式版本2.3.1）",
+        default=None,
+        help="抽取器版本；缺省使用当前唯一配置 v0.8 + Schema V3",
     )
     parser.add_argument(
         "--target-size",
@@ -153,8 +152,8 @@ def main() -> int:
     print(f"模型：{settings.model}")
     print(f"抽取器版本：{selection.extractor_version}")
     print(f"输入范围：{len(precheck_input.occurrences)}条实例")
-    print(f"预计模型调用：1（标准项）+ {mapping_requests}（映射块）+ 1（关系）"
-          f" = {mapping_requests + 2} 次")
+    print(f"预计模型调用：1（标准项）+ {mapping_requests}（映射块）"
+          f" = {mapping_requests + 1} 次")
     print("输出目标：仅统计指标（脱敏）；完整结果写入私有目录。")
 
     client = RecordingClient(
@@ -184,8 +183,11 @@ def main() -> int:
         result,
         expected_requirement_count=len(precheck_input.occurrences),
     )
-    graph = relation_graph_stats(result)
-    projection = fact_projection(result, precheck_input)
+    clusters = mapping_clusters(result)
+    cluster_members: dict[str, list[int]] = {}
+    for requirement_id, (canonical_id, _) in clusters.items():
+        cluster_members.setdefault(canonical_id, []).append(requirement_id)
+    member_counts = [len(ids) for ids in cluster_members.values()]
     report = {
         "consolidator_version": metadata.consolidator_version,
         "extractor_version": selection.extractor_version,
@@ -203,30 +205,10 @@ def main() -> int:
             "empty_cluster_count": contract.empty_cluster_count,
             "structural_violation_count": contract.structural_violation_count,
         },
-        "p0_4a_facts": {
-            "canonical_count": len(projection.instance_counts),
-            "singleton_count": sum(
-                1 for count in projection.instance_counts.values() if count == 1
-            ),
-            "max_cluster_size": max(projection.instance_counts.values(), default=0),
-            "distinct_job_count": len(
-                {
-                    job_id
-                    for jobs in projection.source_job_sets.values()
-                    for job_id in jobs
-                }
-            ),
-        },
-        "p0_4b_hierarchy": {
-            "edge_count": graph.edge_count,
-            "node_count": graph.node_count,
-            "edge_node_ratio": round(graph.edge_node_ratio, 3),
-            "max_out_degree": graph.max_out_degree,
-            "max_in_degree": graph.max_in_degree,
-            "root_node_count": graph.root_node_count,
-            "isolated_node_count": graph.isolated_node_count,
-            "low_confidence_edge_count": graph.low_confidence_edge_count,
-            "uncertain_count": graph.uncertain_count,
+        "p0_4_facts": {
+            "canonical_count": len(cluster_members),
+            "singleton_count": sum(1 for count in member_counts if count == 1),
+            "max_cluster_size": max(member_counts, default=0),
         },
     }
 
@@ -239,15 +221,11 @@ def main() -> int:
         json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
-    print(f"P0-4A 覆盖：{contract.coverage:.2%}，"
+    print(f"P0-4 覆盖：{contract.coverage:.2%}，"
           f"结构违规：{contract.structural_violation_count}")
-    print(f"P0-4A 事实：标准项{len(projection.instance_counts)}个、"
-          f"singleton {sum(1 for c in projection.instance_counts.values() if c == 1)}个、"
-          f"最大cluster {max(projection.instance_counts.values(), default=0)}")
-    print(f"P0-4B 关系图：{graph.edge_count}边/{graph.node_count}节点"
-          f"（比值{graph.edge_node_ratio:.2f}）、"
-          f"低置信边{graph.low_confidence_edge_count}、"
-          f"uncertain {graph.uncertain_count}")
+    print(f"P0-4 事实：标准项{len(cluster_members)}个、"
+          f"singleton {sum(1 for count in member_counts if count == 1)}个、"
+          f"最大cluster {max(member_counts, default=0)}")
     print(f"阶段请求记录：{json.dumps(client.records, ensure_ascii=False)}")
     print(f"脱敏报告：{args.report}")
     print(f"原始结果：{args.raw_output}")

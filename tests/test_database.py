@@ -1,4 +1,4 @@
-"""该模块验证数据库初始化和旧SQLite结构的非破坏性升级。"""
+"""该模块验证数据库初始化：外键启用与当前表结构创建。"""
 
 from pathlib import Path
 
@@ -17,104 +17,42 @@ def test_sqlite_connections_enable_foreign_keys() -> None:
     engine.dispose()
 
 
-def test_initialize_database_migrates_legacy_requirement_columns(tmp_path: Path) -> None:
-    """验证旧要求表会补齐V2字段并把历史最低年限回填到min_years。"""
-    database_path = tmp_path / "legacy.db"
+def test_initialize_database_creates_current_tables(tmp_path: Path) -> None:
+    """验证初始化只创建当前表结构，不包含已删除的关系/职责表。"""
+    database_path = tmp_path / "fresh.db"
     engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
-    with engine.begin() as connection:
-        # 人工创建最小旧表，准确复现数据库结构V1只有years_required的状态。
-        connection.execute(
-            text(
-                "CREATE TABLE job_requirements ("
-                "id INTEGER PRIMARY KEY, years_required FLOAT)"
-            )
-        )
-        connection.execute(
-            text("INSERT INTO job_requirements (id, years_required) VALUES (1, 3)")
-        )
 
     initialize_database(engine)
-
-    column_names = {
-        column["name"] for column in inspect(engine).get_columns("job_requirements")
-    }
-    index_names = {
-        index["name"] for index in inspect(engine).get_indexes("job_requirements")
-    }
-    with engine.connect() as connection:
-        migrated = connection.execute(
-            text(
-                "SELECT group_logic, min_years, max_years, years_text "
-                "FROM job_requirements WHERE id = 1"
-            )
-        ).one()
-
-    assert {"group_id", "group_logic", "min_years", "max_years", "years_text"} <= (
-        column_names
-    )
-    assert migrated.group_logic == "standalone"
-    assert migrated.min_years == 3
-    assert migrated.max_years is None
-    assert migrated.years_text is None
-    assert "ix_job_requirements_group_id" in index_names
-    engine.dispose()
-
-
-def test_initialize_database_migrates_legacy_consolidation_identity(
-    tmp_path: Path,
-) -> None:
-    """验证旧归并批次保留，并升级为包含输入指纹的三列唯一身份。"""
-    database_path = tmp_path / "legacy_consolidation.db"
-    engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
-    with engine.begin() as connection:
-        connection.execute(
-            text(
-                "CREATE TABLE job_consolidations ("
-                "id INTEGER PRIMARY KEY, scope_key VARCHAR(255) NOT NULL, "
-                "consolidator_version VARCHAR(255) NOT NULL, "
-                "model_name VARCHAR(255) NOT NULL, prompt_version VARCHAR(50) NOT NULL, "
-                "schema_version VARCHAR(50) NOT NULL, occurrence_count INTEGER NOT NULL, "
-                "raw_response JSON NOT NULL, created_at DATETIME NOT NULL, "
-                "CONSTRAINT uq_scope_consolidator_version UNIQUE "
-                "(scope_key, consolidator_version))"
-            )
-        )
-        connection.execute(
-            text(
-                "INSERT INTO job_consolidations VALUES "
-                "(1, 'all', 'model|prompt:1.4|schema:1.0', 'model', '1.4', "
-                "'1.0', 2, '{}', '2026-08-01 00:00:00')"
-            )
-        )
-
-    initialize_database(engine)
+    # 可重复执行（幂等）。
     initialize_database(engine)
 
     inspector = inspect(engine)
-    columns = {
-        column["name"] for column in inspector.get_columns("job_consolidations")
-    }
-    unique_constraints = {
-        constraint["name"]
-        for constraint in inspector.get_unique_constraints("job_consolidations")
-    }
-    with engine.connect() as connection:
-        migrated = connection.execute(
-            text(
-                "SELECT input_fingerprint, extractor_version, selected_job_ids, "
-                "extraction_ids FROM job_consolidations WHERE id = 1"
-            )
-        ).one()
+    tables = set(inspector.get_table_names())
 
     assert {
-        "input_fingerprint",
-        "extractor_version",
-        "selected_job_ids",
-        "extraction_ids",
-    } <= columns
-    assert len(migrated.input_fingerprint) == 64
-    assert migrated.extractor_version == "legacy:unknown"
-    assert migrated.selected_job_ids == "[]"
-    assert migrated.extraction_ids == "[]"
-    assert "uq_scope_consolidator_input" in unique_constraints
+        "job_descriptions",
+        "job_extractions",
+        "job_requirements",
+        "job_consolidations",
+        "canonical_requirements",
+        "requirement_mappings",
+    } <= tables
+    # 已删除的功能不留表。
+    assert "requirement_relations" not in tables
+    assert "job_responsibilities" not in tables
+
+    consolidation_columns = {
+        column["name"]
+        for column in inspector.get_columns("job_consolidations")
+    }
+    assert "hierarchy_status" not in consolidation_columns
+
+    mapping_columns = {
+        column["name"] for column in inspector.get_columns("requirement_mappings")
+    }
+    assert {"requirement_id", "canonical_requirement_id", "rationale", "confidence"} <= (
+        mapping_columns
+    )
+    assert "status" not in mapping_columns
+    assert "candidate_requirement_ids" not in mapping_columns
     engine.dispose()

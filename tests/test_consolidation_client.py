@@ -1,4 +1,4 @@
-"""验证P0-4归并LLM客户端、Prompt v1、解析与有限重试闭环。"""
+"""验证P0-4归并LLM客户端、Prompt v4.0、解析与有限重试闭环。"""
 
 import json
 
@@ -9,7 +9,6 @@ from app.consolidation import (
     CONSOLIDATION_READ_TIMEOUT_SECONDS,
     CONSOLIDATION_SCHEMA_VERSION,
     CONSOLIDATION_SYSTEM_PROMPT,
-    RELATION_SYSTEM_PROMPT,
     ConsolidationError,
     ConsolidatorMetadata,
     OpenAICompatibleConsolidationClient,
@@ -17,13 +16,11 @@ from app.consolidation import (
     consolidate_with_correction,
     parse_consolidation_response,
     parse_mappings_response,
-    parse_relations_response,
 )
 from app.config import LLMSettings
 from app.requirement_consolidation import (
     RequirementConsolidationInput,
     RequirementOccurrence,
-    RequirementRelationType,
 )
 from app.schemas import RequirementItem
 
@@ -78,7 +75,7 @@ def consolidation_input() -> RequirementConsolidationInput:
                 requirement_id=1,
                 job_id=101,
                 extraction_id=1001,
-                extractor_version="test-model|prompt:1.0|schema:2.0",
+                extractor_version="test-model|prompt:1.0|schema:3.0",
                 source_hash="a" * 64,
                 source_file="job-a.md",
                 requirement=requirement("能力甲使用经验", "具备能力甲使用经验"),
@@ -87,7 +84,7 @@ def consolidation_input() -> RequirementConsolidationInput:
                 requirement_id=2,
                 job_id=102,
                 extraction_id=1002,
-                extractor_version="test-model|prompt:1.0|schema:2.0",
+                extractor_version="test-model|prompt:1.0|schema:3.0",
                 source_hash="b" * 64,
                 source_file="job-b.md",
                 requirement=requirement(
@@ -112,15 +109,12 @@ def valid_result_payload() -> dict[str, object]:
         "mappings": [
             {
                 "requirement_id": requirement_id,
-                "status": "mapped",
                 "canonical_requirement_id": "requirement-a",
-                "candidate_requirement_ids": [],
                 "rationale": "表述不同但招聘条件相同",
                 "confidence": 0.95,
             }
             for requirement_id in (1, 2)
         ],
-        "relations": [],
     }
 
 
@@ -130,19 +124,12 @@ def test_prompt_v4_is_domain_agnostic() -> None:
     assert CONSOLIDATION_SCHEMA_VERSION == "2.0"
     for domain_word in ("Python", "RAG", "LangChain", "Agent", "大模型", "AI"):
         assert domain_word not in CONSOLIDATION_SYSTEM_PROMPT
-        assert domain_word not in RELATION_SYSTEM_PROMPT
     assert "证据上下文" in CONSOLIDATION_SYSTEM_PROMPT
-    assert "不输出unmapped或review_required" in CONSOLIDATION_SYSTEM_PROMPT
     assert "singleton" in CONSOLIDATION_SYSTEM_PROMPT
     assert "不得修改、覆盖或删除" in CONSOLIDATION_SYSTEM_PROMPT
     assert "canonical_name都必须全局唯一" in CONSOLIDATION_SYSTEM_PROMPT
-    assert "等价性已由映射表达" in RELATION_SYSTEM_PROMPT
-    assert "更宽泛 -> 更具体" in RELATION_SYSTEM_PROMPT
-    assert "相似\"不等于\"等价" in RELATION_SYSTEM_PROMPT
-    assert "相关\"不等于\"包含" in RELATION_SYSTEM_PROMPT
-    assert "uncertain" in RELATION_SYSTEM_PROMPT
-    assert "强行生成边" in RELATION_SYSTEM_PROMPT
-    assert "只输出用户提示指定的relations数组" in RELATION_SYSTEM_PROMPT
+    # 归并合同不输出任何关系：等价由映射表达，不建边。
+    assert "relations" not in CONSOLIDATION_SYSTEM_PROMPT
 
 
 def test_metadata_combines_version_components() -> None:
@@ -179,29 +166,28 @@ def test_user_prompt_contains_instances_and_output_schema() -> None:
     assert "output_schema" in payload
     assert "canonical_requirements" in payload["output_schema"]
     assert "mappings" in payload["output_schema"]
-    assert "relations" in payload["output_schema"]
     assert "全局唯一" in payload["output_schema"]["canonical_requirements"][0][
         "canonical_name"
     ]
-    assert "broader_than" in payload["output_schema"]["relations"][0][
-        "relation_type"
-    ]
-    assert "uncertain" in payload["output_schema"]["relations"][0][
-        "relation_type"
-    ]
+    mapping_schema = payload["output_schema"]["mappings"][0]
+    assert set(mapping_schema) == {
+        "requirement_id",
+        "canonical_requirement_id",
+        "rationale",
+        "confidence",
+    }
 
 
 def stage_payloads(payload: dict[str, object]) -> list[dict[str, object]]:
-    """把完整归并结果拆成标准项、映射和关系三个阶段的独立响应。"""
+    """把完整归并结果拆成标准项和映射两个阶段的独立响应。"""
     return [
         {"canonical_requirements": payload["canonical_requirements"]},
         {"mappings": payload["mappings"]},
-        {"relations": payload["relations"]},
     ]
 
 
 def test_valid_response_parses_and_passes_coverage() -> None:
-    """验证三阶段响应合成后解析成功并通过覆盖检查，返回完整结果。"""
+    """验证两阶段响应合成后解析成功并通过覆盖检查，返回完整结果。"""
     client = FakeConsolidationClient(stage_payloads(valid_result_payload()))
 
     result, raw = consolidate_with_correction(consolidation_input(), client)
@@ -217,27 +203,6 @@ def test_invalid_json_raises_consolidation_error() -> None:
     """验证非JSON响应被包装为统一归并错误。"""
     with pytest.raises(ConsolidationError, match="不是合法JSON"):
         parse_consolidation_response("这不是JSON")
-
-
-def test_mappings_response_normalizes_null_candidate_ids() -> None:
-    """验证模型用null表达无候选时被规范化为空列表，语义不变。"""
-    payload = {
-        "mappings": [
-            {
-                "requirement_id": 1,
-                "status": "mapped",
-                "canonical_requirement_id": "requirement-a",
-                "candidate_requirement_ids": None,
-                "rationale": "表述不同但招聘条件相同",
-                "confidence": 0.95,
-            }
-        ]
-    }
-
-    mappings = parse_mappings_response(json.dumps(payload, ensure_ascii=False))
-
-    assert len(mappings) == 1
-    assert mappings[0].candidate_requirement_ids == []
 
 
 def test_contract_violation_raises_consolidation_error() -> None:
@@ -304,102 +269,19 @@ def test_retry_exhausted_raises_final_error() -> None:
         consolidate_with_correction(consolidation_input(), client)
 
 
-def test_part_of_normalizes_to_broader_than_with_direction_swap() -> None:
-    """验证旧part_of语义规范化为broader_than并交换方向（整体->组成部分）。"""
+def test_mappings_response_rejects_legacy_status_field() -> None:
+    """验证旧 status/candidate 字段不再属于映射合同（extra=forbid 拒绝）。"""
     payload = {
-        "relations": [
+        "mappings": [
             {
-                "source_requirement_id": "requirement-b",
-                "target_requirement_id": "requirement-a",
-                "relation_type": "part_of",
-                "rationale": "乙是甲的组成部分",
-                "confidence": 0.8,
+                "requirement_id": 1,
+                "status": "mapped",
+                "canonical_requirement_id": "requirement-a",
+                "rationale": "表述不同但招聘条件相同",
+                "confidence": 0.95,
             }
         ]
     }
 
-    relations, uncertain = parse_relations_response(
-        json.dumps(payload, ensure_ascii=False)
-    )
-
-    assert uncertain == []
-    assert len(relations) == 1
-    assert relations[0].relation_type is RequirementRelationType.BROADER_THAN
-    assert relations[0].source_requirement_id == "requirement-a"
-    assert relations[0].target_requirement_id == "requirement-b"
-
-
-def test_is_a_normalizes_to_broader_than_with_direction_swap() -> None:
-    """验证旧is_a语义规范化为broader_than并交换方向（上位->下位）。"""
-    payload = {
-        "relations": [
-            {
-                "source_requirement_id": "requirement-b",
-                "target_requirement_id": "requirement-a",
-                "relation_type": "is_a",
-                "rationale": "乙是甲的一种具体类型",
-                "confidence": 0.8,
-            }
-        ]
-    }
-
-    relations, uncertain = parse_relations_response(
-        json.dumps(payload, ensure_ascii=False)
-    )
-
-    assert uncertain == []
-    assert len(relations) == 1
-    assert relations[0].relation_type is RequirementRelationType.BROADER_THAN
-    assert relations[0].source_requirement_id == "requirement-a"
-    assert relations[0].target_requirement_id == "requirement-b"
-
-
-def test_related_to_is_rejected_as_deprecated() -> None:
-    """验证废弃的related_to被拒绝，普通相关不再建立任何关系。"""
-    payload = {
-        "relations": [
-            {
-                "source_requirement_id": "requirement-a",
-                "target_requirement_id": "requirement-b",
-                "relation_type": "related_to",
-                "rationale": "统计上相关",
-                "confidence": 0.7,
-            }
-        ]
-    }
-
-    with pytest.raises(ConsolidationError, match="related_to 已废弃"):
-        parse_relations_response(json.dumps(payload, ensure_ascii=False))
-
-
-def test_uncertain_relations_split_out_and_create_no_edges() -> None:
-    """验证uncertain判断与正式关系分离，不创建任何正式关系边。"""
-    payload = {
-        "relations": [
-            {
-                "source_requirement_id": "requirement-a",
-                "target_requirement_id": "requirement-b",
-                "relation_type": "uncertain",
-                "rationale": "名称抽象，无法判断包含方向",
-                "confidence": 0.5,
-            }
-        ]
-    }
-
-    relations, uncertain = parse_relations_response(
-        json.dumps(payload, ensure_ascii=False)
-    )
-
-    assert relations == []
-    assert len(uncertain) == 1
-    assert uncertain[0].relation_type is RequirementRelationType.UNCERTAIN
-
-
-def test_none_relations_accept_empty_array() -> None:
-    """验证无包含关系的标准项之间不输出边（none），空数组合法。"""
-    relations, uncertain = parse_relations_response(
-        json.dumps({"relations": []}, ensure_ascii=False)
-    )
-
-    assert relations == []
-    assert uncertain == []
+    with pytest.raises(ConsolidationError, match="不符合归并合同"):
+        parse_mappings_response(json.dumps(payload, ensure_ascii=False))

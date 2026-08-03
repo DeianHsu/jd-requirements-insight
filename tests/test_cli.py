@@ -189,9 +189,7 @@ def test_cli_list_consolidations_empty_and_with_records(
         record.mappings.append(
             RequirementMappingRecord(
                 requirement_id=1,
-                status="mapped",
                 canonical_requirement_id="c1",
-                candidate_requirement_ids=[],
                 rationale="测试",
                 confidence=0.9,
             )
@@ -224,8 +222,7 @@ def test_cli_list_consolidations_empty_and_with_records(
 
     assert evaluated.exit_code == 0
     assert "归并批次ID 1" in evaluated.stdout
-    assert "P0-4A 完整覆盖 100.00%" in evaluated.stdout
-    assert "P0-4A 结构违规 0" in evaluated.stdout
-    assert "P0-4B 关系图" in evaluated.stdout
+    assert "P0-4 完整覆盖 100.00%" in evaluated.stdout
+    assert "P0-4 结构违规 0" in evaluated.stdout
     assert missing.exit_code == 1
     assert "归并批次不存在：999" in missing.stdout

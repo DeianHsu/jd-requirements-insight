@@ -85,7 +85,7 @@ class TruncationSimulatingClient:
             and instance_count > self.max_instances_per_request
         ):
             # 模拟截断：返回中途截断的非法JSON。
-            return '{"mappings": [{"requirement_id": 1, "status": "mapped", '
+            return '{"mappings": [{"requirement_id": 1, "canonical_requirement_id": "cr-1", '
         return self._valid_response(payload)
 
     def _valid_response(self, payload: dict[str, object]) -> str:
@@ -111,9 +111,7 @@ class TruncationSimulatingClient:
                     "mappings": [
                         {
                             "requirement_id": item["id"],
-                            "status": "mapped",
                             "canonical_requirement_id": "cr-1",
-                            "candidate_requirement_ids": [],
                             "rationale": "测试映射",
                             "confidence": 0.9,
                         }
@@ -122,8 +120,6 @@ class TruncationSimulatingClient:
                 },
                 ensure_ascii=False,
             )
-        if "只输出relations" in task:
-            return json.dumps({"relations": []}, ensure_ascii=False)
         raise AssertionError(f"未知任务：{task}")
 
 
@@ -148,9 +144,7 @@ class UnknownCanonicalClient(TruncationSimulatingClient):
                     "mappings": [
                         {
                             "requirement_id": item["id"],
-                            "status": "mapped",
                             "canonical_requirement_id": canonical_requirement_id,
-                            "candidate_requirement_ids": [],
                             "rationale": "测试映射",
                             "confidence": 0.9,
                         }

@@ -61,10 +61,10 @@ def make_extraction(extraction_id: int, job_id: int) -> JobExtraction:
     return JobExtraction(
         id=extraction_id,
         job_id=job_id,
-        extractor_version="test-model|prompt:1.0|schema:2.0",
+        extractor_version="test-model|prompt:1.0|schema:3.0",
         model_name="test-model",
         prompt_version="1.0",
-        schema_version="2.0",
+        schema_version="3.0",
         role_family="other",
         seniority="unknown",
         raw_response={},
@@ -106,24 +106,20 @@ def valid_result_payload() -> dict[str, object]:
         "mappings": [
             {
                 "requirement_id": requirement_id,
-                "status": "mapped",
                 "canonical_requirement_id": "requirement-a",
-                "candidate_requirement_ids": [],
                 "rationale": "表述不同但招聘条件相同",
                 "confidence": 0.95,
             }
             for requirement_id in (1, 2)
         ],
-        "relations": [],
     }
 
 
 def stage_payloads(payload: dict[str, object]) -> list[dict[str, object]]:
-    """把完整归并结果拆成标准项、映射和关系三个阶段的独立响应。"""
+    """把完整归并结果拆成标准项和映射两个阶段的独立响应。"""
     return [
         {"canonical_requirements": payload["canonical_requirements"]},
         {"mappings": payload["mappings"]},
-        {"relations": payload["relations"]},
     ]
 
 
@@ -140,7 +136,7 @@ def seed_two_jobs(session_factory) -> None:
 
 
 def test_successful_run_reports_counts(tmp_path: Path) -> None:
-    """验证成功归并的摘要包含发现、归并、标准项和关系数量。"""
+    """验证成功归并的摘要包含发现、归并和标准项数量。"""
     _, session_factory = make_database(tmp_path)
     seed_two_jobs(session_factory)
     client = FakeConsolidationClient(stage_payloads(valid_result_payload()))
@@ -151,7 +147,6 @@ def test_successful_run_reports_counts(tmp_path: Path) -> None:
     assert summary.discovered == 2
     assert summary.consolidated == 2
     assert summary.canonical_count == 1
-    assert summary.relation_count == 0
     assert summary.failed == 0
     assert client.calls == 2
 

@@ -17,7 +17,6 @@ from app.consolidation import (
 )
 from app.consolidation_validation import (
     load_persisted_consolidation_result,
-    relation_graph_stats,
     validate_contract,
 )
 from app.database import create_database_engine, create_session_factory, initialize_database
@@ -161,16 +160,11 @@ def consolidate_requirements_cmd(
         "--extractor-version",
         help="选择覆盖全部目标JD的抽取器版本；存在多个共同版本时必须指定",
     ),
-    with_relations: bool = typer.Option(
-        False,
-        "--with-relations",
-        help="P0-4B 实验功能：同时生成 broader_than 标准项层级关系（默认不运行，不进入默认统计）",
-    ),
 ) -> None:
     """对选定JD范围内的要求实例执行跨JD原子要求归并并幂等保存。
 
-    默认只完成 canonical requirements 与 instance mappings（P0-4A）；
-    broader_than 层级关系（P0-4B）是显式实验功能，需 --with-relations。
+    只完成 canonical requirements 与 instance mappings：每个实例必须
+    且只能映射到一个标准要求项，不确定时创建 singleton。
     """
     if all_jobs == bool(job_ids):
         console.print("[red]必须且只能选择--all或--job-id之一。[/red]")
@@ -195,7 +189,6 @@ def consolidate_requirements_cmd(
             max_attempts=max_attempts,
             job_ids=set(job_ids) if job_ids else None,
             extractor_version=extractor_version,
-            include_relations=with_relations,
         )
     finally:
         engine.dispose()
@@ -203,17 +196,6 @@ def consolidate_requirements_cmd(
     console.print(f"语料池 [bold]{summary.discovered}[/bold] 条要求实例")
     console.print(f"归并成功 [green]{summary.consolidated}[/green] 条")
     console.print(f"标准要求项 [bold]{summary.canonical_count}[/bold] 个")
-    console.print(f"要求关系 [bold]{summary.relation_count}[/bold] 条")
-    console.print(f"不确定判断 [yellow]{summary.uncertain_count}[/yellow] 条（不创建边）")
-    console.print(
-        "P0-4B 层级状态 "
-        + (
-            f"[green]{summary.hierarchy_status}[/green]"
-            if summary.hierarchy_status == "success"
-            else f"[yellow]{summary.hierarchy_status}[/yellow]"
-        )
-        + "（failed 时 P0-4A 事实层仍有效）"
-    )
     console.print(f"同版本跳过 [yellow]{summary.skipped}[/yellow]")
     console.print(f"失败 [red]{summary.failed}[/red]")
     if summary.consolidation_id is not None:
@@ -248,7 +230,6 @@ def show_consolidations() -> None:
     table.add_column("实例数", justify="right")
     table.add_column("标准项", justify="right")
     table.add_column("映射", justify="right")
-    table.add_column("关系", justify="right")
 
     for record in consolidations:
         table.add_row(
@@ -260,7 +241,6 @@ def show_consolidations() -> None:
             str(record.occurrence_count),
             str(len(record.canonical_requirements)),
             str(len(record.mappings)),
-            str(len(record.relations)),
         )
     console.print(table)
 
@@ -274,10 +254,9 @@ def validate_consolidation_cmd(
         help="显式指定要验证的持久化归并批次ID",
     ),
 ) -> None:
-    """离线验证一个已持久化归并批次：合同、图稀疏度与事实投影。
+    """离线验证一个已持久化归并批次：合同与稳定性检查。
 
-    不调用LLM、不隐式选择最新批次、不依赖任何人工Gold；输出
-    P0-4A 合同违规、P0-4B 关系图稀疏度与下游统计投影指标。
+    不调用LLM、不隐式选择最新批次；输出 P0-4 合同违规计数。
     """
     engine, session_factory = database_resources()
     try:
@@ -294,35 +273,21 @@ def validate_consolidation_cmd(
         persisted.result,
         expected_requirement_count=len(persisted.result.mappings),
     )
-    graph = relation_graph_stats(persisted.result)
 
     console.print(f"归并批次ID [bold]{persisted.consolidation_id}[/bold]")
     console.print(f"范围 [bold]{persisted.scope_key}[/bold]")
     console.print(f"归并器版本 [bold]{persisted.consolidator_version}[/bold]")
-    console.print(f"层级状态 [bold]{persisted.hierarchy_status}[/bold]")
     console.print(
-        "P0-4A 完整覆盖 "
+        "P0-4 完整覆盖 "
         + (f"[green]{contract.coverage:.2%}[/green]"
            if contract.coverage == 1.0 else
            f"[red]{contract.coverage:.2%}[/red]")
     )
     console.print(
-        "P0-4A 结构违规 "
+        "P0-4 结构违规 "
         + (f"[green]{contract.structural_violation_count}[/green]"
            if contract.structural_violation_count == 0 else
            f"[red]{contract.structural_violation_count}[/red]")
-    )
-    console.print(
-        f"P0-4B 关系图：{graph.edge_count} 条边 / {graph.node_count} 个节点"
-        f"（比值 {graph.edge_node_ratio:.2f}）"
-    )
-    console.print(
-        f"最大出度 {graph.max_out_degree}、最大入度 {graph.max_in_degree}、"
-        f"根节点 {graph.root_node_count}、孤立节点 {graph.isolated_node_count}"
-    )
-    console.print(
-        f"低置信边 {graph.low_confidence_edge_count}、"
-        f"uncertain 判断 {graph.uncertain_count}"
     )
 
 
@@ -345,7 +310,6 @@ def show_extractions() -> None:
     table.add_column("岗位")
     table.add_column("方向")
     table.add_column("级别")
-    table.add_column("职责", justify="right")
     table.add_column("要求", justify="right")
     table.add_column("模型")
     for extraction in extractions:
@@ -355,7 +319,6 @@ def show_extractions() -> None:
             extraction.job.title,
             extraction.role_family,
             extraction.seniority,
-            str(len(extraction.responsibilities)),
             str(len(extraction.requirements)),
             extraction.model_name,
         )

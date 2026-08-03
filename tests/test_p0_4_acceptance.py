@@ -1,9 +1,8 @@
-"""P0-4 验收脚本端到端与门槛测试（DEC-017：P0-4A/P0-4B 分开验收）。
+"""P0-4 验收脚本端到端与门槛测试。
 
-覆盖：默认使用 v0.8 + Schema V3 并拒绝旧输入；P0-4A 门槛含新聚类指标
-（positive_pair_jaccard / neighbor stability 等进报告与 warning）；
-P0-4B 门槛独立（edge Jaccard / 方向一致率 / 稀疏度）；一次完整的
-P0-4A 验收（假归并客户端）能生成报告且 requirement 计数为数值。
+覆盖：默认使用 v0.8 + Schema V3 并拒绝旧输入；门槛只含合同违规与
+positive-pair Jaccard（warning）；一次完整的 P0-4 验收（假归并客户端）
+能生成报告且含人工 cluster 复核清单。
 """
 
 import json
@@ -16,8 +15,7 @@ import pytest
 from app.database import create_database_engine, create_session_factory, initialize_database
 from app.models import JobDescription, JobExtraction, JobRequirement
 from scripts.experiments.p0_4.run_acceptance import (
-    evaluate_p0_4a_gates,
-    evaluate_p0_4b_gates,
+    evaluate_gates,
     resolve_extractor_version,
 )
 
@@ -41,12 +39,10 @@ def test_resolve_extractor_version_rejects_legacy_schema() -> None:
 def _mapping(
     requirement_id: int, canonical_id: str, confidence: float = 0.95
 ) -> dict:
-    """构造一条 mapped 映射（与归并合同一致）。"""
+    """构造一条映射（与归并合同一致）。"""
     return {
         "requirement_id": requirement_id,
-        "status": "mapped",
         "canonical_requirement_id": canonical_id,
-        "candidate_requirement_ids": [],
         "rationale": "测试映射",
         "confidence": confidence,
     }
@@ -77,89 +73,51 @@ def _result_from_clusters(clusters: list[list[int]], names: list[str]):
     return RequirementConsolidationResult(
         canonical_requirements=canonical_requirements,
         mappings=mappings,
-        relations=[],
-        uncertain_relations=[],
-        hierarchy_status="not_run",
     )
 
 
-def test_p0_4a_gates_report_new_metrics_and_warnings() -> None:
-    """P0-4A 门槛：已冻结的 co-clustering 仍为 hard gate；新指标进 warning/诊断。"""
+def test_gates_report_positive_pair_jaccard_warnings() -> None:
+    """门槛：合同违规为 hard gate；positive-pair Jaccard 下降进 warning。"""
     names = ["甲", "乙", "丙", "丁", "戊"]
     stable = _result_from_clusters([[1, 2, 3], [4]], names)
     split = _result_from_clusters([[1, 2], [3], [4]], names)
-    runs = [{"result": stable}, {"result": split}]
 
-    hard_gate_failures, warnings, diagnostics = evaluate_p0_4a_gates(
-        runs,
-        contract_violations=[],
-        downstream_equal=True,
+    from app.consolidation_validation import validate_contract
+
+    contract_violations = [
+        validate_contract(run, expected_ids={1, 2, 3, 4})
+        for run in (stable, split)
+    ]
+    hard_gate_failures, warnings = evaluate_gates(
+        [{"result": stable}, {"result": split}], contract_violations
     )
 
-    # 拆分导致同簇对 Jaccard 与邻居稳定性下降 → warning（不擅自设 hard gate）；
-    # co-clustering 门槛同时触发 hard gate（两个指标共同报警）。
+    # 合同无违规；拆分导致同簇对 Jaccard 下降 → warning。
+    assert hard_gate_failures == []
     assert any("positive_pair_jaccard" in item for item in warnings)
-    assert any("positive_pair_jaccard" in item for item in diagnostics)
-    assert hard_gate_failures  # co-clustering 66.67% 低于冻结门槛
 
-    # 完全一致时无 warning。
-    identical_hard, identical_warnings, _ = evaluate_p0_4a_gates(
+    # 完全一致时无 warning 无 hard gate。
+    identical_hard, identical_warnings = evaluate_gates(
         [{"result": stable}, {"result": stable}],
-        contract_violations=[],
-        downstream_equal=True,
+        [contract_violations[0], contract_violations[0]],
     )
     assert identical_hard == []
     assert identical_warnings == []
 
 
-def test_p0_4a_gates_keep_frozen_coclustering_thresholds() -> None:
-    """已冻结的 co-clustering 门槛（高置信>=90%、全部>=85%）仍是 hard gate。"""
-    names = ["甲", "乙", "丙", "丁"]
-    split = _result_from_clusters([[1], [2], [3]], names)
-    runs = [{"result": split}, {"result": split}]
+def test_gates_contract_violations_are_hard_gate() -> None:
+    """合同违规（coverage 缺失）直接构成 hard gate。"""
+    from app.consolidation_validation import validate_contract
 
-    hard_gate_failures, _, _ = evaluate_p0_4a_gates(
-        runs, contract_violations=[], downstream_equal=True
+    result = _result_from_clusters([[1, 2], [3]], ["甲", "乙", "丙", "丁"])
+    result.mappings.pop()  # 制造覆盖缺失
+    contract = validate_contract(result, expected_ids={1, 2, 3})
+
+    hard_gate_failures, _ = evaluate_gates(
+        [{"result": result}], [contract]
     )
-    assert hard_gate_failures == []
 
-    divergent = _result_from_clusters([[1, 2, 3]], names)
-    hard_gate_failures, _, _ = evaluate_p0_4a_gates(
-        [{"result": split}, {"result": divergent}],
-        contract_violations=[],
-        downstream_equal=True,
-    )
-    assert hard_gate_failures
-
-
-def test_p0_4b_gates_are_separate_from_p0_4a() -> None:
-    """P0-4B 门槛独立：edge Jaccard/方向/稀疏度只在 P0-4B 模式判定。"""
-    from app.requirement_consolidation import RequirementConsolidationResult
-
-    result = RequirementConsolidationResult(
-        canonical_requirements=[
-            _canonical("cr-0", "甲"),
-            _canonical("cr-1", "乙"),
-        ],
-        mappings=[_mapping(1, "cr-0"), _mapping(2, "cr-1")],
-        relations=[
-            {
-                "source_requirement_id": "cr-0",
-                "target_requirement_id": "cr-1",
-                "relation_type": "broader_than",
-                "rationale": "测试",
-                "confidence": 0.9,
-            }
-        ],
-        uncertain_relations=[],
-        hierarchy_status="success",
-    )
-    runs = [{"result": result}, {"result": result}]
-
-    hard_gate_failures, _, _ = evaluate_p0_4b_gates(
-        runs, contract_violations=[], graph_stats=[]
-    )
-    assert hard_gate_failures == []
+    assert any("coverage" in item for item in hard_gate_failures)
 
 
 def _seed_v08_extraction(database_path: Path) -> None:
@@ -195,7 +153,6 @@ def _seed_v08_extraction(database_path: Path) -> None:
                 raw_response={
                     "role_family": "other",
                     "seniority": "unknown",
-                    "responsibilities": [],
                     "requirements": [],
                 },
             )
@@ -254,33 +211,27 @@ class FakeConsolidationClient:
                 },
                 ensure_ascii=False,
             )
-        # 映射阶段：每个实例恰好 mapped 一次。
+        # 映射阶段：每个实例恰好映射一次。
         return json.dumps(
             {
                 "mappings": [
-                    {"requirement_id": 1, "status": "mapped",
-                     "canonical_requirement_id": "cr-0",
-                     "candidate_requirement_ids": [], "rationale": "测试",
-                     "confidence": 0.95},
-                    {"requirement_id": 2, "status": "mapped",
-                     "canonical_requirement_id": "cr-1",
-                     "candidate_requirement_ids": [], "rationale": "测试",
-                     "confidence": 0.95},
-                    {"requirement_id": 3, "status": "mapped",
-                     "canonical_requirement_id": "cr-0",
-                     "candidate_requirement_ids": [], "rationale": "测试",
-                     "confidence": 0.95},
+                    {"requirement_id": 1, "canonical_requirement_id": "cr-0",
+                     "rationale": "测试", "confidence": 0.95},
+                    {"requirement_id": 2, "canonical_requirement_id": "cr-1",
+                     "rationale": "测试", "confidence": 0.95},
+                    {"requirement_id": 3, "canonical_requirement_id": "cr-0",
+                     "rationale": "测试", "confidence": 0.95},
                 ]
             },
             ensure_ascii=False,
         )
 
 
-def test_p0_4a_acceptance_end_to_end(monkeypatch, tmp_path) -> None:
-    """P0-4A 完整验收：假归并客户端 → 报告生成（端到端）。"""
+def test_p0_4_acceptance_end_to_end(monkeypatch, tmp_path) -> None:
+    """P0-4 完整验收：假归并客户端 → 报告生成（端到端）。"""
     import scripts.experiments.p0_4.run_acceptance as acceptance_script
 
-    database_path = tmp_path / "p0_4a.db"
+    database_path = tmp_path / "p0_4.db"
     _seed_v08_extraction(database_path)
 
     class FakeSettings:
@@ -297,8 +248,6 @@ def test_p0_4a_acceptance_end_to_end(monkeypatch, tmp_path) -> None:
         [
             "run_acceptance",
             "--execute",
-            "--track",
-            "p0-4a",
             "--database-url",
             f"sqlite:///{database_path.as_posix()}",
             "--job-ids",
@@ -320,8 +269,11 @@ def test_p0_4a_acceptance_end_to_end(monkeypatch, tmp_path) -> None:
 
     report = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
     assert report["input_identity"]["extractor_version"] == "test-model|prompt:0.8|schema:3.0"
-    stability = report["p0_4a_stability"]
+    stability = report["p0_4_stability"]
     assert stability["canonical_count_max"] >= stability["canonical_count_min"]
-    assert stability["merge_pair_metrics"]
-    assert stability["cluster_stability"]
+    assert report["p0_4_contract"]["coverage"] == 1.0
+    assert report["manual_cluster_review"]["clusters"]
+    # 多成员 cluster 出现在人工复核清单中。
+    multi_member = report["manual_cluster_review"]["clusters"][0]["multi_member_clusters"]
+    assert any(cluster["canonical_id"] == "cr-0" for cluster in multi_member)
     assert (tmp_path / "raw.json").exists()

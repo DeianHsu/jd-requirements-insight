@@ -85,27 +85,9 @@ class JobExtraction(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     job: Mapped[JobDescription] = relationship(back_populates="extractions")
-    responsibilities: Mapped[list[JobResponsibility]] = relationship(
-        back_populates="extraction", cascade="all, delete-orphan"
-    )
     requirements: Mapped[list[JobRequirement]] = relationship(
         back_populates="extraction", cascade="all, delete-orphan"
     )
-
-
-class JobResponsibility(Base):
-    """保存一项岗位职责及其可回溯到原始JD的证据文本。"""
-
-    __tablename__ = "job_responsibilities"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    extraction_id: Mapped[int] = mapped_column(
-        ForeignKey("job_extractions.id", ondelete="CASCADE"), index=True
-    )
-    name: Mapped[str] = mapped_column(String(255))
-    evidence: Mapped[str] = mapped_column(Text)
-
-    extraction: Mapped[JobExtraction] = relationship(back_populates="responsibilities")
 
 
 class JobRequirement(Base):
@@ -156,11 +138,6 @@ class JobConsolidation(Base):
     prompt_version: Mapped[str] = mapped_column(String(50))
     schema_version: Mapped[str] = mapped_column(String(50))
     occurrence_count: Mapped[int] = mapped_column(default=0)
-    # P0-4B 层级状态：success 表示关系阶段成功；failed 表示关系阶段失败
-    # （P0-4A 事实层仍有效并已保存，层级失败不阻塞 P0-6 统计）。
-    hierarchy_status: Mapped[str] = mapped_column(
-        String(30), default="success", index=True
-    )
     raw_response: Mapped[dict[str, Any]] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
@@ -168,9 +145,6 @@ class JobConsolidation(Base):
         back_populates="consolidation", cascade="all, delete-orphan"
     )
     mappings: Mapped[list[RequirementMappingRecord]] = relationship(
-        back_populates="consolidation", cascade="all, delete-orphan"
-    )
-    relations: Mapped[list[RequirementRelationRecord]] = relationship(
         back_populates="consolidation", cascade="all, delete-orphan"
     )
 
@@ -218,11 +192,7 @@ class RequirementMappingRecord(Base):
     requirement_id: Mapped[int] = mapped_column(
         ForeignKey("job_requirements.id", ondelete="CASCADE"), index=True
     )
-    status: Mapped[str] = mapped_column(String(30), index=True)
-    canonical_requirement_id: Mapped[str | None] = mapped_column(
-        String(100), nullable=True
-    )
-    candidate_requirement_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    canonical_requirement_id: Mapped[str] = mapped_column(String(100))
     rationale: Mapped[str] = mapped_column(Text)
     confidence: Mapped[float] = mapped_column(Float)
 
@@ -230,32 +200,3 @@ class RequirementMappingRecord(Base):
         back_populates="mappings"
     )
     requirement: Mapped[JobRequirement] = relationship()
-
-
-class RequirementRelationRecord(Base):
-    """保存标准要求项之间的非同义语义关系及其来源理由。"""
-
-    __tablename__ = "requirement_relations"
-    __table_args__ = (
-        UniqueConstraint(
-            "consolidation_id",
-            "source_requirement_id",
-            "target_requirement_id",
-            "relation_type",
-            name="uq_consolidation_relation",
-        ),
-    )
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    consolidation_id: Mapped[int] = mapped_column(
-        ForeignKey("job_consolidations.id", ondelete="CASCADE"), index=True
-    )
-    source_requirement_id: Mapped[str] = mapped_column(String(100))
-    target_requirement_id: Mapped[str] = mapped_column(String(100))
-    relation_type: Mapped[str] = mapped_column(String(30))
-    rationale: Mapped[str] = mapped_column(Text)
-    confidence: Mapped[float] = mapped_column(Float)
-
-    consolidation: Mapped[JobConsolidation] = relationship(
-        back_populates="relations"
-    )

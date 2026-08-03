@@ -1,23 +1,13 @@
-"""验证P0-4合同校验、变形指标、下游统计投影与验收报告（无人工Gold）。"""
+"""验证P0-4合同校验、稳定性指标、变形框架与验收报告（无人工Gold）。"""
 
 from __future__ import annotations
 
 import json
 
 from app.consolidation_validation import (
-    instance_neighbor_stability,
-    merge_pair_metrics,
+    mapping_clusters,
     positive_pair_jaccard,
     singleton_and_canonical_drift,
-    top_cluster_membership_stability,
-    co_clustering_agreement,
-    direction_consistency,
-    edge_jaccard,
-    fact_projection,
-    mapping_clusters,
-    projections_equal,
-    relation_edges_by_name,
-    relation_graph_stats,
     validate_contract,
 )
 from app.requirement_consolidation import (
@@ -25,10 +15,7 @@ from app.requirement_consolidation import (
     RequirementConsolidationInput,
     RequirementConsolidationResult,
     RequirementMapping,
-    RequirementMappingStatus,
     RequirementOccurrence,
-    RequirementRelation,
-    RequirementRelationType,
 )
 from app.schemas import RequirementItem
 
@@ -63,7 +50,7 @@ def consolidation_input(
                 requirement_id=index + 1,
                 job_id=101 + index,
                 extraction_id=1001 + index,
-                extractor_version="test-model|prompt:1.0|schema:2.0",
+                extractor_version="test-model|prompt:1.0|schema:3.0",
                 source_hash=f"{index + 1:064x}",
                 source_file=f"job-{index + 1}.md",
                 requirement=requirement(name, f"具备{name}。"),
@@ -76,8 +63,6 @@ def consolidation_input(
 def result_payload(
     clusters: list[list[int]],
     names: list[str] | None = None,
-    relations: list[dict] | None = None,
-    uncertain_relations: list[dict] | None = None,
 ) -> RequirementConsolidationResult:
     """按实例分组构造合法归并结果（cluster内的实例映射同一标准项）。"""
     names = names or [
@@ -101,7 +86,6 @@ def result_payload(
             mappings.append(
                 RequirementMapping(
                     requirement_id=requirement_id,
-                    status=RequirementMappingStatus.MAPPED,
                     canonical_requirement_id=f"cr-{cluster_index}",
                     rationale="测试映射",
                     confidence=0.95,
@@ -110,26 +94,6 @@ def result_payload(
     return RequirementConsolidationResult(
         canonical_requirements=canonical_requirements,
         mappings=mappings,
-        relations=[
-            RequirementRelation(
-                source_requirement_id=item["source"],
-                target_requirement_id=item["target"],
-                relation_type=RequirementRelationType.BROADER_THAN,
-                rationale=item.get("rationale", "测试包含"),
-                confidence=item.get("confidence", 0.8),
-            )
-            for item in (relations or [])
-        ],
-        uncertain_relations=[
-            RequirementRelation(
-                source_requirement_id=item["source"],
-                target_requirement_id=item["target"],
-                relation_type=RequirementRelationType.UNCERTAIN,
-                rationale=item.get("rationale", "无法判断方向"),
-                confidence=item.get("confidence", 0.5),
-            )
-            for item in (uncertain_relations or [])
-        ],
     )
 
 
@@ -151,12 +115,10 @@ def test_contract_detects_coverage_gap_and_duplicates() -> None:
     contract = validate_contract(result, expected_ids={1, 2})
 
     assert contract.coverage < 1.0
-    assert contract.unknown_reference_count == 0
     # 重复映射：把第二条也指向另一个实例ID
     result.mappings.append(
         RequirementMapping(
             requirement_id=2,
-            status=RequirementMappingStatus.MAPPED,
             canonical_requirement_id="cr-0",
             rationale="重复",
             confidence=0.9,
@@ -175,19 +137,13 @@ def test_contract_detects_unknown_reference() -> None:
     assert contract.unknown_reference_count == 1
 
 
-def test_contract_detects_graph_violations() -> None:
-    # model_construct 跳过合同校验，用于验证独立合同检测器能发现违规。
+def test_contract_detects_empty_cluster() -> None:
+    # model_construct 跳过合同校验，用于验证独立合同检测器能发现空 cluster。
     result = RequirementConsolidationResult.model_construct(
         canonical_requirements=[
             CanonicalRequirement(
                 canonical_requirement_id="cr-0",
                 canonical_name="能力甲",
-                rationale="独立要求",
-                confidence=0.9,
-            ),
-            CanonicalRequirement(
-                canonical_requirement_id="cr-1",
-                canonical_name="能力乙",
                 rationale="独立要求",
                 confidence=0.9,
             ),
@@ -201,85 +157,16 @@ def test_contract_detects_graph_violations() -> None:
         mappings=[
             RequirementMapping(
                 requirement_id=1,
-                status=RequirementMappingStatus.MAPPED,
                 canonical_requirement_id="cr-0",
                 rationale="测试映射",
                 confidence=0.9,
             ),
-            RequirementMapping(
-                requirement_id=2,
-                status=RequirementMappingStatus.MAPPED,
-                canonical_requirement_id="cr-1",
-                rationale="测试映射",
-                confidence=0.9,
-            ),
-        ],
-        relations=[
-            # model_construct 跳过自环/重复等合同校验，供独立合同检测器测试。
-            RequirementRelation.model_construct(
-                source_requirement_id="cr-0",
-                target_requirement_id="cr-0",
-                relation_type=RequirementRelationType.BROADER_THAN,
-                rationale="自环",
-                confidence=0.8,
-            ),
-            RequirementRelation(
-                source_requirement_id="cr-0",
-                target_requirement_id="cr-1",
-                relation_type=RequirementRelationType.BROADER_THAN,
-                rationale="测试包含",
-                confidence=0.8,
-            ),
-            RequirementRelation(
-                source_requirement_id="cr-0",
-                target_requirement_id="cr-1",
-                relation_type=RequirementRelationType.BROADER_THAN,
-                rationale="同向重复",
-                confidence=0.8,
-            ),
-            RequirementRelation(
-                source_requirement_id="cr-1",
-                target_requirement_id="cr-0",
-                relation_type=RequirementRelationType.BROADER_THAN,
-                rationale="反向冲突",
-                confidence=0.8,
-            ),
         ],
     )
 
-    contract = validate_contract(result, expected_ids={1, 2})
+    contract = validate_contract(result, expected_ids={1})
 
-    assert contract.self_loop_count == 1
-    assert contract.duplicate_edge_count == 1
-    assert contract.direction_conflict_count == 1
     assert contract.empty_cluster_count == 1
-
-
-def test_co_clustering_agreement_counts_instance_pairs() -> None:
-    first = mapping_clusters(result_payload([[1, 2], [3]]))
-    second = mapping_clusters(result_payload([[1], [2, 3]]))
-
-    high_conf, overall = co_clustering_agreement(first, second)
-
-    # 实例对 (1,2): 同簇→不同簇 不一致；(1,3): 不同→不同 一致；
-    # (2,3): 不同→同簇 不一致。overall = 1/3。
-    assert overall == 1 / 3
-    assert high_conf == 1 / 3
-
-
-def test_co_clustering_agreement_ignores_canonical_id_renaming() -> None:
-    first = mapping_clusters(result_payload([[1, 2], [3]]))
-    second = mapping_clusters(result_payload([[1, 2], [3]]))
-    # 把第二次运行的 canonical ID 改名：分组不变，agreement 仍为 1.0。
-    second = {
-        requirement_id: (f"renamed-{cluster}", confidence)
-        for requirement_id, (cluster, confidence) in second.items()
-    }
-
-    high_conf, overall = co_clustering_agreement(first, second)
-
-    assert high_conf == 1.0
-    assert overall == 1.0
 
 
 def test_positive_pair_jaccard_identical_mapping_is_one() -> None:
@@ -299,21 +186,16 @@ def test_positive_pair_jaccard_detects_cluster_split() -> None:
     assert positive_pair_jaccard(first, second) == 2 / 6  # 2 对交集 / 6 对并集
 
 
-def test_merge_pair_metrics_detect_merge_and_split() -> None:
-    """合并实例对指标：合并使 precision 下降，拆分使 recall 下降。"""
-    reference = mapping_clusters(result_payload([[1, 2], [3, 4]]))
-    merged = mapping_clusters(result_payload([[1, 2, 3, 4]]))
-    split = mapping_clusters(result_payload([[1], [2], [3, 4]]))
+def test_positive_pair_jaccard_ignores_canonical_id_renaming() -> None:
+    """canonical ID 改名不影响分组比较。"""
+    first = mapping_clusters(result_payload([[1, 2], [3]]))
+    second = mapping_clusters(result_payload([[1, 2], [3]]))
+    second = {
+        requirement_id: (f"renamed-{cluster}", confidence)
+        for requirement_id, (cluster, confidence) in second.items()
+    }
 
-    merged_metrics = merge_pair_metrics(reference, merged)
-    # 合并：reference 的 2 对全命中，但预测有 C(4,2)=6 对 → precision 低。
-    assert merged_metrics["precision"] == 2 / 6
-    assert merged_metrics["recall"] == 1.0
-
-    split_metrics = merge_pair_metrics(reference, split)
-    # 拆分：reference 的 (1,2) 对被拆 → recall 低。
-    assert split_metrics["recall"] == 1 / 2
-    assert split_metrics["precision"] == 1.0
+    assert positive_pair_jaccard(first, second) == 1.0
 
 
 def test_singleton_and_canonical_drift_reports_ranges() -> None:
@@ -330,133 +212,18 @@ def test_singleton_and_canonical_drift_reports_ranges() -> None:
     assert drift["singleton_ratios"] == [0.5, 1.0]
 
 
-def test_instance_neighbor_stability_drops_when_cluster_split() -> None:
-    """cluster 拆分后实例同簇邻居稳定性下降。"""
-    stable = (
-        mapping_clusters(result_payload([[1, 2], [3, 4]])),
-        mapping_clusters(result_payload([[1, 2], [3, 4]])),
-    )
-    unstable = (
-        mapping_clusters(result_payload([[1, 2], [3, 4]])),
-        mapping_clusters(result_payload([[1], [2, 3, 4]])),
-    )
-
-    assert instance_neighbor_stability(*stable) == 1.0
-    # 实例 2 的邻居从 {1} 变为 {3,4}：Jaccard=0；实例 1 邻居 {2}→∅ 视为 0；
-    # 3/4 邻居 {4,3}→{2,4}/{2,3} 各 1/2。
-    assert instance_neighbor_stability(*unstable) < 1.0
-
-
-def test_top_cluster_membership_stability_unchanged_and_dropped() -> None:
-    """Top cluster 成员集合稳定性：无变化 = 1.0；拆分变化 = <1.0。"""
-    names = ["甲", "乙", "丙", "丁", "戊", "己", "庚", "辛"]
-    base = mapping_clusters(
-        result_payload([[1, 2, 3, 4], [5, 6], [7]], names=names)
-    )
-    unchanged = mapping_clusters(
-        result_payload([[1, 2, 3, 4], [5, 6], [7]], names=names)
-    )
-    # 高频要求 (1,2,3,4) 被拆成两组 → Top-2 集合变化。
-    dropped = mapping_clusters(
-        result_payload([[1, 2], [3, 4], [5, 6], [7]], names=names)
-    )
-
-    assert top_cluster_membership_stability(base, unchanged, k=2)["jaccard"] == 1.0
-    assert top_cluster_membership_stability(base, dropped, k=2)["jaccard"] < 1.0
-
-
-def test_edge_jaccard_and_direction_consistency() -> None:
-    first = relation_edges_by_name(
-        result_payload(
-            [[1], [2], [3]],
-            relations=[
-                {"source": "cr-0", "target": "cr-1"},
-                {"source": "cr-0", "target": "cr-2"},
-            ],
-        )
-    )
-    second = relation_edges_by_name(
-        result_payload(
-            [[1], [2], [3]],
-            relations=[
-                {"source": "cr-0", "target": "cr-1"},
-                {"source": "cr-2", "target": "cr-0"},  # 反向边
-            ],
-        )
-    )
-
-    assert edge_jaccard(first, second) == 1 / 3
-    assert direction_consistency(first, second) == 0.5
-
-
-def test_relation_graph_stats_reports_sparsity() -> None:
-    result = result_payload(
-        [[1], [2], [3]],
-        relations=[
-            {"source": "cr-0", "target": "cr-1", "confidence": 0.9},
-            {"source": "cr-0", "target": "cr-2", "confidence": 0.5},
-        ],
-        uncertain_relations=[{"source": "cr-0", "target": "cr-1"}],
-    )
-
-    stats = relation_graph_stats(result)
-
-    assert stats.edge_count == 2
-    assert stats.node_count == 3
-    assert stats.edge_node_ratio == 2 / 3
-    assert stats.max_out_degree == 2
-    assert stats.max_in_degree == 1
-    assert stats.root_node_count == 1
-    assert stats.low_confidence_edge_count == 1
-    assert stats.uncertain_count == 1
-
-
-def test_fact_projection_ignores_hierarchy_relations() -> None:
-    source = consolidation_input(["能力甲使用经验", "具备能力甲的使用经验", "能力乙"])
-    base = result_payload([[1, 2], [3]])
-    with_hierarchy = result_payload(
-        [[1, 2], [3]],
-        relations=[{"source": "cr-0", "target": "cr-1"}],
-    )
-
-    base_projection = fact_projection(base, source)
-    hierarchy_projection = fact_projection(with_hierarchy, source)
-
-    assert projections_equal(base_projection, hierarchy_projection)
-    assert base_projection.instance_counts == {"cr-0": 2, "cr-1": 1}
-    assert base_projection.distinct_job_counts == {"cr-0": 2, "cr-1": 1}
-    assert base_projection.source_job_sets == {
-        "cr-0": {101, 102},
-        "cr-1": {103},
-    }
-    assert base_projection.evidence_counts == {"cr-0": 2, "cr-1": 1}
-
-
-def test_fact_projection_counts_importance_groups() -> None:
-    source = consolidation_input(["能力甲使用经验", "能力乙", "能力丙"])
-    result = result_payload([[1], [2], [3]])
-
-    projection = fact_projection(result, source)
-
-    assert projection.importance_counts == {
-        "cr-0": {"must": 1},
-        "cr-1": {"must": 1},
-        "cr-2": {"must": 1},
-    }
-
-
-def test_metamorphic_order_invariance_framework() -> None:
-    """顺序不变性框架：两次运行分组一致时 agreement 必须为 1.0。
+def test_order_invariance_framework_pairs_are_stable() -> None:
+    """顺序不变性框架：两次运行分组一致时 positive-pair Jaccard = 1.0。
 
     真实模型行为由验收脚本（--execute）多次运行测量；本测试验证
-    co-clustering 指标计算与框架正确性。
+    指标计算与框架正确性。
     """
     from app.consolidation import (
         consolidate_with_correction,
     )
 
     class FixedClient:
-        """按调用顺序返回固定三阶段响应的模拟客户端。"""
+        """按调用顺序返回固定两阶段响应的模拟客户端。"""
 
         def __init__(self, payload: dict) -> None:
             self.payload = payload
@@ -469,12 +236,8 @@ def test_metamorphic_order_invariance_framework() -> None:
                     {"canonical_requirements": self.payload["canonical_requirements"]},
                     ensure_ascii=False,
                 )
-            if self.calls == 2:
-                return json.dumps(
-                    {"mappings": self.payload["mappings"]}, ensure_ascii=False
-                )
             return json.dumps(
-                {"relations": self.payload["relations"]}, ensure_ascii=False
+                {"mappings": self.payload["mappings"]}, ensure_ascii=False
             )
 
     payload = {
@@ -495,17 +258,14 @@ def test_metamorphic_order_invariance_framework() -> None:
         "mappings": [
             {
                 "requirement_id": requirement_id,
-                "status": "mapped",
                 "canonical_requirement_id": (
                     "cr-a" if requirement_id in (1, 2) else "cr-b"
                 ),
-                "candidate_requirement_ids": [],
                 "rationale": "测试映射",
                 "confidence": 0.95,
             }
             for requirement_id in (1, 2, 3)
         ],
-        "relations": [],
     }
     source = consolidation_input(["能力甲使用经验", "具备能力甲的使用经验", "能力乙"])
 
@@ -520,16 +280,16 @@ def test_metamorphic_order_invariance_framework() -> None:
         shuffled_source, FixedClient(payload), max_attempts=1
     )
 
-    high_conf, overall = co_clustering_agreement(
-        mapping_clusters(first_result),
-        mapping_clusters(second_result),
+    assert (
+        positive_pair_jaccard(
+            mapping_clusters(first_result), mapping_clusters(second_result)
+        )
+        == 1.0
     )
-    assert high_conf == 1.0
-    assert overall == 1.0
 
 
 def test_metamorphic_conservative_fallback_keeps_singletons() -> None:
-    """保守回退：语义无法确认等价的实例保持独立 singleton，不进入失败状态。"""
+    """保守回退：语义无法确认等价的实例保持独立 singleton。"""
     from app.consolidation import consolidate_with_correction
 
     class FallbackClient:
@@ -558,31 +318,25 @@ def test_metamorphic_conservative_fallback_keeps_singletons() -> None:
                     },
                     ensure_ascii=False,
                 )
-            if self.calls == 2:
-                return json.dumps(
-                    {
-                        "mappings": [
-                            {
-                                "requirement_id": 1,
-                                "status": "mapped",
-                                "canonical_requirement_id": "cr-0",
-                                "candidate_requirement_ids": [],
-                                "rationale": "测试映射",
-                                "confidence": 0.8,
-                            },
-                            {
-                                "requirement_id": 2,
-                                "status": "mapped",
-                                "canonical_requirement_id": "cr-1",
-                                "candidate_requirement_ids": [],
-                                "rationale": "测试映射",
-                                "confidence": 0.8,
-                            },
-                        ]
-                    },
-                    ensure_ascii=False,
-                )
-            return json.dumps({"relations": []}, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "mappings": [
+                        {
+                            "requirement_id": 1,
+                            "canonical_requirement_id": "cr-0",
+                            "rationale": "测试映射",
+                            "confidence": 0.8,
+                        },
+                        {
+                            "requirement_id": 2,
+                            "canonical_requirement_id": "cr-1",
+                            "rationale": "测试映射",
+                            "confidence": 0.8,
+                        },
+                    ]
+                },
+                ensure_ascii=False,
+            )
 
     source = consolidation_input(["能力甲", "能力乙"])
 
@@ -591,7 +345,6 @@ def test_metamorphic_conservative_fallback_keeps_singletons() -> None:
     assert len(result.mappings) == 2
     assert len(result.canonical_requirements) == 2
     assert {m.canonical_requirement_id for m in result.mappings} == {"cr-0", "cr-1"}
-    assert result.hierarchy_status == "not_run"
 
 
 def test_unreferenced_canonical_is_dropped_deterministically() -> None:
@@ -626,94 +379,16 @@ def test_unreferenced_canonical_is_dropped_deterministically() -> None:
                     },
                     ensure_ascii=False,
                 )
-            if self.calls == 2:
-                return json.dumps(
-                    {
-                        "mappings": [
-                            {
-                                "requirement_id": requirement_id,
-                                "status": "mapped",
-                                "canonical_requirement_id": "cr-0",
-                                "candidate_requirement_ids": [],
-                                "rationale": "测试映射",
-                                "confidence": 0.8,
-                            }
-                            for requirement_id in (1, 2)
-                        ]
-                    },
-                    ensure_ascii=False,
-                )
-            return json.dumps({"relations": []}, ensure_ascii=False)
-
-    source = consolidation_input(["能力甲", "能力乙"])
-
-    result, raw = consolidate_with_correction(source, NoisyClient(), max_attempts=1)
-
-    assert len(result.canonical_requirements) == 1
-    assert result.canonical_requirements[0].canonical_requirement_id == "cr-0"
-    assert len(result.mappings) == 2
-    assert result.hierarchy_status == "not_run"
-
-
-def test_unreferenced_canonical_with_relations_is_dropped_with_edges() -> None:
-    """无来源噪声标准项被剔除时，指向它的关系边一并删除。"""
-    from app.consolidation import consolidate_with_correction
-
-    class NoisyRelationClient:
-        """标准项轮多提一个噪声项，关系轮还给噪声项建了边。"""
-
-        def __init__(self) -> None:
-            self.calls = 0
-
-        def complete(self, system_prompt: str, user_prompt: str) -> str:
-            self.calls += 1
-            if self.calls == 1:
-                return json.dumps(
-                    {
-                        "canonical_requirements": [
-                            {
-                                "canonical_requirement_id": "cr-0",
-                                "canonical_name": "能力甲",
-                                "rationale": "独立要求",
-                                "confidence": 0.8,
-                            },
-                            {
-                                "canonical_requirement_id": "cr-noise",
-                                "canonical_name": "噪声条件",
-                                "rationale": "模型幻觉",
-                                "confidence": 0.5,
-                            },
-                        ]
-                    },
-                    ensure_ascii=False,
-                )
-            if self.calls == 2:
-                return json.dumps(
-                    {
-                        "mappings": [
-                            {
-                                "requirement_id": requirement_id,
-                                "status": "mapped",
-                                "canonical_requirement_id": "cr-0",
-                                "candidate_requirement_ids": [],
-                                "rationale": "测试映射",
-                                "confidence": 0.8,
-                            }
-                            for requirement_id in (1, 2)
-                        ]
-                    },
-                    ensure_ascii=False,
-                )
             return json.dumps(
                 {
-                    "relations": [
+                    "mappings": [
                         {
-                            "source_requirement_id": "cr-0",
-                            "target_requirement_id": "cr-noise",
-                            "relation_type": "broader_than",
-                            "rationale": "指向噪声项的边",
-                            "confidence": 0.6,
+                            "requirement_id": requirement_id,
+                            "canonical_requirement_id": "cr-0",
+                            "rationale": "测试映射",
+                            "confidence": 0.8,
                         }
+                        for requirement_id in (1, 2)
                     ]
                 },
                 ensure_ascii=False,
@@ -721,11 +396,11 @@ def test_unreferenced_canonical_with_relations_is_dropped_with_edges() -> None:
 
     source = consolidation_input(["能力甲", "能力乙"])
 
-    result, _ = consolidate_with_correction(source, NoisyRelationClient(), max_attempts=1)
+    result, _ = consolidate_with_correction(source, NoisyClient(), max_attempts=1)
 
     assert len(result.canonical_requirements) == 1
     assert result.canonical_requirements[0].canonical_requirement_id == "cr-0"
-    assert result.relations == []
+    assert len(result.mappings) == 2
 
 
 def test_mapping_reference_to_unknown_canonical_is_rejected_and_retried() -> None:
@@ -762,9 +437,7 @@ def test_mapping_reference_to_unknown_canonical_is_rejected_and_retried() -> Non
                         "mappings": [
                             {
                                 "requirement_id": requirement_id,
-                                "status": "mapped",
                                 "canonical_requirement_id": "CR-noise",
-                                "candidate_requirement_ids": [],
                                 "rationale": "幻觉引用",
                                 "confidence": 0.8,
                             }
@@ -773,24 +446,20 @@ def test_mapping_reference_to_unknown_canonical_is_rejected_and_retried() -> Non
                     },
                     ensure_ascii=False,
                 )
-            if self.calls == 3:
-                return json.dumps(
-                    {
-                        "mappings": [
-                            {
-                                "requirement_id": requirement_id,
-                                "status": "mapped",
-                                "canonical_requirement_id": "cr-0",
-                                "candidate_requirement_ids": [],
-                                "rationale": "修正后引用",
-                                "confidence": 0.8,
-                            }
-                            for requirement_id in (1, 2)
-                        ]
-                    },
-                    ensure_ascii=False,
-                )
-            return json.dumps({"relations": []}, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "mappings": [
+                        {
+                            "requirement_id": requirement_id,
+                            "canonical_requirement_id": "cr-0",
+                            "rationale": "修正后引用",
+                            "confidence": 0.8,
+                        }
+                        for requirement_id in (1, 2)
+                    ]
+                },
+                ensure_ascii=False,
+            )
 
     source = consolidation_input(["能力甲", "能力乙"])
 
