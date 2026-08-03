@@ -227,14 +227,14 @@ class FakeExtractionClient:
 
 
 class FakeConsolidationClient:
-    """按阶段返回归并响应。"""
+    """返回单次 canonical 聚类响应。"""
 
     def __init__(self, settings) -> None:
         """保存模型名。"""
         self.model_name = settings.model
 
     def complete(self, system_prompt: str, user_prompt: str) -> str:
-        """返回标准项或映射阶段响应。"""
+        """返回单次合法 canonical 聚类响应（mappings 由确定性代码生成）。"""
         payload = json.loads(user_prompt)
         task = payload.get("task", "")
         if "只输出canonical_requirements" in task:

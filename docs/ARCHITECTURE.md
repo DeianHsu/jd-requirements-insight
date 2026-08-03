@@ -61,8 +61,12 @@ canonical 层支持跨 JD 统计。两者通过唯一映射连接。
 归并模型一次输出 canonical requirements 和来源实例分区
 （`source_requirement_ids`，无法合并的实例创建 singleton）；分区校验
 通过后，mappings 由确定性代码从来源分区生成并持久化。模型只负责决定
-cluster，确定性代码负责把 cluster 展开为 mappings。唯一映射使统计
-口径确定：每个实例计数一次，每份 JD 对一个 canonical 只计一次独立 JD 数。
+cluster，确定性代码负责把 cluster 展开为 mappings。归并持久化同时保存
+成功那次的模型响应（`model_response`）与规范化结果
+（`normalized_result`，含确定性 mappings）及尝试次数。离线验证
+（validate-consolidation）按批次记录的 extraction_ids 回查原始输入集合
+作为 coverage 分母，不用已有 mappings 自证。唯一映射使统计口径确定：
+每个实例计数一次，每份 JD 对一个 canonical 只计一次独立 JD 数。
 
 ### 市场频率口径
 

@@ -13,7 +13,7 @@ implementation_baseline: 5c3255e（仓库收缩完成；Git 是当前 HEAD 的�
 | `python -m app.cli list-extractions` | 列出抽取结果 |
 | `python -m app.cli consolidate-requirements --all|--job-id N --execute` | 跨 JD 归并为 canonical requirement（付费，需 --execute） |
 | `python -m app.cli list-consolidations` | 列出归并批次 |
-| `python -m app.cli validate-consolidation --consolidation-id N` | 离线合同验证（不付费） |
+| `python -m app.cli validate-consolidation --consolidation-id N` | 离线验证（不付费；回查批次真实输入，失败返回非零） |
 | `app/market_analysis.py` | 市场统计（实例数、独立 JD 数、importance 分布、来源证据、稳定排序），供下一阶段 `generate-report` 消费 |
 
 验证脚本（均需 `--execute` 才调用付费模型，`--dry-run` 预检不付费）：
@@ -21,6 +21,8 @@ implementation_baseline: 5c3255e（仓库收缩完成；Git 是当前 HEAD 的�
 - P0-3A 规则场景：`python -m scripts.experiments.p0_3.run_acceptance --execute`
 - P0-3B 真实 JD：`python -m scripts.experiments.p0_3.run_real_jd_acceptance --use-project-database --all --execute`
 - P0-4 归并验收：`python -m scripts.experiments.p0_4.run_acceptance --execute`
+  （缺省自动选择所选 JD 的唯一共同 v0.8 + Schema V3 抽取版本；查询前
+  验证数据库结构；顺序变形合同违规计入 hard gate）
 - P0-4 小规模预检：`python -m scripts.experiments.p0_4.run_small_scale_precheck --execute`
 
 ## 当前数据规模（本地私有，不入库提交）
@@ -45,7 +47,7 @@ implementation_baseline: 5c3255e（仓库收缩完成；Git 是当前 HEAD 的�
 
 - 本地数据库为旧结构，需要用户备份后重建；
 - 无真实 JD 的 v0.8 抽取结果，统计与报告暂无真实输入；
-- P0-4 归并合同验证需要 `--extractor-version` 含 `schema:3.0`，旧数据会被拒绝（符合预期）。
+- P0-4 归并合同验证缺省自动选择唯一共同当前抽取版本；显式旧版本会被拒绝（符合预期）。
 
 ## 下一步开发任务
 

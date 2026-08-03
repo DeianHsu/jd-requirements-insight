@@ -15,7 +15,7 @@ requirement → 独立 JD 统计 → 原文证据追溯 → Markdown 市场分�
   实例分区（不确定时创建 singleton）；mappings 由确定性代码生成并
   幂等持久化；
 - **归并验证**：coverage、结构违规、positive-pair Jaccard、canonical/
-  singleton 漂移、顺序/分块变形、人工 cluster 复核；
+  singleton 漂移、顺序变形、人工 cluster 复核；
 - **市场统计**：每个 canonical requirement 的实例数、独立 JD 数、
   must/preferred/mentioned 分布、来源 JD 集合与原文证据（`app/market_analysis.py`）。
 
@@ -45,13 +45,14 @@ python -m app.cli import-jds data/raw_jds
 # 抽取（付费调用必须 --execute 确认）
 python -m app.cli extract-jds --all --execute
 
-# 归并（付费调用必须 --execute 确认）
+# 归并（付费调用必须 --execute 确认；缺省自动选择唯一共同 v0.8 抽取版本）
 python -m app.cli consolidate-requirements --all --execute
 
 # 查看与验证
 python -m app.cli list-jds
 python -m app.cli list-extractions
 python -m app.cli list-consolidations
+# 离线验证（不付费；coverage 以批次真实输入集合为分母，失败返回非零）
 python -m app.cli validate-consolidation --consolidation-id 1
 ```
 

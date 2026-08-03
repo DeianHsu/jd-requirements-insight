@@ -80,12 +80,14 @@ cluster）；mappings 由确定性代码从来源分区生成并持久化。
 - positive-pair Jaccard；
 - canonical 数量漂移；
 - singleton 比例漂移；
-- 输入顺序变形、分块大小变形；
+- 输入顺序变形；
 - 人工检查所有多成员 cluster。
 
 输出结构：input fingerprint、run count、coverage、structural failures、
 positive-pair Jaccard、canonical count range、singleton ratio range、
-order/chunk transformation result、manual cluster review notes。
+order transformation result、manual cluster review notes。顺序变形的
+合同违规（coverage/结构违规）与聚类失败计入 hard gate；jaccard 低于
+阈值只作 warning。
 
 ## 6. 旧数据与旧方案
 
