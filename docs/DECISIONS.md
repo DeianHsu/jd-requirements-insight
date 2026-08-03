@@ -23,6 +23,7 @@
 | DEC-014 | 两段式 v0.6 经 3 次独立验收批准替换 V2.3.1 成为正式抽取版本 | 已采纳（legacy Gold protocol 下批准） |
 | DEC-015 | 抽取层取消完整人工 Gold，改为数据合同 + 规则化验证 + 人工违规审计 | 已采纳 |
 | DEC-016 | 熟练度从五级收缩为三级（unknown/basic/advanced），原始措辞由 evidence 保留 | 已采纳 |
+| DEC-017 | 单版本收敛：v0.8 + Schema V3 唯一实现；P0-4B 移出默认流程为实验功能 | 已采纳 |
 
 ## DEC-001：产品定位为岗位要求洞察，而不是简历匹配打分器
 
@@ -774,3 +775,56 @@ basic→basic、SCN-012 advanced→advanced）与经验表达（SCN-013 basic→
 
 当人工审计或下游统计证明某类岗位确实需要区分“了解”与“熟悉”、且措辞边界
 可以稳定定义时，经用户裁决在 Schema V4 引入更细粒度；在此之前维持三级。
+
+## DEC-017：单版本收敛（v0.8 + Schema V3 唯一实现）与 P0-4B 实验化
+
+### 问题
+
+上一轮维护了 active（v0.6 + Schema V2）、candidate（v0.8 + Schema V3）双
+版本与 v0.7 历史候选，同时保留旧 Prompt 常量、五级兼容映射和 legacy Gold
+评测入口。多版本并存让正常抽取、持久化和验收选择路径复杂化，旧逻辑还
+在持续制造“版本身份”与“旧数据兼容”的维护成本。
+
+### 决策
+
+1. 只维护现行方案：Prompt v0.8 + Schema V3（proficiency =
+   unknown/basic/advanced）是唯一当前实现；正常抽取、持久化和验收统一使用。
+2. 已淘汰的旧 Prompt（V2.3.1/v0.6/v0.7）、旧 Schema V2 与五级兼容逻辑、
+   legacy Prompt 常量、旧 Gold/F1 验收入口与相关运行脚本、仅用于旧方案的
+   测试全部移除；历史由 Git 与已有报告保存。
+3. 旧数据库或旧抽取结果视为历史派生数据：当前流程发现旧 Schema 数据时
+   明确拒绝使用并提示重新抽取，避免旧数据混入 P0-4 和后续统计。
+4. P0-3 验收区分 `pilot`（检查流程、收集指标，不产生批准结论）与
+   `acceptance`（使用已冻结的规则、范围与阈值，decision_eligible=True
+   时才可用于批准当前版本）；本轮只实现和测试流程，不执行真实模型调用，
+   也不自行设定稳定性阈值。
+5. P0-4B（broader_than 标准项层级）移出默认流程：默认归并只完成
+   canonical requirements 与 instance mappings（`include_relations=False`，
+   `hierarchy_status=not_run`）；层级关系是显式实验功能
+   （CLI `--with-relations` / `include_relations=True`），未运行或失败
+   不影响 P0-4A 持久化、不阻塞 P0-6、不进入默认统计、不让整个归并任务
+   失败。
+6. P0-4A 稳定性判断不只依赖总 pairwise co-clustering：补充同簇正实例对
+   Jaccard、合并实例对 precision/recall/F1、singleton 比例与 canonical
+   数量漂移、实例同簇邻居稳定性、Top-10/Top-20 高频要求集合稳定性，
+   用于识别 cluster 拆分、错误合并与高频要求掉出 Top-K；运行间一致性
+   不描述为语义准确率。
+
+### 主要取舍
+
+- 放弃旧版本兼容与双 profile 选择，换取单一可追踪的当前实现；
+- 放弃旧数据的静默兼容读取，改为显式拒绝，避免历史派生数据污染下游；
+- P0-4B 实验化后，P0-4A（P0-6 硬依赖）与 P0-4B（解释组织层）的验收与
+  状态完全解耦。
+
+### 结果与证据
+
+全量 203 项测试与 Ruff 通过；验收脚本报告包含 phase/prompt_version/
+schema_version/protocol_version/scenario fingerprint/JD set fingerprint/
+runs/hard gate failures/decision_eligible。
+
+### 复审条件
+
+当 v0.8 完成 acceptance 阶段验收并获批后，不再需要本决策的“唯一实现”
+约束之外的版本选择；若未来需要区分程度更细的熟练度或恢复层级关系默认
+运行，须用户裁决并重新冻结验收口径。
