@@ -178,9 +178,9 @@ def make_database(tmp_path: Path):
     return engine, create_session_factory(engine)
 
 
-def test_formal_prompt_version_is_two_stage_v0_6() -> None:
-    """验证正式版本号已切换为两段式v0.6，历史V2.3.1规则仍被锁定保留。"""
-    assert PROMPT_VERSION == "0.6"
+def test_formal_prompt_version_is_two_stage_v0_7() -> None:
+    """验证正式版本号已切换为两段式v0.7，历史V2.3.1规则仍被锁定保留。"""
+    assert PROMPT_VERSION == "0.7"
     assert SCHEMA_VERSION == "2.0"
     # SYSTEM_PROMPT 是已替换的历史版本 V2.3.1，保留规则锁定以便复现历史结果。
     assert "熟悉Python和RAG" in SYSTEM_PROMPT

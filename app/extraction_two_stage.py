@@ -23,12 +23,32 @@ from app.extraction import (
 from app.models import JobDescription
 from app.schemas import JobExtractionResult, RoleFamily, Seniority
 
-# 两段式正式版本号（P0-3 验收 APPROVED 后已替换 V2.3.1 成为正式版本）。
+# 两段式正式版本号（v0.7 起 Prompt 引用 P0-1 稳定规则 ID 并删除案例式补丁；
+# v0.6 在 legacy Gold protocol 下批准，历史 Prompt 见 LEGACY_*_V06 常量）。
 # 必须与 app/extraction.py 的 PROMPT_VERSION 保持同步。
-TWO_STAGE_PROMPT_VERSION = "0.6"
+TWO_STAGE_PROMPT_VERSION = "0.7"
 
 # 发现段Prompt：只做全局扫描与分句归属，不做拆分与字段判断。
 DISCOVERY_SYSTEM_PROMPT = """你是招聘JD结构化分析的第一阶段：全局发现。通读用户提供的完整JD原文，只完成三件事，不做任何拆分、原子化或字段判断。
+
+【任务】
+1. 判断岗位方向（role_family）与岗位级别（seniority）。
+2. 把原文按给定的分句编号拆成候选块：每个分句（或相邻连续语义单元）必须归属且只归属一个候选块，标注kind：
+   - responsibility：候选人入职后需要完成的工作；
+   - requirement：公司对候选人的条件（技能、经验、学历、专业、软能力）；
+   - mixed：同一句同时包含工作内容与候选人条件；
+   - excluded：宣传语、福利待遇、办公地点、投递提示、公司介绍等非条件内容。
+3. 每个候选块保留原文连续片段作为source_span，列出其覆盖的全部分句编号（sentence_indexes），并给出简短的归属理由note。
+
+【要求】
+1. COVER-01：每个分句都必须出现在某个候选块的sentence_indexes中，不得遗漏任何实质内容；相邻同类的连续分句可以合并为一个候选块，但不得跳句。
+2. COVER-02：同一分句不得重复归属到多个候选块。
+3. COVER-03：source_span必须是原文中连续出现的文本，不得改写、拼接或翻译，且与sentence_indexes对应的分句完全一致。
+4. 不要输出responsibilities或requirements明细，本阶段只发现候选块。
+5. 严格按照用户提供的JSON结构输出一个JSON对象，不要输出Markdown代码块或额外说明。"""
+
+# v0.6 历史发现段Prompt（legacy Gold protocol 下批准的正式版本，仅保留供历史复现）。
+LEGACY_DISCOVERY_SYSTEM_PROMPT_V06 = """你是招聘JD结构化分析的第一阶段：全局发现。通读用户提供的完整JD原文，只完成三件事，不做任何拆分、原子化或字段判断。
 
 【任务】
 1. 判断岗位方向（role_family）与岗位级别（seniority）。
@@ -46,8 +66,71 @@ DISCOVERY_SYSTEM_PROMPT = """你是招聘JD结构化分析的第一阶段：全�
 4. 严格按照用户提供的JSON结构输出一个JSON对象，不要输出Markdown代码块或额外说明。"""
 
 # 判断段Prompt：只做局部语义判断，直接输出完整抽取数据合同。
-# v0.2融合V2.3.1的成熟规则（职责先覆盖后分组、原子化、任选关系、示例边界、字段判断），示例保持中性化。
-JUDGE_SYSTEM_PROMPT = """你是招聘JD结构化分析的第二阶段：精细判断。输入是第一阶段的候选块列表（每个块含原文连续证据与归属），请对每个候选块做以下判断并输出完整抽取数据合同JSON。
+# v0.7：规则引用 docs/annotation/ 的稳定规则 ID（RESP/REQ/GROUP/FIELD/EVID/COVER），
+# 删除针对单个历史 case 的补丁式示例，保留少量领域中性正反例。
+JUDGE_SYSTEM_PROMPT = """你是招聘JD结构化分析的第二阶段：精细判断。输入是第一阶段的候选块列表（每个块含原文连续证据与归属），请对每个候选块做以下判断并输出完整抽取数据合同JSON。规则编号与 P0-1 语义决策规则对应（docs/annotation/）。
+
+【职责判断（RESP-01～RESP-07）】
+1. RESP-01：只把入职后需要完成的工作抽取为职责；职责中出现的技术只在JD明确要求候选人掌握时才成为要求（否则至多mentioned）。
+2. RESP-02：不同对象、不同交付物或可独立验收的业务结果必须拆成多项；拆分优先于"环节列举概括"，即使多个结果被"全流程自动化"等总结性表达概括，也必须逐项保留。
+3. RESP-03：只有多个动作共同完成同一对象的单一端到端交付、并且拆开后只剩缺少业务含义的通用动作时才合并。
+4. RESP-04：协作对象、使用技术和执行手段通常是实施方式，不单独形成职责，但其承载的交付不能丢失。
+5. RESP-05："如""例如""等"和括号中的内容如果只是上位业务对象的示例，不展开为独立职责。
+6. RESP-06：以"参与/负责/围绕"+同一对象的多个组成部分或环节（如定义、编排、集成、训练、发布、治理，或多个子能力、模块、机制）开头的内容，是同一项研发或建设工作的组成部分，合并为一项概括职责（如"开展XX全生命周期研发""建设XX体系"）；环节列举概括只在列举项属于同一对象的组成部分时适用，不能用来合并不同业务对象。
+7. RESP-07：每项的name使用"动作+对象或结果"的完整简洁表达（一个字符串），只保留动作与核心对象/结果；修饰语和列举内容在evidence中保留，不进入name；不要输出action、object_or_result等结构化子字段。
+8. 正反例（领域中性，按同类结构判断）：
+   - 正："设计、开发与落地同一管理平台"：作用于同一平台和同一端到端结果，整体保留为一项（RESP-03）；
+   - 正："围绕平台的编排、集成、训练、发布和治理等环节开展研发"：概括为一项"开展平台全生命周期研发"，不把每个环节拆成低价值职责（RESP-06）；
+   - 反："设计架构、开发核心代码，实现数据自动化处理"：三者具有不同交付结果，必须拆为三项，不能合并（RESP-02）；
+   - 反："与产品及业务团队协作，构建基础设施"：协作是实施方式，合并为一项"与产品及业务团队协作构建基础设施"（RESP-04）。
+9. evidence必须是最小充分连续原文（EVID-01、EVID-02）。
+
+【要求原子化（REQ-01～REQ-08）】
+1. REQ-01：只抽取候选人的技能、经验、学历、专业或软能力条件；工资福利、办公地点、招聘者信息、投递提示、公司宣传口号和由常识推断的隐含技能不标注。
+2. REQ-02：每个requirement只能表达一个可独立学习、评价、匹配和统计的条件。
+3. REQ-03：技术技能、学历、专业、经验和软能力跨类别出现在同一句时必须拆开。
+4. REQ-04：行业稳定复合表达（固定复合要求，如"数据结构与算法"）或拆分后改变原意的表达整体保留。
+5. REQ-05：raw_name保留原始业务含义，不做同义归一；"XX使用经验"不能缩减成"XX"。
+6. REQ-06：只依据JD明示内容，不补充行业常识或隐含技能；相关但未被条件修饰的技术不得补充成条件。
+
+【任选关系与示例边界（GROUP-01～GROUP-03）】
+1. GROUP-01：只有原文明确出现"至少一种""任一""或"等有限任选含义时才建立any_of组；当"至少一种""任一""或"后直接列举具体技术名时，该列举是有限候选项，必须逐项拆成any_of成员，成员raw_name直接用具体技术名；只有"完整上位概念+如/例如/括号引出+明显是非穷举示例"时，才保留上位概念为standalone，不建立any_of；"等"字本身不能决定是否为示例，关键是括号/如引出的内容是对上位概念的举例还是被候选条件直接修饰的具体技术名。
+2. GROUP-02：any_of组内各成员输出相同group_id（字符串，如"group_1"）和group_logic="any_of"，且同一组至少包含两个成员；普通独立要求必须输出group_logic="standalone"、group_id=null。group_logic不允许为null，group_id不允许输出数字。
+3. GROUP-03：多个候选项共同受"优先""加分"或"相关项目经验者优先"修饰，并且具备任一项即可形成同类加分时，各候选项使用preferred并共享同一个any_of组。
+4. 正反例（领域中性，按同类结构判断）：
+   - 正："至少精通一门主流后端开发语言（如 甲、乙 等）"：括号内容是非穷举示例，只保留"主流后端开发语言"standalone，proficiency=expert（GROUP-01）；
+   - 正："熟悉至少一种开发框架（甲 / 乙 / 丙 等）"：甲、乙、丙被"至少一种"直接修饰，拆成3个any_of成员（GROUP-01）；
+   - 反："熟悉 甲、乙 等主流框架"：甲、乙被候选条件直接修饰，必须逐项保留为standalone，不得改写成上位概念（REQ-07）。
+5. REQ-08：具体模型名只用于修饰上位经验类型时，不单独标注模型（保留在证据中）。
+
+【字段判断（FIELD-01～FIELD-05）】
+1. FIELD-01：category必须输出枚举值（programming_language、backend_engineering、agent_framework、agent_capability、rag、llm_application、model_training、ml_framework、retrieval、deployment、software_engineering、domain_knowledge、education、experience、soft_skill、other），不要输出中文类别名；无法归类时用other。
+2. FIELD-02：importance：任职要求普通条件为must；明确"优先""加分"为preferred；只提及未要求为mentioned；无法判断为unknown。必须输出枚举值，不要输出中文。
+3. FIELD-03：proficiency：只按明确程度词判断并输出枚举值："了解"→understand、"熟悉"→familiar、"熟练/扎实"→proficient、"精通"→expert、无明确程度词→unknown；"使用经验""项目经验"不得推断熟练度，使用unknown。不要输出"熟悉""精通"等中文程度词。
+4. FIELD-04：年限只提取原文明示的数字，不估算年限；min_years为下限，max_years只保存原文上限，years_text保留完整年限表达；无法判断使用null；年限上下限不得颠倒。
+5. FIELD-05：不确定的字段使用unknown或null，不得猜测。
+
+【覆盖与证据（COVER-04、EVID-01～EVID-04）】
+1. COVER-04：必须处理所有非excluded候选块；每个实质工作内容都已覆盖为职责/要求或明确排除，不得静默丢弃。
+2. EVID-01：每条evidence必须是JD原文中连续出现的最小充分文本，不得改写、拼接或翻译；不得拼接不连续片段。
+3. EVID-02：evidence必须足以支持职责或要求名称及字段判断（重要程度、熟练度、年限）。
+4. EVID-03：多个原子项可以共享同一句证据。
+
+【mixed块】先分离工作部分与条件部分，再分别按上述规则处理。
+
+【岗位信息】role_family与seniority必须直接使用输入中"job_info"字段给出的值，不能省略或置为null，也不要重新判断。
+
+【输出前检查】
+每个实质工作内容都已覆盖为职责或明确排除（COVER-04）；职责没有错误合并或机械拆分；要求没有可继续拆分的并列概念；any_of组成员不少于两个（GROUP-02）；年限上下限未颠倒；每条evidence都能在原文中找到（EVID-01）。
+
+【输出要求】
+1. 严格按照抽取数据合同的JSON结构输出：responsibilities、requirements、role_family、seniority。
+2. responsibilities中的每一项必须包含name和evidence两个字段。
+3. requirements中的每一项必须包含以下全部字段：raw_name、category、importance、proficiency、group_id、group_logic、min_years、max_years、years_text、evidence、confidence。不要用name替代raw_name，不要省略字段（不适用时用null）。
+4. 不要输出Markdown代码块或额外说明。"""
+
+# v0.6 历史判断段Prompt（legacy Gold protocol 下批准的正式版本，仅保留供历史复现）。
+LEGACY_JUDGE_SYSTEM_PROMPT_V06 = """你是招聘JD结构化分析的第二阶段：精细判断。输入是第一阶段的候选块列表（每个块含原文连续证据与归属），请对每个候选块做以下判断并输出完整抽取数据合同JSON。
 
 【职责判断：先覆盖、后分组】
 1. 在组织最终输出前，先识别每个职责候选块中的候选动作、对象和可验收结果，再判断职责边界；这个分析过程不要输出。
@@ -270,6 +353,16 @@ def extract_job_two_stage(
     max_attempts: int = 2,
 ) -> tuple[JobExtractionResult, dict[str, object]]:
     """对一份JD执行发现段与判断段两次调用，并做确定性覆盖与证据校验。"""
+    _, result, raw = extract_job_two_stage_with_discovery(job, client, max_attempts)
+    return result, raw
+
+
+def extract_job_two_stage_with_discovery(
+    job: JobDescription,
+    client: ExtractionClient,
+    max_attempts: int = 2,
+) -> tuple[DiscoveryResult, JobExtractionResult, dict[str, object]]:
+    """两段式抽取并返回发现段结果，供验证与审计记录使用（接口与两段式原版兼容）。"""
     # 发现段：全局扫描，失败时把校验错误反馈重试。
     correction = None
     discovery: DiscoveryResult | None = None
@@ -300,7 +393,7 @@ def extract_job_two_stage(
         try:
             result = parse_model_response(response_text)
             validate_evidence(result, job.raw_text)
-            return result, result.model_dump(mode="json")
+            return discovery, result, result.model_dump(mode="json")
         except ExtractionError as exc:
             correction = str(exc)
 

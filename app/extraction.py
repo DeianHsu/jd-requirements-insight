@@ -17,7 +17,7 @@ from app.config import LLMSettings
 from app.models import JobDescription, JobExtraction, JobRequirement, JobResponsibility
 from app.schemas import JobExtractionResult, ResponsibilityItem
 
-PROMPT_VERSION = "0.6"
+PROMPT_VERSION = "0.7"
 SCHEMA_VERSION = "2.0"
 
 # 正式版本已切换为两段式 v0.6（见 app/extraction_two_stage.py 的
