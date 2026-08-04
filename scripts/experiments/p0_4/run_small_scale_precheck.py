@@ -96,7 +96,7 @@ def main() -> int:
         "--extractor-version",
         type=str,
         default=None,
-        help="抽取器版本；缺省使用当前唯一配置 v0.8 + Schema V3",
+        help="抽取器版本；缺省使用当前唯一配置 v0.9 + Schema V3",
     )
     parser.add_argument(
         "--target-size",
@@ -203,7 +203,7 @@ def main() -> int:
             {key: value for key, value in record.items() if key != "response_head"}
             for record in client.records
         ],
-        "p0_4a_contract": {
+        "p0_4_contract": {
             "coverage": contract.coverage,
             "duplicate_mapping_count": contract.duplicate_mapping_count,
             "unknown_reference_count": contract.unknown_reference_count,

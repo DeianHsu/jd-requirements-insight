@@ -112,7 +112,7 @@ def build_market_statistics(
         )
         if record is None:
             raise ValueError(f"归并批次不存在：{consolidation_id}")
-        # 市场统计只消费 v0.8 + Schema V3 归并批次。
+        # 市场统计只消费 v0.9 + Schema V3 归并批次。
         assert_current_extractor_version(record.extractor_version)
 
         canonical_by_id = {

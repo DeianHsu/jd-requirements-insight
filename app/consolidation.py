@@ -234,7 +234,7 @@ def load_consolidation_selection(
             raise ValueError(f"存在多个共同抽取器版本，请明确指定：{versions}")
         extractor_version = next(iter(common_versions))
 
-    # 当前主线只消费 v0.8 + Schema V3：显式指定或自动选中的旧版本都拒绝。
+    # 当前主线只消费 v0.9 + Schema V3：显式指定或自动选中的旧版本都拒绝。
     assert_current_extractor_version(extractor_version)
 
     selected_extractions = sorted(

@@ -44,11 +44,11 @@ def make_job(job_id: int, source_file: str) -> JobDescription:
 
 
 def make_extraction(
-    extraction_id: int, job_id: int, version: str = "0.8"
+    extraction_id: int, job_id: int, version: str = "0.9"
 ) -> JobExtraction:
     """创建一份带抽取器版本身份的抽取主记录。"""
-    if version == "0.8":
-        extractor_version = "test-model|prompt:0.8|schema:3.0"
+    if version == "0.9":
+        extractor_version = "test-model|prompt:0.9|schema:3.0"
         schema_version = "3.0"
     else:
         extractor_version = f"test-model|prompt:{version}|schema:2.0"
@@ -109,7 +109,7 @@ def test_loads_occurrences_from_multiple_jobs_without_field_loss(
     by_id = {occ.requirement_id: occ for occ in result.occurrences}
     assert by_id[1].job_id == 1
     assert by_id[1].extraction_id == 1
-    assert by_id[1].extractor_version == "test-model|prompt:0.8|schema:3.0"
+    assert by_id[1].extractor_version == "test-model|prompt:0.9|schema:3.0"
     assert by_id[1].source_hash == f"{1:064x}"
     assert by_id[1].source_file == "job-a.md"
     assert by_id[1].requirement.raw_name == "能力甲"
@@ -159,7 +159,7 @@ def test_extractor_version_wrong_values_are_rejected() -> None:
         "model|prompt:0.8|schema:2.0",
         "model|prompt:1.0|schema:1.0",
     ):
-        with pytest.raises(ValueError, match="当前只支持 v0.8"):
+        with pytest.raises(ValueError, match="当前只支持 v0.9"):
             assert_current_extractor_version(version)
 
 
@@ -167,8 +167,8 @@ def test_extractor_version_valid_identity_passes() -> None:
     """合法版本身份（含额外非冲突段）通过。"""
     from app.extraction import assert_current_extractor_version
 
-    assert_current_extractor_version("deepseek-v4-flash|prompt:0.8|schema:3.0")
-    assert_current_extractor_version("model|prompt:0.8|schema:3.0|revision:1")
+    assert_current_extractor_version("deepseek-v4-flash|prompt:0.9|schema:3.0")
+    assert_current_extractor_version("model|prompt:0.9|schema:3.0|revision:1")
 
 
 def test_explicit_extraction_version_is_loaded(tmp_path: Path) -> None:
@@ -176,7 +176,7 @@ def test_explicit_extraction_version_is_loaded(tmp_path: Path) -> None:
     engine, session_factory = make_database(tmp_path)
     with session_factory() as session:
         session.add(make_job(1, "job-a.md"))
-        session.add(make_extraction(1, 1, version="0.8"))
+        session.add(make_extraction(1, 1, version="0.9"))
         session.add(make_extraction(2, 1, version="2.0"))
         session.add(make_requirement(1, 1, "能力甲"))
         session.add(make_requirement(2, 2, "能力甲"))
@@ -184,11 +184,11 @@ def test_explicit_extraction_version_is_loaded(tmp_path: Path) -> None:
 
         result = load_requirement_occurrences(
             session,
-            extractor_version="test-model|prompt:0.8|schema:3.0",
+            extractor_version="test-model|prompt:0.9|schema:3.0",
         )
 
         # 显式指定旧版本被当前主线拒绝。
-        with pytest.raises(ValueError, match="当前只支持 v0.8"):
+        with pytest.raises(ValueError, match="当前只支持 v0.9"):
             load_requirement_occurrences(
                 session,
                 extractor_version="test-model|prompt:2.0|schema:2.0",
@@ -202,7 +202,7 @@ def test_multiple_common_versions_require_explicit_selection(tmp_path: Path) -> 
     _, session_factory = make_database(tmp_path)
     with session_factory() as session:
         session.add(make_job(1, "job-a.md"))
-        session.add(make_extraction(1, 1, version="0.8"))
+        session.add(make_extraction(1, 1, version="0.9"))
         session.add(make_extraction(2, 1, version="2.0"))
         session.add(make_requirement(1, 1, "能力甲"))
         session.add(make_requirement(2, 2, "能力乙"))

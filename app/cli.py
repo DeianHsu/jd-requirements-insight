@@ -1,4 +1,4 @@
-"""该模块提供本地JD导入和列表查看的命令行界面。"""
+"""本地命令行入口：JD 导入/列表、v0.9 + Schema V3 抽取、归并、统计与验证。"""
 
 from __future__ import annotations
 
@@ -117,7 +117,7 @@ def extract_jds(
         None, "--job-id", min=1, help="只抽取指定JD，可重复传入"
     ),
 ) -> None:
-    """对选定JD执行v0.8抽取；付费调用必须显式--execute确认。"""
+    """对选定JD执行v0.9抽取；付费调用必须显式--execute确认。"""
     if all_jobs and job_ids:
         console.print("[red]--all不能与--job-id同时使用。[/red]")
         raise typer.Exit(code=2)
@@ -139,7 +139,7 @@ def extract_jds(
         engine.dispose()
 
     console.print(f"模型：[bold]{settings.model}[/bold]")
-    console.print("抽取配置：[bold]v0.8 + Schema V3[/bold]")
+    console.print("抽取配置：[bold]v0.9 + Schema V3[/bold]")
     console.print(f"本次选择 [bold]{len(selected)}[/bold] 份JD（付费抽取）")
     if not execute:
         console.print("[yellow]未执行：付费模型调用需要显式 --execute 确认。[/yellow]")

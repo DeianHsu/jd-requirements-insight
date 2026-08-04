@@ -1,13 +1,13 @@
 # JD Skill Insight
 
-把真实 JD 转化为**可统计、可追溯的市场要求报告**：导入 → v0.8 + Schema V3
+把真实 JD 转化为**可统计、可追溯的市场要求报告**：导入 → v0.9 + Schema V3
 结构化抽取 → 抽取质量验证 → requirement instance 归并为 canonical
 requirement → 独立 JD 统计 → 原文证据追溯 → Markdown 市场分析报告。
 
 ## 当前具备的能力
 
 - **JD 导入**：Markdown JD（frontmatter + 正文）批量导入与内容去重；
-- **v0.8 结构化抽取**：两段式（发现段全局分句归属 + 判断段局部语义判断）、
+- **v0.9 结构化抽取**：两段式（发现段全局分句归属 + 判断段局部语义判断）、
   三级熟练度、any_of 逻辑组、原文证据强制校验、有限重试、幂等持久化；
 - **抽取质量验证**：P0-3A 规则场景变形测试（领域中性场景 + 确定性变换）、
   P0-3B 真实 JD 验证（合同检查、漂移、异常项索引）；
@@ -45,7 +45,7 @@ python -m app.cli import-jds data/raw_jds
 # 抽取（付费调用必须 --execute 确认）
 python -m app.cli extract-jds --all --execute
 
-# 归并（付费调用必须 --execute 确认；缺省自动选择唯一共同 v0.8 抽取版本）
+# 归并（付费调用必须 --execute 确认；缺省自动选择唯一共同 v0.9 抽取版本）
 python -m app.cli consolidate-requirements --all --execute
 
 # 查看与验证
@@ -80,7 +80,7 @@ python -m scripts.experiments.p0_4.run_small_scale_precheck --execute
   属于私有材料，不提交 Git；
 - 验证/验收报告只输出统计与脱敏索引，原始运行结果只写私有目录；
 - 付费 LLM 调用必须显式 `--execute` 确认；
-- 当前只支持 v0.8 + Schema V3：旧抽取数据与旧数据库结构不做兼容或迁移，
+- 当前只支持 v0.9 + Schema V3：旧抽取数据与旧数据库结构不做兼容或迁移，
   遇到时备份原始 JD、删除旧派生数据库并重新生成。
 
 ## 文档入口

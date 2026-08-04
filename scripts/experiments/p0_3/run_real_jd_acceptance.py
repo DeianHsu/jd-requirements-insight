@@ -1,7 +1,7 @@
 """P0-3 真实 JD 验证脚本（Track B；协议见 docs/annotation/VALIDATION.md）。
 
 与 Track A（`run_acceptance.py`，合成规则场景）分离的两条独立轨道。
-抽取配置为当前唯一方案 v0.8 + Schema V3（三级熟练度）。默认不调用
+抽取配置为当前唯一方案 v0.9 + Schema V3（三级熟练度）。默认不调用
 外部模型；完整验证必须显式`--execute`，预检使用`--dry-run`。
 
 执行流程（真实模型）：
@@ -138,7 +138,7 @@ def _run_extraction(
     job: JobDescription,
     max_attempts: int,
 ) -> RunSnapshot:
-    """使用当前唯一配置（v0.8 + Schema V3）抽取一份真实 JD。"""
+    """使用当前唯一配置（v0.9 + Schema V3）抽取一份真实 JD。"""
     discovery, result, raw_payload = extract_job_two_stage_with_discovery(
         job, client, max_attempts=max_attempts
     )
@@ -195,7 +195,7 @@ def main() -> int:
 
     job_scope = "全部" if args.all else args.job_ids
     print(f"真实 JD 验收（Track B）：{len(jobs)} 份 JD（{job_scope}）")
-    print(f"当前抽取配置：prompt={PROMPT_VERSION} schema={SCHEMA_VERSION}（v0.8 + Schema V3）")
+    print(f"当前抽取配置：prompt={PROMPT_VERSION} schema={SCHEMA_VERSION}（v0.9 + Schema V3）")
     print(f"每份 JD 独立运行：{args.runs} 次")
 
     if not args.execute:
@@ -367,7 +367,7 @@ def main() -> int:
         report["requirement_count"] for report in job_reports
     )
     diagnostics.append(f"candidate_requirement_total={candidate_total}")
-    diagnostics.append("p0_4_input_instances: 以 v0.8 抽取结果重新验收为准（只读统计，未执行归并）")
+    diagnostics.append("p0_4_input_instances: 以 v0.9 抽取结果重新验收为准（只读统计，未执行归并）")
 
     identity = {
         "model": metadata.model_name,

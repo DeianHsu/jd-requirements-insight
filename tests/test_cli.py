@@ -270,7 +270,7 @@ def _seed_validate_batch(tmp_path: Path, monkeypatch) -> None:
             JobExtraction(
                 id=1,
                 job_id=1,
-                extractor_version="test-model|prompt:0.8|schema:3.0",
+                extractor_version="test-model|prompt:0.9|schema:3.0",
                 model_name="test-model",
                 prompt_version="0.8",
                 schema_version="3.0",
@@ -309,7 +309,7 @@ def _seed_validate_batch(tmp_path: Path, monkeypatch) -> None:
             scope_key="all",
             consolidator_version="test-model|prompt:4.1|schema:3.0",
             input_fingerprint="b" * 64,
-            extractor_version="test-model|prompt:0.8|schema:3.0",
+            extractor_version="test-model|prompt:0.9|schema:3.0",
             selected_job_ids=[1],
             extraction_ids=[1],
             model_name="test-model",

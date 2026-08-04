@@ -187,7 +187,7 @@ def test_acceptance_script_uses_single_current_config(monkeypatch, tmp_path) -> 
         ["run_acceptance", "--scenarios", str(scenarios), "--dry-run"],
     )
     assert run_acceptance.main() == 0
-    assert PROMPT_VERSION == TWO_STAGE_PROMPT_VERSION == "0.8"
+    assert PROMPT_VERSION == TWO_STAGE_PROMPT_VERSION == "0.9"
     assert SCHEMA_VERSION == "3.0"
 
 

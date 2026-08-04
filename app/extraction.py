@@ -17,12 +17,12 @@ from app.config import LLMSettings
 from app.models import JobDescription, JobExtraction, JobRequirement
 from app.schemas import JobExtractionResult
 
-# 当前唯一抽取配置：v0.8 + Schema V3（两段式，三级熟练度）。
+# 当前唯一抽取配置：v0.9 + Schema V3（两段式，三级熟练度）。
 # 旧 Prompt（V2.3.1、v0.6、v0.7）与旧 Schema V2 不再维护，历史由 Git 与
 # 已有报告保存。PROMPT_VERSION / SCHEMA_VERSION 必须与
 # extraction_two_stage.py 的 TWO_STAGE_PROMPT_VERSION /
 # TWO_STAGE_SCHEMA_VERSION 保持同步。
-PROMPT_VERSION = "0.8"
+PROMPT_VERSION = "0.9"
 SCHEMA_VERSION = "3.0"
 
 class ExtractionError(ValueError):
@@ -30,11 +30,11 @@ class ExtractionError(ValueError):
 
 
 def assert_current_extractor_version(extractor_version: str) -> None:
-    """严格校验抽取器版本为 v0.8 + Schema V3；其余版本明确拒绝。
+    """严格校验抽取器版本为 v0.9 + Schema V3；其余版本明确拒绝。
 
     版本身份按 `|` 分段解析：`prompt:` 段与 `schema:` 段必须恰好各一个，
     且值分别严格等于当前版本；空值、重复段、缺失段、额外冲突段均拒绝。
-    模型名称与其他非冲突身份段可以保留。当前主线只消费 v0.8 + Schema V3
+    模型名称与其他非冲突身份段可以保留。当前主线只消费 v0.9 + Schema V3
     的抽取结果；旧版本要求用当前抽取器重新生成对应范围的数据，不做
     兼容、转换或迁移。
     """
@@ -42,7 +42,7 @@ def assert_current_extractor_version(extractor_version: str) -> None:
     if any(not part for part in parts):
         raise ValueError(
             f"抽取器版本身份无效：{extractor_version}；"
-            "不得包含空段。当前只支持 v0.8 + Schema V3，请使用当前"
+            "不得包含空段。当前只支持 v0.9 + Schema V3，请使用当前"
             "抽取器重新生成该范围的数据。"
         )
     prompt_parts = [
@@ -55,7 +55,7 @@ def assert_current_extractor_version(extractor_version: str) -> None:
         raise ValueError(
             f"抽取器版本身份无效：{extractor_version}；"
             "prompt: 与 schema: 段必须恰好各一个。"
-            "当前只支持 v0.8 + Schema V3，请使用当前抽取器重新生成"
+            "当前只支持 v0.9 + Schema V3，请使用当前抽取器重新生成"
             "该范围的数据。"
         )
     if (
@@ -63,7 +63,7 @@ def assert_current_extractor_version(extractor_version: str) -> None:
         or schema_parts[0] != f"schema:{SCHEMA_VERSION}"
     ):
         raise ValueError(
-            f"当前只支持 v0.8 + Schema V3：{extractor_version}。"
+            f"当前只支持 v0.9 + Schema V3：{extractor_version}。"
             "请使用当前抽取器重新生成该范围的数据。"
         )
 
@@ -220,7 +220,7 @@ def validate_evidence(result: JobExtractionResult, raw_text: str) -> None:
 def extract_job(
     job: JobDescription, client: ExtractionClient, max_attempts: int = 2
 ) -> tuple[JobExtractionResult, dict[str, object]]:
-    """使用当前正式抽取流程（两段式 v0.8 + Schema V3）抽取单份JD，并在校验失败时有限重试。
+    """使用当前正式抽取流程（两段式 v0.9 + Schema V3）抽取单份JD，并在校验失败时有限重试。
 
     延迟导入两段式实现以避免与 app/extraction_two_stage.py 的模块级循环依赖。
     """

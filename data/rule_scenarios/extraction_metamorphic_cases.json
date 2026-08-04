@@ -98,43 +98,46 @@
     {
       "scenario_id": "SCN-006",
       "rule_ids": ["FIELD-02"],
-      "base_input": "# 示例岗位\n\n## 岗位职责\n负责能力甲体系建设。\n负责能力乙评测。\n\n## 任职要求\n1. 熟悉技术甲和框架乙。\n2. 具备能力丙使用经验者优先。\n3. 本科及以上学历。\n\n## 福利待遇\n五险一金、带薪年假。",
+      "base_input": "# 示例岗位\n\n## 岗位职责\n负责能力甲体系建设。\n负责能力乙评测。\n\n## 任职要求\n1. 熟悉编程语言和深度学习框架。\n2. 具备能力丙使用经验者优先。\n3. 本科及以上学历。\n\n## 福利待遇\n五险一金、带薪年假。",
       "transformation": {
         "type": "text_replace",
         "replacements": [
-          {"find": "熟悉技术甲和框架乙。", "replace": "有技术甲和框架乙相关项目经验者优先。"}
+          {"find": "熟悉编程语言和深度学习框架。", "replace": "有编程语言和深度学习框架相关项目经验者优先。"}
         ]
       },
       "expected_properties": {
         "fact_set_preserved": true,
-        "field_invariance": ["category", "proficiency", "group_type", "group_membership"],
+        "field_invariance": ["category", "group_type", "group_membership"],
         "importance_expected_change": {
-          "anchor": "熟悉技术甲和框架乙",
+          "anchor": "熟悉编程语言和深度学习框架",
           "from": "must",
           "to": "preferred"
         },
-        "proficiency_invariance": true
+        "proficiency_expected_changes": [
+          {"anchor": "熟悉编程语言和深度学习框架", "from": "basic", "to": "unknown"}
+        ]
       },
       "forbidden_violations": [
-        {"rule_id": "FIELD-02", "violation": "只有明确出现优先/加分措辞才能改为 preferred"}
+        {"rule_id": "FIELD-02", "violation": "只有明确出现优先/加分措辞才能改为 preferred"},
+        {"rule_id": "FIELD-03", "violation": "相关项目经验表达必须映射为 unknown，不得保持 basic"}
       ],
       "severity": "medium"
     },
     {
       "scenario_id": "SCN-007",
       "rule_ids": ["GROUP-01", "GROUP-02"],
-      "base_input": "# 示例岗位\n\n## 岗位职责\n负责能力甲体系建设。\n负责能力乙评测。\n\n## 任职要求\n1. 熟悉技术甲和框架乙。\n2. 具备能力丙使用经验者优先。\n3. 本科及以上学历。\n\n## 福利待遇\n五险一金、带薪年假。",
+      "base_input": "# 示例岗位\n\n## 岗位职责\n负责能力甲体系建设。\n负责能力乙评测。\n\n## 任职要求\n1. 熟悉编程语言和深度学习框架。\n2. 具备能力丙使用经验者优先。\n3. 本科及以上学历。\n\n## 福利待遇\n五险一金、带薪年假。",
       "transformation": {
         "type": "text_replace",
         "replacements": [
-          {"find": "熟悉技术甲和框架乙", "replace": "熟悉技术甲、框架乙中至少一种"}
+          {"find": "熟悉编程语言和深度学习框架", "replace": "熟悉编程语言、深度学习框架中至少一种"}
         ]
       },
       "expected_properties": {
         "fact_set_preserved": true,
         "field_invariance": ["category", "importance", "proficiency"],
         "group_logic_changed_to": "any_of",
-        "group_change_anchor": "熟悉技术甲和框架乙",
+        "group_change_anchor": "熟悉编程语言和深度学习框架",
         "expected_group_member_count": 2,
         "group_members_preserved": true
       },
@@ -147,20 +150,20 @@
     {
       "scenario_id": "SCN-008",
       "rule_ids": ["REQ-02", "REQ-05"],
-      "base_input": "# 示例岗位\n\n## 岗位职责\n负责能力甲体系建设。\n负责能力乙评测。\n\n## 任职要求\n1. 熟悉技术甲和框架乙。\n2. 具备能力丙使用经验者优先。\n3. 本科及以上学历。\n\n## 福利待遇\n五险一金、带薪年假。",
+      "base_input": "# 示例岗位\n\n## 岗位职责\n负责能力甲体系建设。\n负责能力乙评测。\n\n## 任职要求\n1. 熟悉编程语言和深度学习框架。\n2. 具备能力丙使用经验者优先。\n3. 本科及以上学历。\n\n## 福利待遇\n五险一金、带薪年假。",
       "transformation": {
         "type": "text_replace",
         "replacements": [
-          {"find": "技术甲", "replace": "技术丙"},
-          {"find": "框架乙", "replace": "框架丁"}
+          {"find": "编程语言", "replace": "脚本语言"},
+          {"find": "深度学习框架", "replace": "机器学习框架"}
         ]
       },
       "expected_properties": {
         "block_item_count_preserved": true,
         "field_invariance": ["category", "importance", "proficiency", "group_type", "group_membership"],
         "raw_name_follows_replacements": [
-          {"find": "技术甲", "replace": "技术丙"},
-          {"find": "框架乙", "replace": "框架丁"}
+          {"find": "编程语言", "replace": "脚本语言"},
+          {"find": "深度学习框架", "replace": "机器学习框架"}
         ]
       },
       "forbidden_violations": [

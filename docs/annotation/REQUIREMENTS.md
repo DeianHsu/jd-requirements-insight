@@ -1,6 +1,6 @@
 # 岗位要求规则（REQ / GROUP / FIELD）
 
-> 只在标注候选人条件、检查要求原子化或解释抽取数据合同 V2 字段时读取本文。
+> 只在标注候选人条件、检查要求原子化或解释抽取数据合同 V3 字段时读取本文。
 > 规则 ID：`REQ-01`～`REQ-08`、`GROUP-01`～`GROUP-03`、`FIELD-01`～`FIELD-05`。修改规则语义必须同步更新本文件、Prompt 引用和测试。
 
 ## REQ-01 要求边界
@@ -88,9 +88,14 @@
 
 “熟悉Go、Java、Python中至少一种”表示任选关系，拆为三个原子项，并使用共同 `group_id` 和 `group_logic = any_of`。
 
-## GROUP-03 加分任选
+## GROUP-03 优先与并列
 
-“Python/Node.js优先”拆为两个 `preferred` 成员，并放入同一个 `any_of` 组。多个候选项共同受“相关项目经验者优先”修饰时采用相同规则：各候选项使用 `preferred` 并共享同一个 `any_of` 组。
+- “优先”“加分”只决定 `importance=preferred`，不产生 `any_of`；
+- “和”“与”“并且”等并列连接默认保持 `standalone`（逐项独立条件）；
+- 只有明确替代关系（GROUP-01：至少一种/任一/任选/之一/或）与“优先”同时出现时才建立 `preferred + any_of`。
+
+正例：`有语言甲或语言乙经验者优先` → 两项 `preferred` 并共享同一个 `any_of` 组（有“或”替代关系；等价于“Python 或 Node.js 经验者优先”）。
+反例：`有语言甲和语言乙经验者优先` → 两项 `preferred` 但均为 `standalone`（“和”是并列非替代，等价于“Python 和 Node.js 经验者优先”），不建 `any_of`。
 
 ## FIELD-01 category
 

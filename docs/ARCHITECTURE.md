@@ -6,7 +6,7 @@
 
 ```text
 JD 导入
-→ v0.8 + Schema V3 结构化抽取（两段式：发现段 + 判断段）
+→ v0.9 + Schema V3 结构化抽取（两段式：发现段 + 判断段）
 → 抽取质量验证（P0-3A 规则场景 / P0-3B 真实 JD）
 → requirement instance 归并为 canonical requirement（唯一映射）
 → 独立 JD 统计（app/market_analysis.py）
@@ -19,7 +19,7 @@ JD 导入
 | 模块 | 职责 |
 |---|---|
 | `app/ingestion.py` | Markdown JD 导入与去重 |
-| `app/extraction.py` / `app/extraction_two_stage.py` | v0.8 两段式抽取（发现段全局扫描、判断段局部判断）、证据校验、有限重试 |
+| `app/extraction.py` / `app/extraction_two_stage.py` | v0.9 两段式抽取（发现段全局扫描、判断段局部判断）、证据校验、有限重试 |
 | `app/extraction_validation.py` | 抽取合同检查、锚点化变形比较、规则场景属性检查 |
 | `app/requirement_consolidation.py` | 归并输入/输出合同与确定性一致性校验 |
 | `app/consolidation.py` | 单次 LLM 聚类归并（canonical + 来源分区）、确定性 mappings、幂等持久化 |

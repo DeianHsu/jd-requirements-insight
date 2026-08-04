@@ -23,10 +23,10 @@ from app.extraction import (
 from app.models import JobDescription
 from app.schemas import JobExtractionResult, RoleFamily, Seniority
 
-# 当前唯一抽取配置：v0.8 + Schema V3（两段式，三级熟练度）。
+# 当前唯一抽取配置：v0.9 + Schema V3（两段式，三级熟练度）。
 # 旧 Prompt（V2.3.1、v0.6、v0.7）不再维护，历史由 Git 与已有报告保存。
 # 必须与 app/extraction.py 的 PROMPT_VERSION / SCHEMA_VERSION 保持同步。
-TWO_STAGE_PROMPT_VERSION = "0.8"
+TWO_STAGE_PROMPT_VERSION = "0.9"
 TWO_STAGE_SCHEMA_VERSION = "3.0"
 
 # 发现段Prompt：只做全局扫描与分句归属，不做拆分与字段判断。
@@ -66,12 +66,14 @@ JUDGE_SYSTEM_PROMPT = """你是招聘JD结构化分析的第二阶段：精细�
 6. REQ-06：只依据JD明示内容，不补充行业常识或隐含技能；相关但未被条件修饰的技术不得补充成条件。
 
 【任选关系与示例边界（GROUP-01～GROUP-03）】
-1. GROUP-01：只有原文明确出现"至少一种""任一""或"等有限任选含义时才建立any_of组；当"至少一种""任一""或"后直接列举具体技术名时，该列举是有限候选项，必须逐项拆成any_of成员，成员raw_name直接用具体技术名；只有"完整上位概念+如/例如/括号引出+明显是非穷举示例"时，才保留上位概念为standalone，不建立any_of；"等"字本身不能决定是否为示例，关键是括号/如引出的内容是对上位概念的举例还是被候选条件直接修饰的具体技术名。
+1. GROUP-01：只有原文明确出现"至少一种""任一""任选""之一""或"等有限任选含义时才建立any_of组；当这些词后直接列举具体技术名时，该列举是有限候选项，必须逐项拆成any_of成员，成员raw_name直接用具体技术名；只有"完整上位概念+如/例如/括号引出+明显是非穷举示例"时，才保留上位概念为standalone，不建立any_of；"等"字本身不能决定是否为示例，关键是括号/如引出的内容是对上位概念的举例还是被候选条件直接修饰的具体技术名。
 2. GROUP-02：any_of组内各成员输出相同group_id（字符串，如"group_1"）和group_logic="any_of"，且同一组至少包含两个成员；普通独立要求必须输出group_logic="standalone"、group_id=null。group_logic不允许为null，group_id不允许输出数字。
-3. GROUP-03：多个候选项共同受"优先""加分"或"相关项目经验者优先"修饰，并且具备任一项即可形成同类加分时，各候选项使用preferred并共享同一个any_of组。
+3. GROUP-03："优先""加分"只决定importance=preferred，不产生any_of；"和""与""并且"等并列连接默认保持standalone（逐项独立条件）；只有明确替代关系（GROUP-01）与优先同时出现时才建preferred + any_of。
 4. 正反例（领域中性，按同类结构判断）：
    - 正："至少精通一门主流后端开发语言（如 甲、乙 等）"：括号内容是非穷举示例，只保留"主流后端开发语言"standalone，proficiency=advanced（GROUP-01）；
    - 正："熟悉至少一种开发框架（甲 / 乙 / 丙 等）"：甲、乙、丙被"至少一种"直接修饰，拆成3个any_of成员（GROUP-01）；
+   - 正："有语言甲或语言乙经验者优先"：有明确"或"替代关系且受"优先"修饰，输出两项preferred并共享any_of组（GROUP-01+GROUP-03）；
+   - 反："有语言甲和语言乙经验者优先"："和"是并列非替代，输出两项preferred但均为standalone，不建any_of（GROUP-03）；
    - 反："熟悉 甲、乙 等主流框架"：甲、乙被候选条件直接修饰，必须逐项保留为standalone，不得改写成上位概念（REQ-07）。
 5. REQ-08：具体模型名只用于修饰上位经验类型时，不单独标注模型（保留在证据中）。
 
@@ -261,7 +263,7 @@ def extract_job_two_stage(
     client: ExtractionClient,
     max_attempts: int = 2,
 ) -> tuple[JobExtractionResult, dict[str, object]]:
-    """对一份JD执行发现段与判断段两次调用（当前唯一配置 v0.8 + Schema V3）。"""
+    """对一份JD执行发现段与判断段两次调用（当前唯一配置 v0.9 + Schema V3）。"""
     _, result, raw = extract_job_two_stage_with_discovery(job, client, max_attempts)
     return result, raw
 

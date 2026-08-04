@@ -125,7 +125,7 @@ def test_split_sentences_is_deterministic() -> None:
 
 def test_two_stage_prompts_are_domain_agnostic() -> None:
     """验证两段Prompt不绑定任何具体领域技能，当前版本号与抽取器一致。"""
-    assert TWO_STAGE_PROMPT_VERSION == "0.8"
+    assert TWO_STAGE_PROMPT_VERSION == "0.9"
     assert PROMPT_VERSION == TWO_STAGE_PROMPT_VERSION
     assert SCHEMA_VERSION == TWO_STAGE_SCHEMA_VERSION == "3.0"
     for domain_word in ("Python", "RAG", "LangChain", "Agent", "大模型", "AI"):
@@ -169,6 +169,15 @@ def test_discovery_prompt_references_coverage_rule_ids() -> None:
     """发现段 Prompt 引用覆盖规则 ID（COVER-01～COVER-03）。"""
     for rule_id in ("COVER-01", "COVER-02", "COVER-03"):
         assert rule_id in DISCOVERY_SYSTEM_PROMPT
+
+
+def test_judge_prompt_enforces_preferred_and_any_of_separation() -> None:
+    """"优先"只决定 preferred；明确"或/至少一种"才建 any_of，"和/与/并且"保持 standalone。"""
+    assert 'GROUP-03："优先""加分"只决定importance=preferred，不产生any_of' in JUDGE_SYSTEM_PROMPT
+    assert '"和""与""并且"等并列连接默认保持standalone' in JUDGE_SYSTEM_PROMPT
+    assert '"有语言甲或语言乙经验者优先"' in JUDGE_SYSTEM_PROMPT
+    assert '"有语言甲和语言乙经验者优先"' in JUDGE_SYSTEM_PROMPT
+    assert "至少一种" in JUDGE_SYSTEM_PROMPT
 
 
 def test_judge_prompt_removed_historical_case_patches() -> None:
