@@ -42,7 +42,7 @@ def consolidation_input() -> RequirementConsolidationInput:
                 requirement_id=1,
                 job_id=101,
                 extraction_id=1001,
-                extractor_version="test-model|prompt:0.9|schema:3.0",
+                extractor_version="test-model|prompt:0.10|schema:3.0",
                 source_hash="a" * 64,
                 source_file="job-a.md",
                 requirement=requirement("能力甲使用经验", "具备能力甲使用经验"),
@@ -51,7 +51,7 @@ def consolidation_input() -> RequirementConsolidationInput:
                 requirement_id=2,
                 job_id=102,
                 extraction_id=1002,
-                extractor_version="test-model|prompt:0.9|schema:3.0",
+                extractor_version="test-model|prompt:0.10|schema:3.0",
                 source_hash="b" * 64,
                 source_file="job-b.md",
                 requirement=requirement(

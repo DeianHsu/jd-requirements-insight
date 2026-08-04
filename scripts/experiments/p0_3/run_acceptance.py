@@ -1,7 +1,7 @@
 """P0-3 规则场景验证脚本（Track A：合成规则场景；协议见 docs/annotation/VALIDATION.md）。
 
 默认不调用外部模型；验证必须显式`--execute`，预检使用`--dry-run`。
-抽取配置固定为当前唯一方案 v0.9 + Schema V3。执行流程（真实模型）：
+抽取配置固定为当前唯一方案 v0.10 + Schema V3。执行流程（真实模型）：
 
 1. 加载规则场景（`data/rule_scenarios/extraction_metamorphic_cases.json`），
    对每个场景把 base_input 应用确定性变换（返回 TransformationResult：
@@ -355,7 +355,7 @@ def _run_extraction(
     source_file: str,
     max_attempts: int,
 ) -> RunSnapshot:
-    """使用当前唯一配置（v0.9 + Schema V3）执行一次两段式抽取。"""
+    """使用当前唯一配置（v0.10 + Schema V3）执行一次两段式抽取。"""
     job = make_job(raw_text, source_file)
     discovery, result, raw_payload = extract_job_two_stage_with_discovery(
         job, client, max_attempts=max_attempts
@@ -439,7 +439,7 @@ def main() -> int:
     )
 
     print(f"模型：{settings.model}")
-    print(f"当前抽取配置：prompt={PROMPT_VERSION} schema={SCHEMA_VERSION}（v0.9 + Schema V3）")
+    print(f"当前抽取配置：prompt={PROMPT_VERSION} schema={SCHEMA_VERSION}（v0.10 + Schema V3）")
     print(f"运行标识：{run_identifier}")
     print(f"场景数：{len(scenario_list)}；base 独立运行：{args.runs} 次")
 

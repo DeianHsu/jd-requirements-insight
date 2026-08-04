@@ -61,7 +61,7 @@ def make_extraction(extraction_id: int, job_id: int) -> JobExtraction:
     return JobExtraction(
         id=extraction_id,
         job_id=job_id,
-        extractor_version="test-model|prompt:0.9|schema:3.0",
+        extractor_version="test-model|prompt:0.10|schema:3.0",
         model_name="test-model",
         prompt_version="1.0",
         schema_version="3.0",

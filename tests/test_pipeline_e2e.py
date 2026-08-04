@@ -375,7 +375,7 @@ def test_consolidate_requires_execute_confirmation(
         cli_module, "OpenAICompatibleConsolidationClient", FakeConsolidationClient
     )
 
-    # 构造一份含 v0.9 抽取结果的数据库，使计划阶段可完成。
+    # 构造一份含 v0.10 抽取结果的数据库，使计划阶段可完成。
     engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
     try:
         initialize_database(engine)
@@ -397,9 +397,9 @@ def test_consolidate_requires_execute_confirmation(
             session.flush()
             extraction = JobExtraction(
                 job_id=job.id,
-                extractor_version="test-model|prompt:0.9|schema:3.0",
+                extractor_version="test-model|prompt:0.10|schema:3.0",
                 model_name="test-model",
-                prompt_version="0.9",
+                prompt_version="0.10",
                 schema_version="3.0",
                 role_family="other",
                 seniority="unknown",
@@ -453,7 +453,7 @@ def test_documented_commands_and_paths_exist() -> None:
         importlib.import_module(module_name)
 
     assert cli_module.cli is not None
-    assert app.extraction.PROMPT_VERSION == "0.9"
+    assert app.extraction.PROMPT_VERSION == "0.10"
     assert app.extraction.SCHEMA_VERSION == "3.0"
 
     # 文档引用路径存在。

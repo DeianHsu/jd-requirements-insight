@@ -8,7 +8,7 @@ updated_at: 2026-08-04
 |---|---|
 | `python -m app.cli import-jds <目录>` | 导入 Markdown JD（frontmatter + 正文） |
 | `python -m app.cli list-jds` | 列出 JD 摘要 |
-| `python -m app.cli extract-jds [--all|--job-id N] --execute` | v0.9 + Schema V3 两段式抽取（付费，需 .env 配置与 --execute） |
+| `python -m app.cli extract-jds [--all|--job-id N] --execute` | v0.10 + Schema V3 两段式抽取（付费，需 .env 配置与 --execute） |
 | `python -m app.cli list-extractions` | 列出抽取结果 |
 | `python -m app.cli consolidate-requirements --all|--job-id N --execute` | 跨 JD 归并为 canonical requirement（付费，需 --execute） |
 | `python -m app.cli list-consolidations` | 列出归并批次 |
@@ -20,7 +20,7 @@ updated_at: 2026-08-04
 - P0-3A 规则场景：`python -m scripts.experiments.p0_3.run_acceptance --execute`
 - P0-3B 真实 JD：`python -m scripts.experiments.p0_3.run_real_jd_acceptance --use-project-database --all --execute`
 - P0-4 归并验收：`python -m scripts.experiments.p0_4.run_acceptance --execute`
-  （缺省自动选择所选 JD 的唯一共同 v0.9 + Schema V3 抽取版本；查询前
+  （缺省自动选择所选 JD 的唯一共同 v0.10 + Schema V3 抽取版本；查询前
   验证数据库结构；顺序变形合同违规计入 hard gate）
 - P0-4 小规模预检：`python -m scripts.experiments.p0_4.run_small_scale_precheck --execute`
 
@@ -28,7 +28,7 @@ updated_at: 2026-08-04
 
 - 数据库已使用现行 Schema 创建（六张业务表，无旧表）；
 - 5 份真实 JD 已导入 `data/jd_skill_insight.db`（重复导入幂等跳过）；
-- **当前无 v0.9 抽取结果（`job_extractions` 与 `job_requirements` 均为空），
+- **当前无 v0.10 抽取结果（`job_extractions` 与 `job_requirements` 均为空），
   无归并批次**；
 - 真实 JD 原文属于私有输入（Git 忽略；重新克隆仓库的环境不会包含
   这些私有文件）。
@@ -67,7 +67,7 @@ updated_at: 2026-08-04
 - `group_change_anchor` 为元数据键（不再产生未知属性 warning）；
 - 块拆分/合并（多对一块对齐）与 any_of+standalone 混合检查正确。
 
-## 已修正的模型或场景问题（Prompt 0.9 与场景修正，待重跑确认）
+## 已修正的模型或场景问题（Prompt 0.10 与场景修正，待重跑确认）
 
 - **any_of 规则统一（Prompt 0.8 → 0.9）**：“优先”只决定
   importance=preferred，不再触发 any_of；只有明确“至少一种/任一/
@@ -84,16 +84,16 @@ updated_at: 2026-08-04
 
 ## 下一步
 
-1. 重新执行 P0-3A 规则场景真实验收（Prompt 0.9 + 场景修正后）；
+1. 重新执行 P0-3A 规则场景真实验收（Prompt 0.10 + 场景修正后）；
 2. 通过后对单份真实 JD（ID 1）执行 P0-3B；
 3. 单份验证通过后扩大到三份 JD（ID 1/2/3）；
-4. 三份验证通过后持久化 v0.9 + Schema V3 抽取结果；
+4. 三份验证通过后持久化 v0.10 + Schema V3 抽取结果；
 5. 执行 P0-4 预检、正式验收和正式归并；
 6. 验收通过后实现 `generate-report`。
 
 ## 付费与私有数据依赖
 
-- 付费：抽取（v0.9 两段式）与归并（单次 LLM 聚类）调用 LLM，必须
+- 付费：抽取（v0.10 两段式）与归并（单次 LLM 聚类）调用 LLM，必须
   显式 `--execute`；`validate-consolidation`、合同检查、变形测试不付费。
 - 私有：真实 JD（`data/raw_jds/`）、数据库、原始模型响应
   （`data/private/`）与验收原始结果不提交 Git。

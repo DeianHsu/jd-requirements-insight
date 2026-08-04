@@ -1,4 +1,4 @@
-"""本地命令行入口：JD 导入/列表、v0.9 + Schema V3 抽取、归并、统计与验证。"""
+"""本地命令行入口：JD 导入/列表、v0.10 + Schema V3 抽取、归并、统计与验证。"""
 
 from __future__ import annotations
 
@@ -139,7 +139,7 @@ def extract_jds(
         engine.dispose()
 
     console.print(f"模型：[bold]{settings.model}[/bold]")
-    console.print("抽取配置：[bold]v0.9 + Schema V3[/bold]")
+    console.print("抽取配置：[bold]v0.10 + Schema V3[/bold]")
     console.print(f"本次选择 [bold]{len(selected)}[/bold] 份JD（付费抽取）")
     if not execute:
         console.print("[yellow]未执行：付费模型调用需要显式 --execute 确认。[/yellow]")

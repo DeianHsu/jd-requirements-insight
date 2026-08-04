@@ -54,9 +54,9 @@ def seed_batch(session_factory) -> int:
         for job_id, job in enumerate(jobs, start=1):
             extraction = JobExtraction(
                 job_id=job.id,
-                extractor_version="test-model|prompt:0.9|schema:3.0",
+                extractor_version="test-model|prompt:0.10|schema:3.0",
                 model_name="test-model",
-                prompt_version="0.9",
+                prompt_version="0.10",
                 schema_version="3.0",
                 role_family="other",
                 seniority="unknown",
@@ -98,7 +98,7 @@ def seed_batch(session_factory) -> int:
             scope_key="all",
             consolidator_version="test-model|prompt:4.1|schema:3.0",
             input_fingerprint="f" * 64,
-            extractor_version="test-model|prompt:0.9|schema:3.0",
+            extractor_version="test-model|prompt:0.10|schema:3.0",
             selected_job_ids=[jobs[0].id, jobs[1].id],
             extraction_ids=[extractions[0].id, extractions[1].id],
             model_name="test-model",
@@ -258,9 +258,9 @@ def test_sorting_prefers_job_count_over_instance_count(tmp_path: Path) -> None:
             for job_id, job in enumerate(jobs, start=1):
                 extraction = JobExtraction(
                     job_id=job.id,
-                    extractor_version="test-model|prompt:0.9|schema:3.0",
+                    extractor_version="test-model|prompt:0.10|schema:3.0",
                     model_name="test-model",
-                    prompt_version="0.9",
+                    prompt_version="0.10",
                     schema_version="3.0",
                     role_family="other",
                     seniority="unknown",
@@ -313,7 +313,7 @@ def test_sorting_prefers_job_count_over_instance_count(tmp_path: Path) -> None:
                 scope_key="all",
                 consolidator_version="test-model|prompt:4.1|schema:3.0",
                 input_fingerprint="e" * 64,
-                extractor_version="test-model|prompt:0.9|schema:3.0",
+                extractor_version="test-model|prompt:0.10|schema:3.0",
                 selected_job_ids=[jobs[0].id, jobs[1].id, jobs[2].id],
                 extraction_ids=[e.id for e in extractions],
                 model_name="test-model",
@@ -406,9 +406,9 @@ def test_importance_job_counts_merge_by_priority(tmp_path: Path) -> None:
             for job_id, job in enumerate(jobs, start=1):
                 extraction = JobExtraction(
                     job_id=job.id,
-                    extractor_version="test-model|prompt:0.9|schema:3.0",
+                    extractor_version="test-model|prompt:0.10|schema:3.0",
                     model_name="test-model",
-                    prompt_version="0.9",
+                    prompt_version="0.10",
                     schema_version="3.0",
                     role_family="other",
                     seniority="unknown",
@@ -448,7 +448,7 @@ def test_importance_job_counts_merge_by_priority(tmp_path: Path) -> None:
                 scope_key="all",
                 consolidator_version="test-model|prompt:4.1|schema:3.0",
                 input_fingerprint="d" * 64,
-                extractor_version="test-model|prompt:0.9|schema:3.0",
+                extractor_version="test-model|prompt:0.10|schema:3.0",
                 selected_job_ids=[jobs[0].id, jobs[1].id],
                 extraction_ids=[e.id for e in extractions],
                 model_name="test-model",

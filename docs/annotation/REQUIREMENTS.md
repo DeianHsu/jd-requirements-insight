@@ -114,9 +114,13 @@
 | `software_engineering` | 通用软件工程能力 | 测试、性能优化、系统设计 |
 | `domain_knowledge` | 行业和专业领域知识 | 金融、法律、生物医药 |
 | `education` | 学历条件 | 本科、硕士、博士 |
-| `experience` | 工作、项目或行业经验 | 3年后端经验、线上系统经验 |
+| `experience` | 工作、项目或行业经验 | 3年后端经验、线上系统经验、数据分析经验 |
 | `soft_skill` | 沟通、协作和学习能力 | 团队协作、快速学习、责任心 |
 | `other` | 暂时无法归类 | 使用时记录无法归类原因 |
+
+表述为“XX经验”“XX使用经验”“XX相关经验”（技能或领域的工作、项目、
+行业经验）归 `experience`，不得降为 `other`；纯技能名称本身（如
+“语言甲”）按技术类别归类。
 
 Embedding 和 Vector Database 与 RAG 相关，但类别是 `retrieval`，不能全部压成 `rag`。category 枚举是 AI/LLM/Agent/RAG 岗位领域配置，不是领域无关核心规则（见 `docs/annotation/README.md`）。
 

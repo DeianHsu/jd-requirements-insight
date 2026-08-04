@@ -65,7 +65,7 @@ def make_extraction(extraction_id: int, job_id: int) -> JobExtraction:
     return JobExtraction(
         id=extraction_id,
         job_id=job_id,
-        extractor_version="test-model|prompt:0.9|schema:3.0",
+        extractor_version="test-model|prompt:0.10|schema:3.0",
         model_name="test-model",
         prompt_version="1.0",
         schema_version="3.0",
@@ -245,7 +245,7 @@ def test_persisted_fields_match_contract(tmp_path: Path) -> None:
         assert consolidation.model_name == "test-model"
         assert len(consolidation.input_fingerprint) == 64
         assert consolidation.extractor_version == (
-            "test-model|prompt:0.9|schema:3.0"
+            "test-model|prompt:0.10|schema:3.0"
         )
         assert consolidation.selected_job_ids == [1, 2]
         assert consolidation.extraction_ids == [1, 2]

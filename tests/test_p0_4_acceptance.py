@@ -38,8 +38,8 @@ def test_resolve_extractor_version_rejects_legacy_schema() -> None:
 
 def test_resolve_extractor_version_accepts_valid_version() -> None:
     """显式合法版本正常返回。"""
-    resolved = resolve_extractor_version("test-model|prompt:0.9|schema:3.0")
-    assert resolved == "test-model|prompt:0.9|schema:3.0"
+    resolved = resolve_extractor_version("test-model|prompt:0.10|schema:3.0")
+    assert resolved == "test-model|prompt:0.10|schema:3.0"
 
 
 def _mapping(
@@ -153,9 +153,9 @@ def _seed_current_extraction(database_path: Path) -> None:
             session.flush()
             extraction = JobExtraction(
                 job_id=job.id,
-                extractor_version="test-model|prompt:0.9|schema:3.0",
+                extractor_version="test-model|prompt:0.10|schema:3.0",
                 model_name="test-model",
-                prompt_version="0.9",
+                prompt_version="0.10",
                 schema_version="3.0",
                 role_family="other",
                 seniority="unknown",
@@ -264,7 +264,7 @@ def test_p0_4_acceptance_end_to_end(monkeypatch, tmp_path) -> None:
     assert acceptance_script.main() == 0
 
     report = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
-    assert report["input_identity"]["extractor_version"] == "test-model|prompt:0.9|schema:3.0"
+    assert report["input_identity"]["extractor_version"] == "test-model|prompt:0.10|schema:3.0"
     stability = report["p0_4_stability"]
     assert stability["canonical_count_max"] >= stability["canonical_count_min"]
     assert report["p0_4_contract"]["coverage"] == 1.0
@@ -320,7 +320,7 @@ def test_default_extractor_version_auto_selects_unique_common(
     report = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
     # 自动选中库中唯一 v0.9 抽取版本，而不是用归并模型名拼接。
     assert report["input_identity"]["extractor_version"] == (
-        "test-model|prompt:0.9|schema:3.0"
+        "test-model|prompt:0.10|schema:3.0"
     )
     assert report["input_identity"]["model"] == "consolidation-model"
 
@@ -412,9 +412,9 @@ def test_multiple_common_current_versions_require_explicit_selection(
         # 第二条独立抽取记录：同一 JD、不同模型名、同为 v0.9 + Schema V3。
         second = JobExtraction(
             job_id=1,
-            extractor_version="extractor-b|prompt:0.9|schema:3.0",
+            extractor_version="extractor-b|prompt:0.10|schema:3.0",
             model_name="extractor-b",
-            prompt_version="0.9",
+            prompt_version="0.10",
             schema_version="3.0",
             role_family="other",
             seniority="unknown",
@@ -502,9 +502,9 @@ def test_explicit_current_version_is_used_when_multiple_exist(
     with session_factory() as session:
         second = JobExtraction(
             job_id=1,
-            extractor_version="extractor-b|prompt:0.9|schema:3.0",
+            extractor_version="extractor-b|prompt:0.10|schema:3.0",
             model_name="extractor-b",
-            prompt_version="0.9",
+            prompt_version="0.10",
             schema_version="3.0",
             role_family="other",
             seniority="unknown",
@@ -535,7 +535,7 @@ def test_explicit_current_version_is_used_when_multiple_exist(
             "--runs",
             "1",
             "--extractor-version",
-            "test-model|prompt:0.9|schema:3.0",
+            "test-model|prompt:0.10|schema:3.0",
             "--report",
             str(tmp_path / "report.json"),
         ],
@@ -549,7 +549,7 @@ def test_explicit_current_version_is_used_when_multiple_exist(
 
     report = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
     assert report["input_identity"]["extractor_version"] == (
-        "test-model|prompt:0.9|schema:3.0"
+        "test-model|prompt:0.10|schema:3.0"
     )
 
 
@@ -685,9 +685,9 @@ def test_multiple_versions_error_has_no_rebuild_hint(
         session.add(
             JobExtraction(
                 job_id=1,
-                extractor_version="extractor-b|prompt:0.9|schema:3.0",
+                extractor_version="extractor-b|prompt:0.10|schema:3.0",
                 model_name="extractor-b",
-                prompt_version="0.9",
+                prompt_version="0.10",
                 schema_version="3.0",
                 role_family="other",
                 seniority="unknown",
@@ -951,7 +951,7 @@ def test_raw_response_structure_keeps_model_and_normalized_result() -> None:
                 requirement_id=requirement_id,
                 job_id=101,
                 extraction_id=1001,
-                extractor_version="test-model|prompt:0.9|schema:3.0",
+                extractor_version="test-model|prompt:0.10|schema:3.0",
                 source_hash="a" * 64,
                 source_file="job-a.md",
                 requirement=requirement("技术甲", "熟悉技术甲"),

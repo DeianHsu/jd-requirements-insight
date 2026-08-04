@@ -1,12 +1,12 @@
 """P0-4 事实归并真实验收：requirement instance → canonical requirement → unique mapping。
 
 默认不调用付费模型；必须显式 `--execute`。抽取输入默认使用当前唯一配置
-v0.9 + Schema V3；显式 `--extractor-version` 必须包含 schema:3.0，拒绝
+v0.10 + Schema V3；显式 `--extractor-version` 必须包含 schema:3.0，拒绝
 非 Schema V3 数据。
 
 执行流程（真实模型）：
 
-1. 加载选定范围的完整输入（输入指纹固定，抽取器版本 = v0.9 + Schema V3）；
+1. 加载选定范围的完整输入（输入指纹固定，抽取器版本 = v0.10 + Schema V3）；
 2. `--runs` 次独立非缓存运行（consolidate_with_correction，不写入正式批次）；
 3. 变形测试：输入顺序打乱运行一次；
 4. 指标：合同违规（coverage、重复映射、未知引用、空 cluster）、
@@ -60,7 +60,7 @@ def resolve_extractor_version(args_extractor_version: str | None) -> str | None:
     """解析抽取版本参数；缺省返回 None 交由生产选择逻辑。
 
     缺省时（None）由 `load_consolidation_selection` 自动选择所选 JD 的
-    唯一共同抽取版本并校验为 v0.9 + Schema V3（归并模型名不得参与拼接，
+    唯一共同抽取版本并校验为 v0.10 + Schema V3（归并模型名不得参与拼接，
     抽取模型可能与归并模型不同）。只有用户显式提供版本时才提前严格校验。
     """
     if args_extractor_version is None:
@@ -140,7 +140,7 @@ def main() -> int:
         "--extractor-version",
         type=str,
         default=None,
-        help="抽取器版本；缺省使用当前唯一配置 v0.9 + Schema V3；"
+        help="抽取器版本；缺省使用当前唯一配置 v0.10 + Schema V3；"
         "显式输入必须包含 schema:3.0，拒绝非 Schema V3 数据",
     )
     parser.add_argument(

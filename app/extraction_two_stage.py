@@ -23,10 +23,10 @@ from app.extraction import (
 from app.models import JobDescription
 from app.schemas import JobExtractionResult, RoleFamily, Seniority
 
-# 当前唯一抽取配置：v0.9 + Schema V3（两段式，三级熟练度）。
+# 当前唯一抽取配置：v0.10 + Schema V3（两段式，三级熟练度）。
 # 旧 Prompt（V2.3.1、v0.6、v0.7）不再维护，历史由 Git 与已有报告保存。
 # 必须与 app/extraction.py 的 PROMPT_VERSION / SCHEMA_VERSION 保持同步。
-TWO_STAGE_PROMPT_VERSION = "0.9"
+TWO_STAGE_PROMPT_VERSION = "0.10"
 TWO_STAGE_SCHEMA_VERSION = "3.0"
 
 # 发现段Prompt：只做全局扫描与分句归属，不做拆分与字段判断。
@@ -80,7 +80,7 @@ JUDGE_SYSTEM_PROMPT = """你是招聘JD结构化分析的第二阶段：精细�
 5. REQ-08：具体模型名只用于修饰上位经验类型时，不单独标注模型（保留在证据中）。
 
 【字段判断（FIELD-01～FIELD-05）】
-1. FIELD-01：category必须输出枚举值（programming_language、backend_engineering、agent_framework、agent_capability、rag、llm_application、model_training、ml_framework、retrieval、deployment、software_engineering、domain_knowledge、education、experience、soft_skill、other），不要输出中文类别名；无法归类时用other。
+1. FIELD-01：category必须输出枚举值（programming_language、backend_engineering、agent_framework、agent_capability、rag、llm_application、model_training、ml_framework、retrieval、deployment、software_engineering、domain_knowledge、education、experience、soft_skill、other），不要输出中文类别名；无法归类时用other。表述为"XX经验""XX使用经验""XX相关经验"（技能或领域的工作、项目、行业经验）归experience，不得降为other；纯技能名称本身（如"语言甲"）按技术类别归类。
 2. FIELD-02：importance：任职要求普通条件为must；明确"优先""加分"为preferred；只提及未要求为mentioned；无法判断为unknown。必须输出枚举值，不要输出中文。
 3. FIELD-03：proficiency 使用三级枚举并输出枚举值（unknown/basic/advanced）：
    - unknown：没有明确程度词，或仅出现使用经验、项目经验、有经验、参与过等表达（不得推断程度）；
@@ -265,7 +265,7 @@ def extract_job_two_stage(
     client: ExtractionClient,
     max_attempts: int = 2,
 ) -> tuple[JobExtractionResult, dict[str, object]]:
-    """对一份JD执行发现段与判断段两次调用（当前唯一配置 v0.9 + Schema V3）。"""
+    """对一份JD执行发现段与判断段两次调用（当前唯一配置 v0.10 + Schema V3）。"""
     _, result, raw = extract_job_two_stage_with_discovery(job, client, max_attempts)
     return result, raw
 

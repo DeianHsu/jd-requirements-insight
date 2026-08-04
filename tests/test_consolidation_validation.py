@@ -50,7 +50,7 @@ def consolidation_input(
                 requirement_id=index + 1,
                 job_id=101 + index,
                 extraction_id=1001 + index,
-                extractor_version="test-model|prompt:0.9|schema:3.0",
+                extractor_version="test-model|prompt:0.10|schema:3.0",
                 source_hash=f"{index + 1:064x}",
                 source_file=f"job-{index + 1}.md",
                 requirement=requirement(name, f"具备{name}。"),
