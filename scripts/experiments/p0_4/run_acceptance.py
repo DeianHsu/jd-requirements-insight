@@ -245,8 +245,11 @@ def main() -> int:
     random.Random(20260803).shuffle(shuffled_occurrences)
     shuffled_input = RequirementConsolidationInput(occurrences=shuffled_occurrences)
     order_result = None
+    order_metadata = None
+    order_raw = None
+    order_seed = 20260803
     try:
-        order_result, _, _ = run_once(
+        order_result, order_metadata, order_raw = run_once(
             make_client, shuffled_input, args.max_attempts
         )
     except (ConsolidationError, ValueError) as exc:
@@ -383,28 +386,47 @@ def main() -> int:
     for warning in warnings:
         print(f"  [WARN] {warning}")
 
-    # 原始运行结果（含证据）只写私有位置。
+    # 原始运行结果（含证据）只写私有位置：独立运行 + 顺序变形运行
+    # （模型身份、规范化结果、成功响应、输入顺序种子，供离线分析）。
     args.raw_output.parent.mkdir(parents=True, exist_ok=True)
-    args.raw_output.write_text(
-        json.dumps(
+    raw_payload: dict[str, object] = {
+        "extractor_version": selection.extractor_version,
+        "input_fingerprint": selection.input_fingerprint,
+        "selected_job_ids": job_ids,
+        "runs": [
             {
-                "extractor_version": selection.extractor_version,
-                "runs": [
-                    {
-                        "metadata": {
-                            "model": run["metadata"].model_name,
-                            "prompt_version": run["metadata"].prompt_version,
-                            "schema_version": run["metadata"].schema_version,
-                        },
-                        "result": run["result"].model_dump(mode="json"),
-                        "raw_response": run["raw"],
-                    }
-                    for run in runs
-                ],
+                "metadata": {
+                    "model": run["metadata"].model_name,
+                    "prompt_version": run["metadata"].prompt_version,
+                    "schema_version": run["metadata"].schema_version,
+                },
+                "result": run["result"].model_dump(mode="json"),
+                "raw_response": run["raw"],
+            }
+            for run in runs
+        ],
+    }
+    if order_result is not None and order_metadata is not None:
+        raw_payload["order_transformation"] = {
+            "seed": order_seed,
+            "requirement_id_order": [
+                occurrence.requirement_id for occurrence in shuffled_occurrences
+            ],
+            "metadata": {
+                "model": order_metadata.model_name,
+                "prompt_version": order_metadata.prompt_version,
+                "schema_version": order_metadata.schema_version,
             },
-            ensure_ascii=False,
-            indent=2,
-        ),
+            "result": order_result.model_dump(mode="json"),
+            "raw_response": order_raw,
+        }
+    else:
+        raw_payload["order_transformation"] = {
+            "seed": order_seed,
+            "failed": order_run_failed,
+        }
+    args.raw_output.write_text(
+        json.dumps(raw_payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     return 0 if not hard_gate_failures else 1
