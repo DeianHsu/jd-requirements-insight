@@ -28,68 +28,55 @@ updated_at: 2026-08-04
 
 - 数据库已使用现行 Schema 创建（六张业务表，无旧表）；
 - 5 份真实 JD 已导入 `data/jd_skill_insight.db`（重复导入幂等跳过）；
-- **当前无 v0.10 抽取结果（`job_extractions` 与 `job_requirements` 均为空），
-  无归并批次**；
+- **已持久化正式抽取结果：JD 1/2/3**（deepseek-v4-flash、
+  `prompt:0.10|schema:3.0`，要求数 37/30/16，幂等已验证）；
+- **无归并批次**（P0-4 未执行）；
 - 真实 JD 原文属于私有输入（Git 忽略；重新克隆仓库的环境不会包含
   这些私有文件）。
 
-## P0-3A 验证结果
+## P0-3A 规则场景验收（2026-08-04，已授权付费）
 
-### 原始真实运行（2026-08-04，已授权付费，一次运行）
-
-- 环境：deepseek-v4-flash、prompt 0.8、schema 3.0、max_attempts=2、
+- 环境：deepseek-v4-flash、**Prompt 0.10**、schema 3.0、max_attempts=2、
   13 场景 × base+transformed 各 1 次；
-- **hard_gate_failures=7，warnings=1，未通过**；
-- 报告：`reports/P0-3/acceptance-20260804-000314-report.json`（脱敏）；
-- 原始响应：`data/private/experiments/p0_3/acceptance-20260804-000314-raw.json`
+- **hard_gate_failures = 0，warnings = 0**，通过；
+- 报告：`reports/P0-3/acceptance-20260804-172141-report.json`（脱敏）；
+- 原始响应：`data/private/experiments/p0_3/acceptance-20260804-172141-raw.json`
   （私有，仅本地分析）。
 
-### 离线重算（同一批响应，未调用模型，验证器修复+收缩后）
+## P0-3B 真实 JD 验收（2026-08-04，已授权付费）
 
-报告：`reports/P0-3/acceptance-20260804-000314-revalidated.json`
+- JD 1（3 次独立抽取，37/39/37 条）：
+  `reports/P0-3/real-jd-acceptance-20260804-174748-report.json`
+- JD 2、3（各 3 次，30/30/28、18/14/14 条）：
+  `reports/P0-3/real-jd-acceptance-20260804-175840-report.json`
+- 三份 JD 累计：**所有运行完整、hard gate = 0**；
+- 人工语义审计：无 evidence 幻觉、无职责泄漏、无隐含技能补出；
+  importance/proficiency 三次运行稳定；any_of 组（"或"替代关系）
+  判定正确；
+- 非阻塞 warning（已分类，不影响 canonical 归并）：
+  1. raw_name 表述漂移（同证据不同命名，如"需求理解"vs"需求理解
+     能力"）→ 归并阶段归一，不影响统计结论；
+  2. 拆分粒度漂移（±2~4 条 instance，如"乐于沉淀规范、模板和可复用
+     能力"1 vs 3 条）→ 影响 instance_count 噪声，canonical 集合不变；
+  3. any_of 组成员漂移（任务调度/流程引擎/规则引擎等）→ 影响 group
+     统计，P0-4 重点观察；
+  4. 边缘 category 漂移（Workflow agent_capability/agent_framework、
+     算法功底 software_engineering/other 等）→ 轻微影响 category 分布。
 
-- 原 hard gate：7 → **新 hard gate：5**；原 warning：1 → 新 warning：0；
-- 已消除的假阳性：SCN-003/SCN-010 no_new_conditions（evidence 列表
-  序号前缀）、SCN-006 fact_set/importance_expected_change（配对与
-  锚点解析）、SCN-007 group_members_preserved ×2（any_of 检查与块
-  粒度）、SCN-009 no_new_conditions（拆句）、group_change_anchor
-  warning；
-- 剩余 5 个失败全部为真实模型或场景问题（已修正，待重跑确认）。
+## 是否达到进入 P0-4 的条件
 
-## 已确认的验证器问题（已修复并收缩）
-
-- evidence 开头列表标记归一（`1. `/`1、`/`(1) `/`一、`/`- `/`• `）与
-  正文语义数字保留（`3年` vs `5年`、`Python 3` 不被误归并）；
-- 配对依据收敛为可靠语义：归一后 evidence 相同（主分组）、或 raw_name
-  明确包含/相等且无歧义（fallback）；字段（category/importance/
-  proficiency/group_logic）只用于候选排序，不能单独证明同一事实；
-  字段相同但名称无关的项保持 unmatched；
-- `group_change_anchor` 为元数据键（不再产生未知属性 warning）；
-- 块拆分/合并（多对一块对齐）与 any_of+standalone 混合检查正确。
-
-## 已修正的模型或场景问题（Prompt 0.10 与场景修正，待重跑确认）
-
-- **any_of 规则统一（Prompt 0.8 → 0.9）**：“优先”只决定
-  importance=preferred，不再触发 any_of；只有明确“至少一种/任一/
-  任选/之一/或”才建 any_of；“和/与/并且”默认 standalone；Schema
-  保持 3.0，旧 prompt:0.8 结果被版本门禁拒绝，不会混用；
-- **SCN-006**：场景期望改为 proficiency basic→unknown（与 Schema
-  V3“项目经验→unknown”规则一致）；占位词替换为类别明确的
-  “编程语言/深度学习框架”；
-- **SCN-007/SCN-008**：占位词替换为类别明确的领域中性名称
-  （编程语言/深度学习框架 → 脚本语言/机器学习框架），保留
-  category invariance 检查。
-
-以上修正均未经过真实模型验证，待重新执行 P0-3A 确认。
+**是。** Prompt 0.10 + Schema V3 的抽取结果已通过 P0-3A（13 场景
+hard gate=0）与 P0-3B（JD 1/2/3 累计 hard gate=0、人工审计无阻塞
+问题），正式抽取数据已持久化且幂等。剩余非阻塞漂移作为 P0-4 观察点。
 
 ## 下一步
 
-1. 重新执行 P0-3A 规则场景真实验收（Prompt 0.10 + 场景修正后）；
-2. 通过后对单份真实 JD（ID 1）执行 P0-3B；
-3. 单份验证通过后扩大到三份 JD（ID 1/2/3）；
-4. 三份验证通过后持久化 v0.10 + Schema V3 抽取结果；
-5. 执行 P0-4 预检、正式验收和正式归并；
-6. 验收通过后实现 `generate-report`。
+1. 执行 P0-4 小规模预检（按真实 requirement instance 数量选择
+   target-size，不超过实际可用数量）；
+2. 执行 P0-4 正式验收（coverage=100%、结构违规=0、顺序变形无合同
+   失败、人工检查所有多成员 cluster）；
+3. 生成并离线验证正式归并批次；
+4. 实现 `generate-report`（市场统计 + 证据追溯 Markdown 报告）。
 
 ## 付费与私有数据依赖
 
