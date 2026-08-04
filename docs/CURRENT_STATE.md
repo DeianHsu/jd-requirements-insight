@@ -46,26 +46,56 @@ implementation_baseline: 5c3255e（仓库收缩完成；Git 是当前 HEAD 的�
   不产生抽取记录；
 - 全量自动化测试与 Ruff 通过。
 
+## P0-3A 真实验收结果（2026-08-04，已授权付费，一次运行）
+
+**未通过**：hard_gate_failures=7，warnings=1，exit 1。
+
+- 报告：`reports/P0-3/acceptance-20260804-000314-report.json`（脱敏）
+- 原始响应：`data/private/experiments/p0_3/acceptance-20260804-000314-raw.json`
+  （私有，仅本地分析）
+- 环境：deepseek-v4-flash、prompt 0.8、schema 3.0、max_attempts=2、
+  runs=1（每场景 base + transformed 各一次）
+
+失败归因（基于脱敏报告与私有原始响应本地分析）：
+
+- **主因（假阳性，验证器锚点匹配缺陷）**：base 与 transformed 的模型
+  证据截取起点不稳定（同一句有时带序号前缀 `1. `、有时不带）；
+  `_pair_items` 按 `_alnum(evidence)` 分组配对时数字被保留，导致
+  base↔variant 相同条件无法配对，连锁产生 SCN-003/006/007/008/
+  009/010 的 no_new_conditions、fact_set_preserved、field_invariance
+  （category 50%/75%）、group_members_preserved 假失败（SCN-003 的
+  base 与 variant 抽取内容完全一致仍报 4 个 new_conditions）。
+- **真实模型问题（次要，配对修复后仍会暴露）**：SCN-006 把
+  “有技术甲和框架乙相关项目经验者优先”（“和”关系）拆为两项并建
+  any_of 组；SCN-007 框架乙 category 漂移 other →
+  software_engineering；证据截取范围不稳定本身（EVID-01 最短原则
+  执行不一致，属稳定性级）。
+- **验证器小缺陷（warning 级）**：未识别场景期望属性
+  `group_change_anchor`。
+
 ## 尚未执行的真实验证
 
-- 规则场景验收 P0-3A 未执行（需授权付费调用）；
+- P0-3A 已执行但未通过（见上），重跑待定点修正后授权；
 - 真实 JD 的 v0.8 + Schema V3 抽取未执行（P0-3B 未执行）；
 - P0-4 归并验收未执行（无 v0.8 抽取结果）；
 - `generate-report` 未实现（P0-5 剩余项）。
 
 ## 当前已知问题
 
-- 暂无阻塞性已知问题；下一步为等待授权执行付费验证。
+- P0-3A 验证器锚点匹配对 evidence 序号前缀敏感（假阳性主因），
+  需要定点修正后重跑 P0-3A；
+- 模型存在证据截取起点不稳定（序号前缀）与少量真实语义漂移
+  （“和”建 any_of、category 漂移），需在三份验证中重点观察。
 
-## 下一步开发任务（等待授权）
+## 下一步开发任务
 
-1. 授权后执行 P0-3A 规则场景验收（`--execute`）；
-2. 单份 JD（ID 1）P0-3B 真实抽取验证（`--execute`）；
-3. 三份 JD（ID 1/2/3）P0-3B 验证；
-4. P0-3B 通过后持久化抽取结果（`extract-jds --execute`）；
-5. 根据持久化抽取的真实 requirement instance 数量选择 target-size，
-   执行 P0-4 预检与正式验收；
-6. 验收通过后实现 `generate-report`。
+1. 定点修正 P0-3A 暴露的问题（验证器锚点匹配 + 真实模型问题评估）；
+2. 重新执行 P0-3A 规则场景真实验收；
+3. 通过后对单份真实 JD（ID 1）执行 P0-3B；
+4. 单份验证通过后扩大到三份 JD（ID 1/2/3）；
+5. 三份验证通过后持久化 v0.8 + Schema V3 抽取结果；
+6. 执行 P0-4 预检、正式验收和正式归并；
+7. 验收通过后实现 `generate-report`。
 
 ## 付费与私有数据依赖
 
