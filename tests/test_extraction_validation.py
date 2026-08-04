@@ -1145,6 +1145,83 @@ def test_group_change_anchor_is_metadata_not_warning() -> None:
     assert failures == []
 
 
+def test_block_item_count_preserved_uses_global_counts() -> None:
+    """block_item_count_preserved 按全局原子事实数量比较，块粒度差异不误报。"""
+    # base 每句一块（2 个 requirement 块），variant 合并成一块，
+    # 全局项数相同（4 项）→ 不得报告块内项数变化。
+    base_discovery = {
+        "role_family": "other",
+        "seniority": "unknown",
+        "blocks": [
+            {
+                "block_id": "b0",
+                "sentence_indexes": [0],
+                "kind": "excluded",
+                "source_span": "# 示例岗位",
+                "note": "标题",
+            },
+            {
+                "block_id": "b1",
+                "sentence_indexes": [1],
+                "kind": "requirement",
+                "source_span": "1. 熟悉技术甲和框架乙",
+                "note": "条件1",
+            },
+            {
+                "block_id": "b2",
+                "sentence_indexes": [2],
+                "kind": "requirement",
+                "source_span": "2. 具备数据分析经验者优先",
+                "note": "条件2",
+            },
+        ],
+    }
+    variant_discovery = {
+        "role_family": "other",
+        "seniority": "unknown",
+        "blocks": [
+            {
+                "block_id": "v0",
+                "sentence_indexes": [0],
+                "kind": "excluded",
+                "source_span": "# 示例岗位",
+                "note": "标题",
+            },
+            {
+                "block_id": "v1",
+                "sentence_indexes": [1, 2],
+                "kind": "requirement",
+                "source_span": "1. 熟悉技术甲和框架乙\n2. 具备数据分析经验者优先",
+                "note": "合并条件",
+            },
+        ],
+    }
+    numbered_text = (
+        "# 示例岗位\n\n"
+        "1. 熟悉技术甲和框架乙。\n2. 具备数据分析经验者优先。"
+    )
+    base = make_snapshot(discovery=base_discovery, result=result_payload(), raw_text=numbered_text)
+    variant = make_snapshot(discovery=variant_discovery, result=result_payload(), raw_text=numbered_text)
+
+    transformation = TransformationResult(
+        text=numbered_text,
+        transformation_type="none",
+        anchor_map={
+            "1熟悉技术甲和框架乙": ["1熟悉技术甲和框架乙"],
+            "2具备数据分析经验者优先": ["2具备数据分析经验者优先"],
+        },
+        changed_regions=frozenset(),
+    )
+    comparison = compare_runs(base, variant, transformation=transformation)
+
+    assert comparison.base_item_count == comparison.variant_item_count == 2
+    failures, _ = check_scenario_properties(
+        comparison,
+        {"block_item_count_preserved": True},
+    )
+    assert failures == []
+
+
 def test_any_of_group_mixed_with_standalone_no_false_failure() -> None:
     """块内 any_of 组与 standalone 项混合时组成员检查不得误报（SCN-007 修复）。"""
     base_payload = result_payload()

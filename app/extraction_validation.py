@@ -1213,13 +1213,14 @@ def check_scenario_properties(
                     f"kind_drift={[item[0] for item in comparison.kind_drift_blocks]}"
                 )
         elif key == "block_item_count_preserved" and value:
-            drifted = [
-                f"{block.base_block_id}:{block.base_item_count}->{block.variant_item_count}"
-                for block in comparison.block_comparisons
-                if block.base_item_count != block.variant_item_count
-            ]
-            if drifted:
-                failures.append(f"block_item_count_preserved: 块内项数变化 {drifted}")
+            # 原子事实数量不变按全局比较：发现段块粒度可能不同（base 每句
+            # 一块、variant 合并成一块），块级项数比较会误报。
+            if comparison.base_item_count != comparison.variant_item_count:
+                failures.append(
+                    f"block_item_count_preserved: 原子事实数量变化 "
+                    f"base={comparison.base_item_count} "
+                    f"variant={comparison.variant_item_count}"
+                )
         elif key == "field_invariance" and isinstance(value, list):
             for field_name in value:
                 if field_name == "group_logic":
