@@ -20,7 +20,7 @@ from app.extraction_validation import (
     contract_hard_gate_failures,
     compute_input_fingerprint,
 )
-from app.schemas import JobExtractionResult
+from app.schemas import JobExtractionResult, RequirementItem
 
 RAW_TEXT = "# 示例岗位\n\n负责能力甲体系建设。\n\n熟悉技术甲和框架乙。"
 
@@ -947,6 +947,368 @@ def test_scenario_properties_raw_name_follows_replacements() -> None:
         variant_result=old_variant.result,
     )
     assert failures
+
+
+def _req_item(
+    raw_name: str,
+    evidence: str,
+    category: str = "other",
+    importance: str = "must",
+    proficiency: str = "basic",
+    group_id: str | None = None,
+    group_logic: str = "standalone",
+) -> RequirementItem:
+    """构造一条 requirement 原子项（供 _pair_items 直接测试）。"""
+    return RequirementItem(
+        raw_name=raw_name,
+        category=category,
+        importance=importance,
+        proficiency=proficiency,
+        group_id=group_id,
+        group_logic=group_logic,
+        min_years=None,
+        max_years=None,
+        years_text=None,
+        evidence=evidence,
+        confidence=0.9,
+    )
+
+
+def test_pair_items_evidence_with_number_prefix_pairs() -> None:
+    """同一证据带/不带列表序号前缀必须配对（回归：SCN-003 假阳性根因）。"""
+    from app.extraction_validation import _pair_items
+
+    base = [
+        ("requirement", 0, _req_item("技术甲", evidence="1. 熟悉技术甲和框架乙")),
+        ("requirement", 1, _req_item("框架乙", evidence="1. 熟悉技术甲和框架乙")),
+    ]
+    variant = [
+        ("requirement", 0, _req_item("技术甲", evidence="熟悉技术甲和框架乙")),
+        ("requirement", 1, _req_item("框架乙", evidence="熟悉技术甲和框架乙")),
+    ]
+
+    pairs, unmatched_base, unmatched_variant = _pair_items(base, variant)
+
+    assert len(pairs) == 2
+    assert not unmatched_base
+    assert not unmatched_variant
+
+
+def test_pair_items_common_list_markers_pair() -> None:
+    """常见列表标记（数字点/顿号/括号/中文序号/短横线/圆点）均可配对。"""
+    from app.extraction_validation import _pair_items
+
+    markers = ["1. ", "1、", "(1) ", "（1）", "一、", "- ", "\u2022 "]
+    for marker in markers:
+        base = [("requirement", 0, _req_item("技术甲", evidence=marker + "熟悉技术甲"))]
+        variant = [("requirement", 0, _req_item("技术甲", evidence="熟悉技术甲"))]
+        pairs, unmatched_base, unmatched_variant = _pair_items(base, variant)
+        assert len(pairs) == 1, f"marker {marker!r} 未配对"
+        assert not unmatched_base and not unmatched_variant, f"marker {marker!r}"
+
+
+def test_pair_items_semantic_numbers_not_normalized() -> None:
+    """语义数字必须保留：3年与5年不得归一为同一键，Python 3 数字保留。"""
+    from app.extraction_validation import _pair_items
+
+    base = [("requirement", 0, _req_item("经验A", evidence="3年以上项目经验"))]
+    variant = [("requirement", 0, _req_item("经验B", evidence="5年以上项目经验"))]
+    pairs, unmatched_base, unmatched_variant = _pair_items(base, variant)
+    assert not pairs
+    assert unmatched_base and unmatched_variant  # 不得错误配对
+
+    base = [("requirement", 0, _req_item("Python", evidence="熟悉 Python 3"))]
+    variant = [("requirement", 0, _req_item("Python", evidence="熟悉 Python 3"))]
+    pairs, unmatched_base, unmatched_variant = _pair_items(base, variant)
+    assert len(pairs) == 1
+
+
+def test_pair_items_same_block_multi_items_not_cross_paired() -> None:
+    """同块多个字段相近的要求不得因字段相同而错误交叉配对。"""
+    from app.extraction_validation import _pair_items
+
+    base = [
+        ("requirement", 0, _req_item("技术甲", evidence="熟悉技术甲")),
+        ("requirement", 1, _req_item("框架乙", evidence="熟悉框架乙")),
+        ("requirement", 2, _req_item("平台丙", evidence="熟悉平台丙")),
+    ]
+    variant = [
+        ("requirement", 0, _req_item("技术甲", evidence="熟悉技术甲")),
+        ("requirement", 1, _req_item("框架乙", evidence="熟悉框架乙")),
+        ("requirement", 2, _req_item("平台丙", evidence="熟悉平台丙")),
+    ]
+
+    pairs, unmatched_base, unmatched_variant = _pair_items(base, variant)
+    paired_names = {
+        (base[i][2].raw_name, variant[j][2].raw_name) for i, j in pairs
+    }
+    assert paired_names == {
+        ("技术甲", "技术甲"),
+        ("框架乙", "框架乙"),
+        ("平台丙", "平台丙"),
+    }
+    assert not unmatched_base and not unmatched_variant
+
+
+def test_compare_no_false_new_conditions_with_number_prefix() -> None:
+    """SCN-003 等价输出：base 带序号、variant 不带时不得产生假新增。"""
+    base_payload = result_payload()
+    for requirement in base_payload["requirements"]:
+        requirement["evidence"] = "1. 熟悉技术甲和框架乙"
+    variant_payload = result_payload()
+    base = make_snapshot(result=base_payload)
+    variant = make_snapshot(result=variant_payload)
+
+    comparison = compare_runs(base, variant)
+
+    failures, _ = check_scenario_properties(
+        comparison,
+        {
+            "fact_set_preserved": True,
+            "no_new_conditions": True,
+            "field_invariance": ["category", "importance", "proficiency"],
+        },
+    )
+    assert failures == []
+
+
+def test_group_change_anchor_is_metadata_not_warning() -> None:
+    """group_change_anchor 是辅助定位元数据，不得产生未知属性 warning。"""
+    base = make_snapshot()
+    payload = result_payload()
+    for requirement in payload["requirements"]:
+        requirement["group_id"] = "group_1"
+        requirement["group_logic"] = "any_of"
+    variant = make_snapshot(result=payload)
+
+    comparison = compare_runs(base, variant)
+    failures, warnings = check_scenario_properties(
+        comparison,
+        {
+            "group_logic_changed_to": "any_of",
+            "expected_group_member_count": 2,
+            "group_members_preserved": True,
+            "group_change_anchor": "熟悉技术甲和框架乙",
+        },
+        changed_regions=frozenset({anchor_ids(RAW_TEXT)[2]}),
+    )
+    assert failures == []
+    assert not any("group_change_anchor" in w for w in warnings)
+
+
+def test_any_of_group_mixed_with_standalone_no_false_failure() -> None:
+    """块内 any_of 组与 standalone 项混合时组成员检查不得误报（SCN-007 修复）。"""
+    base_payload = result_payload()
+    variant_payload = result_payload()
+    variant_payload["requirements"].append(
+        {
+            "raw_name": "能力丙",
+            "category": "other",
+            "importance": "preferred",
+            "proficiency": "unknown",
+            "group_id": None,
+            "group_logic": "standalone",
+            "min_years": None,
+            "max_years": None,
+            "years_text": None,
+            "evidence": "具备能力丙使用经验者优先",
+            "confidence": 0.9,
+        }
+    )
+    for requirement in variant_payload["requirements"][:2]:
+        requirement["group_id"] = "group_1"
+        requirement["group_logic"] = "any_of"
+    base = make_snapshot(result=base_payload)
+    variant = make_snapshot(result=variant_payload)
+
+    comparison = compare_runs(base, variant)
+    failures, _ = check_scenario_properties(
+        comparison,
+        {
+            "group_logic_changed_to": "any_of",
+            "expected_group_member_count": 2,
+            "group_members_preserved": True,
+            "group_change_anchor": "熟悉技术甲和框架乙",
+        },
+        changed_regions=frozenset({anchor_ids(RAW_TEXT)[2]}),
+    )
+    assert failures == []
+
+
+def test_pair_items_name_containment_fallback_pairs() -> None:
+    """文本整体替换但条件名保留（熟悉技术甲 → 技术甲相关项目经验）可配对。"""
+    from app.extraction_validation import _pair_items
+
+    base = [
+        ("requirement", 0, _req_item("技术甲", evidence="熟悉技术甲和框架乙")),
+        ("requirement", 1, _req_item("框架乙", evidence="熟悉技术甲和框架乙")),
+    ]
+    variant = [
+        (
+            "requirement",
+            0,
+            _req_item(
+                "技术甲相关项目经验",
+                evidence="有技术甲和框架乙相关项目经验者优先",
+                importance="preferred",
+                proficiency="unknown",
+            ),
+        ),
+        (
+            "requirement",
+            1,
+            _req_item(
+                "框架乙相关项目经验",
+                evidence="有技术甲和框架乙相关项目经验者优先",
+                importance="preferred",
+                proficiency="unknown",
+            ),
+        ),
+    ]
+
+    pairs, unmatched_base, unmatched_variant = _pair_items(base, variant)
+
+    assert len(pairs) == 2
+    assert not unmatched_base and not unmatched_variant
+
+
+def test_resolve_property_anchors_resolves_importance_anchor() -> None:
+    """importance_expected_change 的锚点文本必须解析为稳定锚点 ID。"""
+    from scripts.experiments.p0_3.run_acceptance import resolve_property_anchors
+
+    numbered_text = (
+        "# 示例岗位\n\n负责能力甲体系建设。\n\n"
+        "1. 熟悉技术甲和框架乙。\n2. 具备能力丙使用经验者优先。"
+    )
+    resolved = resolve_property_anchors(
+        {
+            "importance_expected_change": {
+                "anchor": "熟悉技术甲和框架乙",
+                "from": "must",
+                "to": "preferred",
+            }
+        },
+        numbered_text,
+    )
+    assert resolved["importance_expected_change"]["anchor"] == "1熟悉技术甲和框架乙"
+
+
+def test_compare_split_blocks_to_merged_block_no_item_loss() -> None:
+    """base 每句一块、variant 合并一块：多对一对齐，配对不丢项。"""
+    base_discovery = {
+        "role_family": "other",
+        "seniority": "unknown",
+        "blocks": [
+            {
+                "block_id": "b0",
+                "sentence_indexes": [0],
+                "kind": "excluded",
+                "source_span": "# 示例岗位",
+                "note": "标题",
+            },
+            {
+                "block_id": "b1",
+                "sentence_indexes": [1],
+                "kind": "responsibility",
+                "source_span": "负责能力甲体系建设",
+                "note": "工作内容",
+            },
+            {
+                "block_id": "b2",
+                "sentence_indexes": [2],
+                "kind": "requirement",
+                "source_span": "1. 熟悉技术甲和框架乙",
+                "note": "条件1",
+            },
+            {
+                "block_id": "b3",
+                "sentence_indexes": [3],
+                "kind": "requirement",
+                "source_span": "2. 具备能力丙使用经验者优先",
+                "note": "条件2",
+            },
+        ],
+    }
+    variant_discovery = {
+        "role_family": "other",
+        "seniority": "unknown",
+        "blocks": [
+            {
+                "block_id": "v0",
+                "sentence_indexes": [0],
+                "kind": "excluded",
+                "source_span": "# 示例岗位",
+                "note": "标题",
+            },
+            {
+                "block_id": "v1",
+                "sentence_indexes": [1],
+                "kind": "responsibility",
+                "source_span": "负责能力甲体系建设",
+                "note": "工作内容",
+            },
+            {
+                "block_id": "v2",
+                "sentence_indexes": [2, 3],
+                "kind": "requirement",
+                "source_span": "1. 熟悉技术甲和框架乙\n2. 具备能力丙使用经验者优先",
+                "note": "合并条件",
+            },
+        ],
+    }
+    numbered_text = (
+        "# 示例岗位\n\n负责能力甲体系建设。\n\n"
+        "1. 熟悉技术甲和框架乙。\n2. 具备能力丙使用经验者优先。"
+    )
+    payload = result_payload()
+    payload["requirements"].append(
+        {
+            "raw_name": "能力丙使用经验",
+            "category": "other",
+            "importance": "preferred",
+            "proficiency": "unknown",
+            "group_id": None,
+            "group_logic": "standalone",
+            "min_years": None,
+            "max_years": None,
+            "years_text": None,
+            "evidence": "2. 具备能力丙使用经验者优先",
+            "confidence": 0.9,
+        }
+    )
+    base = make_snapshot(discovery=base_discovery, result=payload, raw_text=numbered_text)
+    variant = make_snapshot(discovery=variant_discovery, result=payload, raw_text=numbered_text)
+
+    transformation = TransformationResult(
+        text=numbered_text,
+        transformation_type="none",
+        anchor_map={
+            "1熟悉技术甲和框架乙": ["1熟悉技术甲和框架乙"],
+            "2具备能力丙使用经验者优先": ["2具备能力丙使用经验者优先"],
+        },
+        changed_regions=frozenset(),
+    )
+    comparison = compare_runs(base, variant, transformation=transformation)
+
+    assert comparison.unmatched_base_count == 0
+    assert comparison.unmatched_variant_count == 0
+    failures, _ = check_scenario_properties(
+        comparison,
+        {"fact_set_preserved": True, "no_new_conditions": True},
+    )
+    assert failures == []
+
+
+def test_unknown_scenario_property_still_warns() -> None:
+    """真正未知的期望属性仍产生 warning（与元数据字段区分）。"""
+    base = make_snapshot()
+    variant = make_snapshot()
+
+    _, warnings = check_scenario_properties(
+        compare_runs(base, variant),
+        {"totally_unknown_property": True},
+    )
+    assert any("totally_unknown_property" in w for w in warnings)
 
 
 def test_build_acceptance_report_without_contract() -> None:

@@ -46,50 +46,72 @@ implementation_baseline: 5c3255e（仓库收缩完成；Git 是当前 HEAD 的�
   不产生抽取记录；
 - 全量自动化测试与 Ruff 通过。
 
-## P0-3A 真实验收结果（2026-08-04，已授权付费，一次运行）
+## P0-3A 验证器定点修复与离线重算（2026-08-04，无付费调用）
 
-**未通过**：hard_gate_failures=7，warnings=1，exit 1。
+原始真实运行结果保留不覆盖：`reports/P0-3/acceptance-20260804-000314-report.json`
+（hard_gate_failures=7，warnings=1）。
 
-- 报告：`reports/P0-3/acceptance-20260804-000314-report.json`（脱敏）
-- 原始响应：`data/private/experiments/p0_3/acceptance-20260804-000314-raw.json`
-  （私有，仅本地分析）
-- 环境：deepseek-v4-flash、prompt 0.8、schema 3.0、max_attempts=2、
-  runs=1（每场景 base + transformed 各一次）
+验证器修复（本轮完成）：
 
-失败归因（基于脱敏报告与私有原始响应本地分析）：
+- 新增 `evidence_pairing_key()`：NFKC + 空白规范化后只移除开头排版型
+  列表标记（数字+点/顿号、括号数字、中文序号+顿号、短横线/圆点项目
+  符号），保留正文全部语义数字（`3年` vs `5年`、`Python 3` 不受影响）；
+- `_pair_items` 分组键、`_group_ids_of` 组身份、`new_condition_items`
+  判定改用配对键；`new_condition_items` 改为按配对结果（对象身份）
+  判定，拆句场景不再误报新增；
+- fallback 兜底增加语义数字集合兼容检查（3年/5年不得兜底配对）与
+  名称包含规则（文本整体替换但条件名保留时可配对）；
+- 变形块对齐允许一个 variant 块对应多个 base 块（发现段块粒度不同
+  不再静默丢项）；未配对统计改为全局对象身份去重；
+- `group_members_preserved` 的 any_of 组检查改为与块内 any_of 项数
+  比较（块内可混合 standalone）；
+- `group_change_anchor` 识别为元数据键不再产生未知属性 warning，
+  真正未知属性仍 warning；
+- `resolve_property_anchors` 补充解析 `importance_expected_change`
+  的 anchor（此前漏解析导致检查永远失败）。
 
-- **主因（假阳性，验证器锚点匹配缺陷）**：base 与 transformed 的模型
-  证据截取起点不稳定（同一句有时带序号前缀 `1. `、有时不带）；
-  `_pair_items` 按 `_alnum(evidence)` 分组配对时数字被保留，导致
-  base↔variant 相同条件无法配对，连锁产生 SCN-003/006/007/008/
-  009/010 的 no_new_conditions、fact_set_preserved、field_invariance
-  （category 50%/75%）、group_members_preserved 假失败（SCN-003 的
-  base 与 variant 抽取内容完全一致仍报 4 个 new_conditions）。
-- **真实模型问题（次要，配对修复后仍会暴露）**：SCN-006 把
-  “有技术甲和框架乙相关项目经验者优先”（“和”关系）拆为两项并建
-  any_of 组；SCN-007 框架乙 category 漂移 other →
-  software_engineering；证据截取范围不稳定本身（EVID-01 最短原则
-  执行不一致，属稳定性级）。
-- **验证器小缺陷（warning 级）**：未识别场景期望属性
-  `group_change_anchor`。
+离线重算（同一批模型响应，未调用模型）：
+`reports/P0-3/acceptance-20260804-000314-revalidated.json`
+
+- 原 hard gate：7 → **新 hard gate：4**；原 warning：1 → 新 warning：0；
+- 消除的假阳性：SCN-003 no_new_conditions、SCN-006 fact_set/
+  importance_expected_change、SCN-007 group_members_preserved ×2、
+  SCN-009 no_new_conditions（拆句）、SCN-010 no_new_conditions、
+  group_change_anchor warning；
+- 剩余 4 个失败全部为真实问题：
+  - SCN-006 group_type/group_membership：模型把“有技术甲和框架乙
+    相关项目经验者优先”（“和”关系）建为 any_of 组（真实 GROUP 错误）；
+  - SCN-006 proficiency：模型按规则把“相关项目经验”判 unknown，
+    与场景期望（proficiency 不变）矛盾——场景期望与 Schema V3 规则
+    （项目经验→unknown，见 SCN-013）不一致；
+  - SCN-007/SCN-008 category：占位词（框架乙/技术丙）类别语义不明，
+    category 判定在改名/同词时漂移——场景歧义 + 模型字段稳定性并存。
+
+结论：验证器假阳性已与真实模型问题彻底分离。是否需要修改 Prompt：
+仅 SCN-006 的 any_of 建组属于模型规则执行问题（“和”误为“或”），
+其余为场景/协议问题；若需修正，建议新增 GROUP 规则正反例（待独立
+Prompt 版本升级任务）。
 
 ## 尚未执行的真实验证
 
-- P0-3A 已执行但未通过（见上），重跑待定点修正后授权；
+- P0-3A 原始运行未通过，验证器修复已完成，重跑待授权；
 - 真实 JD 的 v0.8 + Schema V3 抽取未执行（P0-3B 未执行）；
 - P0-4 归并验收未执行（无 v0.8 抽取结果）；
 - `generate-report` 未实现（P0-5 剩余项）。
 
 ## 当前已知问题
 
-- P0-3A 验证器锚点匹配对 evidence 序号前缀敏感（假阳性主因），
-  需要定点修正后重跑 P0-3A；
-- 模型存在证据截取起点不稳定（序号前缀）与少量真实语义漂移
-  （“和”建 any_of、category 漂移），需在三份验证中重点观察。
+- 模型对“和”关系误建 any_of 组（SCN-006，真实 GROUP 错误，建议
+  Prompt 规则澄清）；
+- SCN-006 场景期望（proficiency 不变）与 Schema V3 规则（项目经验→
+  unknown）矛盾，需要修正场景期望；
+- SCN-007/SCN-008 占位词 category 判定不稳定，建议场景词替换为
+  类别明确的中性描述（不删除 category invariance 检查）。
 
 ## 下一步开发任务
 
-1. 定点修正 P0-3A 暴露的问题（验证器锚点匹配 + 真实模型问题评估）；
+1. 根据离线重算结论决定是否提交独立 Prompt 版本升级任务（GROUP
+   规则正反例）与场景期望修正；
 2. 重新执行 P0-3A 规则场景真实验收；
 3. 通过后对单份真实 JD（ID 1）执行 P0-3B；
 4. 单份验证通过后扩大到三份 JD（ID 1/2/3）；

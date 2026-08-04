@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -120,6 +121,36 @@ class DiscoveryCoverageReport:
 def _alnum(text: str) -> str:
     """提取规范化文本的字母数字序列，用于容忍标点差异的包含校验。"""
     return "".join(ch for ch in normalize_evidence(text) if ch.isalnum())
+
+
+# 排版型列表标记：数字+点/顿号、括号数字、中文序号+顿号、短横线/圆点项目符号。
+# 数字+点要求点后非数字，避免误删 "3.0"、"2.5" 等语义数字。
+_LIST_MARKER_RE = re.compile(
+    r"^(?:\d+[\.．](?=[^\d])[\s]*"
+    r"|\d+、"
+    r"|[\(（]\d+[\)）]\s*"
+    r"|[一二三四五六七八九十百]+、"
+    r"|[-–—•·](?=\s))"
+)
+
+
+def evidence_pairing_key(evidence: str) -> str:
+    """生成跨运行配对的证据身份键。
+
+    只移除字符串开头的排版型列表标记（数字+点/顿号、括号数字、中文
+    序号+顿号、短横线/圆点项目符号），保留正文中的全部语义数字；
+    空结果安全返回空字符串。正式 evidence 验证不使用本函数。
+    """
+    normalized = normalize_evidence(evidence)
+    stripped = _LIST_MARKER_RE.sub("", normalized, count=1)
+    return "".join(ch for ch in stripped if ch.isalnum())
+
+
+def _evidence_digits(evidence: str) -> set[str]:
+    """提取去除开头列表标记后的语义数字串集合（fallback 配对兼容检查）。"""
+    normalized = normalize_evidence(evidence)
+    stripped = _LIST_MARKER_RE.sub("", normalized, count=1)
+    return set(re.findall(r"\d+", stripped))
 
 
 def _evidence_hits_block(evidence: str, block: CandidateBlock) -> bool:
@@ -445,13 +476,12 @@ def align_blocks(
             for anchor in _block_anchor_ids(base_block, base_raw_text):
                 for transformed_anchor in transformation.anchor_map.get(anchor, []):
                     for variant_block in variant_by_anchor.get(transformed_anchor, []):
-                        if variant_block.block_id not in seen and (
-                            variant_block.block_id not in used_variant
-                            or variant_block.block_id in seen
-                        ):
+                        if variant_block.block_id not in seen:
                             matched.append(variant_block)
                             seen.add(variant_block.block_id)
             if matched:
+                # 允许多个 base 块共享同一 variant 块：发现段块粒度可能不同
+                # （base 每句一块、variant 合并成一块），项级配对会去重。
                 pairs.append((base_block, matched))
                 used_variant.update(block.block_id for block in matched)
             else:
@@ -574,7 +604,9 @@ def _group_ids_of(items: list[tuple[str, int, Any]]) -> dict[str, str]:
     groups: dict[str, list[str]] = {}
     for _, _, item in items:
         if isinstance(item, RequirementItem) and item.group_logic.value == "any_of" and item.group_id:
-            identity = f"{_alnum(item.evidence)}|{item.category.value}|{item.raw_name}"
+            identity = (
+                f"{evidence_pairing_key(item.evidence)}|{item.category.value}|{item.raw_name}"
+            )
             groups.setdefault(item.group_id, []).append(identity)
     signature_map: dict[str, str] = {}
     for group_id, identities in groups.items():
@@ -607,13 +639,14 @@ def _pair_items(
     for item_type in set(base_by_type) & set(variant_by_type):
         base_typed = base_by_type[item_type]
         variant_typed = variant_by_type[item_type]
-        # 按 evidence 锚点分组（组内项可自由交换顺序）。
+        # 按 evidence 配对键分组（组内项可自由交换顺序；列表序号前缀不
+        # 影响配对，语义数字保留）。
         base_groups: dict[str, list[int]] = {}
         for local_index, (_, entry) in enumerate(base_typed):
-            base_groups.setdefault(_alnum(entry[2].evidence), []).append(local_index)
+            base_groups.setdefault(evidence_pairing_key(entry[2].evidence), []).append(local_index)
         variant_groups: dict[str, list[int]] = {}
         for local_index, (_, entry) in enumerate(variant_typed):
-            variant_groups.setdefault(_alnum(entry[2].evidence), []).append(local_index)
+            variant_groups.setdefault(evidence_pairing_key(entry[2].evidence), []).append(local_index)
 
         for evidence_key in sorted(set(base_groups) & set(variant_groups)):
             base_local = base_groups[evidence_key]
@@ -657,15 +690,39 @@ def _pair_items(
         fallback_candidates = []
         for base_position, (_, base_entry) in enumerate(remaining_base):
             for variant_position, (_, variant_entry) in enumerate(remaining_variant):
+                # 语义数字兼容检查：evidence 数字串集合不同（如 3年 vs 5年）
+                # 不得兜底配对；集合相同（如 熟悉→精通 无数字）才允许。
+                if _evidence_digits(base_entry[2].evidence) != _evidence_digits(
+                    variant_entry[2].evidence
+                ):
+                    continue
                 score = _pair_score(
                     base_entry[2],
                     variant_entry[2],
                     base_group_ids,
                     variant_group_ids,
                 )
-                if score < 2.2:  # 至少两个字段一致（含 0.2 名称辅助）
+                if score >= 2.2:  # 至少两个字段一致（含 0.2 名称辅助）
+                    fallback_candidates.append((score, base_position, variant_position))
                     continue
-                fallback_candidates.append((score, base_position, variant_position))
+                # 名称身份兜底：文本整体替换但条件名保留（如 "熟悉技术甲"
+                # → "有技术甲相关项目经验者优先"）时，名称包含 + 类别一致
+                # + 数字集合相同即可配对（名称不单独决定配对）。
+                base_item = base_entry[2]
+                variant_item = variant_entry[2]
+                if (
+                    isinstance(base_item, RequirementItem)
+                    and isinstance(variant_item, RequirementItem)
+                    and base_item.category == variant_item.category
+                ):
+                    base_label = item_label(base_item)
+                    variant_label = item_label(variant_item)
+                    if base_label and variant_label and (
+                        base_label in variant_label or variant_label in base_label
+                    ):
+                        fallback_candidates.append(
+                            (0.0 + score, base_position, variant_position)
+                        )
         for _, base_position, variant_position in sorted(
             fallback_candidates, key=lambda item: (-item[0], item[1], item[2])
         ):
@@ -808,6 +865,7 @@ class BlockItemComparison:
     importance_transitions: dict[tuple[str, str], int]
     group_type_transitions: dict[tuple[str, str], int]
     any_of_group_sizes: tuple[int, ...]
+    any_of_item_count: int = 0
 
 
 @dataclass
@@ -968,6 +1026,7 @@ def compare_runs(
             if isinstance(item, RequirementItem) and item.group_logic.value == "any_of" and item.group_id:
                 variant_group_counts[item.group_id] += 1
         any_of_sizes = sorted(size for size in variant_group_counts.values())
+        any_of_item_count = sum(variant_group_counts.values())
         comparison.block_comparisons.append(
             BlockItemComparison(
                 base_block_id=base_block.block_id,
@@ -985,23 +1044,23 @@ def compare_runs(
                 importance_transitions=importance_transitions,
                 group_type_transitions=group_transitions,
                 any_of_group_sizes=tuple(any_of_sizes),
+                any_of_item_count=any_of_item_count,
             )
         )
         for base_index, variant_index in block_pairs:
             total_pairs.append((offset_base + base_index, offset_variant + variant_index))
-        for index in sorted(unmatched_base):
-            label, _, item = base_block_items[index]
-            comparison.unmatched_items.append(
-                f"base {base_block.block_id} {label}:{item_label(item)}"
-            )
-        for index in sorted(unmatched_variant):
-            label, _, item = variant_block_items[index]
-            comparison.unmatched_items.append(
-                f"variant {base_block.block_id} {label}:{item_label(item)}"
-            )
         total_base_items.extend(base_block_items)
         total_variant_items.extend(variant_block_items)
 
+    # 全局未配对：按项对象身份统计（同一项被多个块对引用时只计一次）。
+    paired_base_objects = {id(total_base_items[i][2]) for i, _ in total_pairs}
+    paired_variant_objects = {id(total_variant_items[j][2]) for _, j in total_pairs}
+    for position, (label, _, item) in enumerate(total_base_items):
+        if id(item) not in paired_base_objects:
+            comparison.unmatched_items.append(f"base {label}:{item_label(item)}")
+    for position, (label, _, item) in enumerate(total_variant_items):
+        if id(item) not in paired_variant_objects:
+            comparison.unmatched_items.append(f"variant {label}:{item_label(item)}")
     comparison.unmatched_base_count = sum(
         1 for message in comparison.unmatched_items if message.startswith("base ")
     )
@@ -1009,20 +1068,19 @@ def compare_runs(
         comparison.unmatched_base_count
     )
 
-    # 新增“条件”：variant 未配对项中 importance 为 must/preferred 的要求，
-    # 且其证据在 base 的 requirements 中不存在（职责证据不视为已有条件）。
-    base_requirement_evidence = {
-        _alnum(entry[2].evidence)
-        for entry in base_items
-        if entry[0] == "requirement"
+    # 新增“条件”：variant 中 importance 为 must/preferred 且未与 base 任何
+    # 项配对的要求（配对成功视为已有对应，证据截取范围不同不算新增；
+    # 职责证据不视为已有条件）。按对象身份判断，避免列表拼接顺序影响。
+    paired_variant_items = {
+        id(total_variant_items[variant_index][2])
+        for _, variant_index in total_pairs
     }
     for _, _, item in variant_items:
         if isinstance(item, RequirementItem) and item.importance.value in (
             "must",
             "preferred",
         ):
-            variant_alnum = _alnum(item.evidence)
-            if variant_alnum not in base_requirement_evidence:
+            if id(item) not in paired_variant_items:
                 comparison.new_condition_items.append(item_label(item))
 
     if total_pairs:
@@ -1088,6 +1146,8 @@ def check_scenario_properties(
     """
     failures: list[str] = []
     warnings: list[str] = []
+    # 辅助定位元数据（被相关 group 检查读取，不是独立验收属性）。
+    metadata_keys = {"group_change_anchor"}
 
     def target_blocks(anchor: str) -> list[BlockItemComparison]:
         return [
@@ -1235,23 +1295,24 @@ def check_scenario_properties(
             anchor = properties.get("group_change_anchor")
             blocks = target_blocks(anchor) if anchor else comparison.block_comparisons
             for block in blocks:
-                if (
-                    block.matched_count != block.base_item_count
-                    or block.base_item_count != block.variant_item_count
-                ):
+                # 成员丢失：base 项未全部配对（块粒度不同不视为丢失）。
+                if block.matched_count != block.base_item_count:
                     failures.append(
                         f"group_members_preserved: 块 {block.base_block_id} "
                         f"成员未完全保持（base={block.base_item_count} "
                         f"variant={block.variant_item_count} "
                         f"matched={block.matched_count}）"
                     )
+                # any_of 组大小必须等于块内全部 any_of 项数（块内可同时
+                # 存在 standalone 项，不得按块总项数比较）。
                 if block.any_of_group_sizes and sum(block.any_of_group_sizes) != (
-                    block.variant_item_count
+                    block.any_of_item_count
                 ):
                     failures.append(
                         f"group_members_preserved: 块 {block.base_block_id} "
                         f"any_of 组未包含全部成员 "
-                        f"{block.any_of_group_sizes}"
+                        f"{block.any_of_group_sizes}（any_of 项数 "
+                        f"{block.any_of_item_count}）"
                     )
         elif key == "raw_name_follows_replacements" and isinstance(value, list):
             old_names = [replacement["find"] for replacement in value]
@@ -1268,6 +1329,8 @@ def check_scenario_properties(
                 failures.append(
                     f"raw_name_follows_replacements: variant 未输出任何新名 {new_names}"
                 )
+        elif key in metadata_keys:
+            continue
         else:
             warnings.append(f"未识别的期望属性：{key}")
     return failures, warnings

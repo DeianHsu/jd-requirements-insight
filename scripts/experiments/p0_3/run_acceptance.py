@@ -259,6 +259,11 @@ def resolve_property_anchors(
             change["anchor"] = (
                 resolve_anchor(base_text, change["anchor"]) or change["anchor"]
             )
+    importance = resolved.get("importance_expected_change")
+    if isinstance(importance, dict) and importance.get("anchor"):
+        importance["anchor"] = (
+            resolve_anchor(base_text, importance["anchor"]) or importance["anchor"]
+        )
     experience = resolved.get("experience_to_unknown_expected_change")
     if isinstance(experience, dict) and experience.get("anchor"):
         experience["anchor"] = (
