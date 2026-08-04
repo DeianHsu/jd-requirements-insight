@@ -4,7 +4,7 @@
 
 ```text
 JD 导入
-→ v0.8 + Schema V3 结构化抽取
+→ v0.9 + Schema V3 结构化抽取
 → 抽取质量验证
 → requirement instance 归并为 canonical requirement
 → 独立 JD 统计
