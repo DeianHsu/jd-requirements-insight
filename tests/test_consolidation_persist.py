@@ -61,7 +61,7 @@ def make_job(job_id: int, source_file: str) -> JobDescription:
 
 
 def make_extraction(extraction_id: int, job_id: int) -> JobExtraction:
-    """构造一份v0.8 + Schema V3抽取记录。"""
+    """构造一份v0.9 + Schema V3抽取记录。"""
     return JobExtraction(
         id=extraction_id,
         job_id=job_id,

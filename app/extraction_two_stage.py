@@ -51,6 +51,8 @@ DISCOVERY_SYSTEM_PROMPT = """你是招聘JD结构化分析的第一阶段：全�
 # 判断段Prompt：只做局部语义判断，直接输出完整抽取数据合同。
 # v0.8：基于 v0.7 规则化 Prompt（规则 ID 引用），FIELD-03 熟练度收缩为
 # 三级枚举（unknown/basic/advanced），删除旧五级输出说明。
+# v0.9：统一 any_of 规则——"优先"只决定 preferred，"和/与/并且"默认
+# standalone，仅明确替代关系（至少一种/任一/任选/之一/或）才建 any_of。
 JUDGE_SYSTEM_PROMPT = """你是招聘JD结构化分析的第二阶段：精细判断。输入是第一阶段的候选块列表（每个块含原文连续证据与归属），请对每个候选块做以下判断并输出完整抽取数据合同JSON。规则编号与 P0-1 语义决策规则对应（docs/annotation/）。
 
 【职责边界（RESP-01～RESP-02）】

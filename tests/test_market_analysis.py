@@ -1,7 +1,8 @@
 """验证 app/market_analysis.py：独立JD计数、importance分布、证据追溯与稳定排序。
 
 覆盖：同一 JD 多个实例只计一次；must/preferred/mentioned 分布；来源 JD
-集合与原始 requirement/evidence 可追溯；排序稳定（实例数降序、名称升序）。
+集合与原始 requirement/evidence 可追溯；排序稳定（独立 JD 数降序 →
+实例数降序 → canonical_name 升序）。
 """
 
 from datetime import date
@@ -95,14 +96,14 @@ def seed_batch(session_factory) -> int:
 
         consolidation = JobConsolidation(
             scope_key="all",
-            consolidator_version="test-model|prompt:4.0|schema:2.0",
+            consolidator_version="test-model|prompt:4.1|schema:3.0",
             input_fingerprint="f" * 64,
             extractor_version="test-model|prompt:0.9|schema:3.0",
             selected_job_ids=[jobs[0].id, jobs[1].id],
             extraction_ids=[extractions[0].id, extractions[1].id],
             model_name="test-model",
-            prompt_version="4.0",
-            schema_version="2.0",
+            prompt_version="4.1",
+            schema_version="3.0",
             occurrence_count=4,
             raw_response={},
         )
@@ -310,14 +311,14 @@ def test_sorting_prefers_job_count_over_instance_count(tmp_path: Path) -> None:
 
             consolidation = JobConsolidation(
                 scope_key="all",
-                consolidator_version="test-model|prompt:4.0|schema:2.0",
+                consolidator_version="test-model|prompt:4.1|schema:3.0",
                 input_fingerprint="e" * 64,
                 extractor_version="test-model|prompt:0.9|schema:3.0",
                 selected_job_ids=[jobs[0].id, jobs[1].id, jobs[2].id],
                 extraction_ids=[e.id for e in extractions],
                 model_name="test-model",
-                prompt_version="4.0",
-                schema_version="2.0",
+                prompt_version="4.1",
+                schema_version="3.0",
                 occurrence_count=8,
                 raw_response={},
             )
@@ -445,14 +446,14 @@ def test_importance_job_counts_merge_by_priority(tmp_path: Path) -> None:
 
             consolidation = JobConsolidation(
                 scope_key="all",
-                consolidator_version="test-model|prompt:4.0|schema:2.0",
+                consolidator_version="test-model|prompt:4.1|schema:3.0",
                 input_fingerprint="d" * 64,
                 extractor_version="test-model|prompt:0.9|schema:3.0",
                 selected_job_ids=[jobs[0].id, jobs[1].id],
                 extraction_ids=[e.id for e in extractions],
                 model_name="test-model",
-                prompt_version="4.0",
-                schema_version="2.0",
+                prompt_version="4.1",
+                schema_version="3.0",
                 occurrence_count=3,
                 raw_response={},
             )

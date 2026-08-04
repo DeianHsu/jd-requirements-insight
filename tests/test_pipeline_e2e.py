@@ -375,7 +375,7 @@ def test_consolidate_requires_execute_confirmation(
         cli_module, "OpenAICompatibleConsolidationClient", FakeConsolidationClient
     )
 
-    # 构造一份含 v0.8 抽取结果的数据库，使计划阶段可完成。
+    # 构造一份含 v0.9 抽取结果的数据库，使计划阶段可完成。
     engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
     try:
         initialize_database(engine)

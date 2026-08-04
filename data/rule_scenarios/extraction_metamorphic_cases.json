@@ -97,7 +97,7 @@
     },
     {
       "scenario_id": "SCN-006",
-      "rule_ids": ["FIELD-02"],
+      "rule_ids": ["FIELD-02", "FIELD-03"],
       "base_input": "# 示例岗位\n\n## 岗位职责\n负责能力甲体系建设。\n负责能力乙评测。\n\n## 任职要求\n1. 熟悉编程语言和深度学习框架。\n2. 具备能力丙使用经验者优先。\n3. 本科及以上学历。\n\n## 福利待遇\n五险一金、带薪年假。",
       "transformation": {
         "type": "text_replace",

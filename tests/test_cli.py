@@ -272,7 +272,7 @@ def _seed_validate_batch(tmp_path: Path, monkeypatch) -> None:
                 job_id=1,
                 extractor_version="test-model|prompt:0.9|schema:3.0",
                 model_name="test-model",
-                prompt_version="0.8",
+                prompt_version="0.9",
                 schema_version="3.0",
                 role_family="other",
                 seniority="unknown",

@@ -94,6 +94,6 @@ order transformation result、manual cluster review notes。顺序变形的
 - 旧人工完整标注（`annotation_cases.json`）与 F1 报告是历史材料，不属于
   当前正式验收；
 - 旧抽取版本（v0.6/v0.7/V2.3.1）与旧 Schema V2 数据明确拒绝，要求用
-  v0.8 重新抽取；
+  v0.9 重新抽取；
 - 旧数据库结构不做迁移：备份原始 JD、删除旧派生数据库并重新生成；
 - 已删除的功能（层级关系 P0-4B、职责持久化与评测）不留兼容入口。

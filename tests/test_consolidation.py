@@ -172,7 +172,7 @@ def test_extractor_version_valid_identity_passes() -> None:
 
 
 def test_explicit_extraction_version_is_loaded(tmp_path: Path) -> None:
-    """验证同一JD并存多个版本时显式指定 v0.8 装配；旧版本被拒绝。"""
+    """验证同一JD并存多个版本时显式指定 v0.9 装配；旧版本被拒绝。"""
     engine, session_factory = make_database(tmp_path)
     with session_factory() as session:
         session.add(make_job(1, "job-a.md"))
@@ -198,7 +198,7 @@ def test_explicit_extraction_version_is_loaded(tmp_path: Path) -> None:
 
 
 def test_multiple_common_versions_require_explicit_selection(tmp_path: Path) -> None:
-    """验证 v0.8 与旧版本并存时拒绝隐式选择（须显式指定 v0.8）。"""
+    """验证 v0.9 与旧版本并存时拒绝隐式选择（须显式指定 v0.9）。"""
     _, session_factory = make_database(tmp_path)
     with session_factory() as session:
         session.add(make_job(1, "job-a.md"))
