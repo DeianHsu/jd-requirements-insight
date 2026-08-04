@@ -25,93 +25,69 @@ implementation_baseline: 5c3255e（仓库收缩完成；Git 是当前 HEAD 的�
   验证数据库结构；顺序变形合同违规计入 hard gate）
 - P0-4 小规模预检：`python -m scripts.experiments.p0_4.run_small_scale_precheck --execute`
 
-## 当前数据规模（当前维护环境，本地私有，不入库提交）
+## 当前数据状态（本地私有，不入库提交）
 
-最近一次真实数据准备（2026-08-04，无付费调用）后：
-
-- 当前数据库已使用现行 Schema 创建（六张业务表，无旧表）；
-- 5 份真实 JD 已重新导入 `data/jd_skill_insight.db`（重复导入幂等跳过）；
-- 当前尚无 v0.8 抽取结果；
-- 当前没有归并批次；
+- 数据库已使用现行 Schema 创建（六张业务表，无旧表）；
+- 5 份真实 JD 已导入 `data/jd_skill_insight.db`（重复导入幂等跳过）；
+- **当前无 v0.8 抽取结果（`job_extractions` 与 `job_requirements` 均为空），
+  无归并批次**；
 - 真实 JD 原文属于私有输入（Git 忽略；重新克隆仓库的环境不会包含
   这些私有文件）。
 
-## 已完成的真实验证准备（均无付费调用）
+## P0-3A 验证结果
 
-- P0-3A dry-run 通过：13 个规则场景锚点计划输出，返回成功；
-- P0-3B dry-run 通过：单份（ID 1）与三份（ID 1/2/3）均输出输入
-  fingerprint 与运行计划，返回成功；
-- `extract-jds` 计划模式正确：显示模型名（deepseek-v4-flash）、
-  v0.8 + Schema V3、选中 JD 数与 --execute 提示，不初始化客户端、
-  不产生抽取记录；
-- 全量自动化测试与 Ruff 通过。
+### 原始真实运行（2026-08-04，已授权付费，一次运行）
 
-## P0-3A 验证器定点修复与离线重算（2026-08-04，无付费调用）
+- 环境：deepseek-v4-flash、prompt 0.8、schema 3.0、max_attempts=2、
+  13 场景 × base+transformed 各 1 次；
+- **hard_gate_failures=7，warnings=1，未通过**；
+- 报告：`reports/P0-3/acceptance-20260804-000314-report.json`（脱敏）；
+- 原始响应：`data/private/experiments/p0_3/acceptance-20260804-000314-raw.json`
+  （私有，仅本地分析）。
 
-原始真实运行结果保留不覆盖：`reports/P0-3/acceptance-20260804-000314-report.json`
-（hard_gate_failures=7，warnings=1）。
+### 离线重算（同一批响应，未调用模型，验证器修复+收缩后）
 
-验证器修复（本轮完成）：
+报告：`reports/P0-3/acceptance-20260804-000314-revalidated.json`
 
-- 新增 `evidence_pairing_key()`：NFKC + 空白规范化后只移除开头排版型
-  列表标记（数字+点/顿号、括号数字、中文序号+顿号、短横线/圆点项目
-  符号），保留正文全部语义数字（`3年` vs `5年`、`Python 3` 不受影响）；
-- `_pair_items` 分组键、`_group_ids_of` 组身份、`new_condition_items`
-  判定改用配对键；`new_condition_items` 改为按配对结果（对象身份）
-  判定，拆句场景不再误报新增；
-- fallback 兜底增加语义数字集合兼容检查（3年/5年不得兜底配对）与
-  名称包含规则（文本整体替换但条件名保留时可配对）；
-- 变形块对齐允许一个 variant 块对应多个 base 块（发现段块粒度不同
-  不再静默丢项）；未配对统计改为全局对象身份去重；
-- `group_members_preserved` 的 any_of 组检查改为与块内 any_of 项数
-  比较（块内可混合 standalone）；
-- `group_change_anchor` 识别为元数据键不再产生未知属性 warning，
-  真正未知属性仍 warning；
-- `resolve_property_anchors` 补充解析 `importance_expected_change`
-  的 anchor（此前漏解析导致检查永远失败）。
+- 原 hard gate：7 → **新 hard gate：5**；原 warning：1 → 新 warning：0；
+- 已消除的假阳性：SCN-003/SCN-010 no_new_conditions（evidence 列表
+  序号前缀）、SCN-006 fact_set/importance_expected_change（配对与
+  锚点解析）、SCN-007 group_members_preserved ×2（any_of 检查与块
+  粒度）、SCN-009 no_new_conditions（拆句）、group_change_anchor
+  warning；
+- 剩余 5 个失败全部为真实模型或场景问题（见下）。
 
-离线重算（同一批模型响应，未调用模型）：
-`reports/P0-3/acceptance-20260804-000314-revalidated.json`
+## 已确认的验证器问题（已修复并收缩）
 
-- 原 hard gate：7 → **新 hard gate：4**；原 warning：1 → 新 warning：0；
-- 消除的假阳性：SCN-003 no_new_conditions、SCN-006 fact_set/
-  importance_expected_change、SCN-007 group_members_preserved ×2、
-  SCN-009 no_new_conditions（拆句）、SCN-010 no_new_conditions、
-  group_change_anchor warning；
-- 剩余 4 个失败全部为真实问题：
-  - SCN-006 group_type/group_membership：模型把“有技术甲和框架乙
-    相关项目经验者优先”（“和”关系）建为 any_of 组（真实 GROUP 错误）；
-  - SCN-006 proficiency：模型按规则把“相关项目经验”判 unknown，
-    与场景期望（proficiency 不变）矛盾——场景期望与 Schema V3 规则
-    （项目经验→unknown，见 SCN-013）不一致；
-  - SCN-007/SCN-008 category：占位词（框架乙/技术丙）类别语义不明，
-    category 判定在改名/同词时漂移——场景歧义 + 模型字段稳定性并存。
+- evidence 开头列表标记归一（`1. `/`1、`/`(1) `/`一、`/`- `/`• `）与
+  正文语义数字保留（`3年` vs `5年`、`Python 3` 不被误归并）；
+- 配对依据收敛为可靠语义：归一后 evidence 相同（主分组）、或 raw_name
+  明确包含/相等且无歧义（fallback）；字段（category/importance/
+  proficiency/group_logic）只用于候选排序，不能单独证明同一事实；
+  字段相同但名称无关的项保持 unmatched；
+- `group_change_anchor` 为元数据键（不再产生未知属性 warning）；
+- 块拆分/合并（多对一块对齐）与 any_of+standalone 混合检查正确。
 
-结论：验证器假阳性已与真实模型问题彻底分离。是否需要修改 Prompt：
-仅 SCN-006 的 any_of 建组属于模型规则执行问题（“和”误为“或”），
-其余为场景/协议问题；若需修正，建议新增 GROUP 规则正反例（待独立
-Prompt 版本升级任务）。
+## 剩余模型或场景问题（未修复，待决策）
 
-## 尚未执行的真实验证
+- **SCN-006（真实 GROUP 错误）**：模型把“有技术甲和框架乙相关项目
+  经验者优先”（“和”关系）拆为两项并建 any_of 组；group_type 与
+  group_membership 检查失败。建议独立 Prompt 版本升级任务（新增
+  GROUP 规则正反例：仅“至少一种/任一/或”建 any_of，“和”保持
+  standalone）。
+- **SCN-006（场景期望与规则矛盾）**：场景期望 proficiency 不变，但
+  “相关项目经验”按 Schema V3 规则应判 unknown（SCN-013 同款表达）。
+  模型行为符合规则，需要修正场景期望。
+- **SCN-007/SCN-008（占位词 category 漂移）**：框架乙（other ↔
+  software_engineering）、能力丙使用经验（other ↔ experience）、
+  技术丙/框架丁 改名后 category 判定不稳定。占位词类别语义不明，
+  建议场景词替换为类别明确的中性描述（不删除 category invariance
+  检查）。
 
-- P0-3A 原始运行未通过，验证器修复已完成，重跑待授权；
-- 真实 JD 的 v0.8 + Schema V3 抽取未执行（P0-3B 未执行）；
-- P0-4 归并验收未执行（无 v0.8 抽取结果）；
-- `generate-report` 未实现（P0-5 剩余项）。
+## 下一步
 
-## 当前已知问题
-
-- 模型对“和”关系误建 any_of 组（SCN-006，真实 GROUP 错误，建议
-  Prompt 规则澄清）；
-- SCN-006 场景期望（proficiency 不变）与 Schema V3 规则（项目经验→
-  unknown）矛盾，需要修正场景期望；
-- SCN-007/SCN-008 占位词 category 判定不稳定，建议场景词替换为
-  类别明确的中性描述（不删除 category invariance 检查）。
-
-## 下一步开发任务
-
-1. 根据离线重算结论决定是否提交独立 Prompt 版本升级任务（GROUP
-   规则正反例）与场景期望修正；
+1. 决定是否提交独立 Prompt 版本升级任务（SCN-006 GROUP 规则）与
+   场景期望修正（SCN-006 proficiency、SCN-007/008 占位词）；
 2. 重新执行 P0-3A 规则场景真实验收；
 3. 通过后对单份真实 JD（ID 1）执行 P0-3B；
 4. 单份验证通过后扩大到三份 JD（ID 1/2/3）；

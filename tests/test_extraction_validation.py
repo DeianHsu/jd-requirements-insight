@@ -6,6 +6,8 @@
 
 import json
 
+import pytest
+
 from app.extraction_two_stage import parse_discovery_response
 from app.extraction_validation import (
     RunSnapshot,
@@ -974,13 +976,17 @@ def _req_item(
     )
 
 
-def test_pair_items_evidence_with_number_prefix_pairs() -> None:
+@pytest.mark.parametrize(
+    "prefix",
+    ["", "1. ", "1、", "(1) ", "（1）", "一、", "- ", "\u2022 "],
+)
+def test_pair_items_list_markers_do_not_block_pairing(prefix: str) -> None:
     """同一证据带/不带列表序号前缀必须配对（回归：SCN-003 假阳性根因）。"""
     from app.extraction_validation import _pair_items
 
     base = [
-        ("requirement", 0, _req_item("技术甲", evidence="1. 熟悉技术甲和框架乙")),
-        ("requirement", 1, _req_item("框架乙", evidence="1. 熟悉技术甲和框架乙")),
+        ("requirement", 0, _req_item("技术甲", evidence=prefix + "熟悉技术甲和框架乙")),
+        ("requirement", 1, _req_item("框架乙", evidence=prefix + "熟悉技术甲和框架乙")),
     ]
     variant = [
         ("requirement", 0, _req_item("技术甲", evidence="熟悉技术甲和框架乙")),
@@ -992,19 +998,6 @@ def test_pair_items_evidence_with_number_prefix_pairs() -> None:
     assert len(pairs) == 2
     assert not unmatched_base
     assert not unmatched_variant
-
-
-def test_pair_items_common_list_markers_pair() -> None:
-    """常见列表标记（数字点/顿号/括号/中文序号/短横线/圆点）均可配对。"""
-    from app.extraction_validation import _pair_items
-
-    markers = ["1. ", "1、", "(1) ", "（1）", "一、", "- ", "\u2022 "]
-    for marker in markers:
-        base = [("requirement", 0, _req_item("技术甲", evidence=marker + "熟悉技术甲"))]
-        variant = [("requirement", 0, _req_item("技术甲", evidence="熟悉技术甲"))]
-        pairs, unmatched_base, unmatched_variant = _pair_items(base, variant)
-        assert len(pairs) == 1, f"marker {marker!r} 未配对"
-        assert not unmatched_base and not unmatched_variant, f"marker {marker!r}"
 
 
 def test_pair_items_semantic_numbers_not_normalized() -> None:
@@ -1021,6 +1014,36 @@ def test_pair_items_semantic_numbers_not_normalized() -> None:
     variant = [("requirement", 0, _req_item("Python", evidence="熟悉 Python 3"))]
     pairs, unmatched_base, unmatched_variant = _pair_items(base, variant)
     assert len(pairs) == 1
+
+
+def test_pair_items_unrelated_names_not_paired_even_with_same_fields() -> None:
+    """结构字段完全相同但名称无关（技术甲 vs 平台乙）不得配对。"""
+    from app.extraction_validation import _pair_items
+
+    base = [("requirement", 0, _req_item("技术甲", evidence="熟悉技术甲"))]
+    variant = [("requirement", 0, _req_item("平台乙", evidence="熟悉平台乙"))]
+
+    pairs, unmatched_base, unmatched_variant = _pair_items(base, variant)
+
+    assert not pairs
+    assert unmatched_base and unmatched_variant
+
+
+def test_pair_items_ambiguous_name_containment_not_paired() -> None:
+    """名称包含关系存在歧义（技术甲 vs 技术甲/技术甲相关项目经验）不配对。"""
+    from app.extraction_validation import _pair_items
+
+    base = [("requirement", 0, _req_item("技术甲", evidence="熟悉技术甲"))]
+    variant = [
+        ("requirement", 0, _req_item("技术甲", evidence="熟悉技术甲相关经验")),
+        ("requirement", 1, _req_item("技术甲相关项目经验", evidence="有技术甲相关项目经验")),
+    ]
+
+    pairs, unmatched_base, unmatched_variant = _pair_items(base, variant)
+
+    assert not pairs
+    assert unmatched_base
+    assert len(unmatched_variant) == 2
 
 
 def test_pair_items_same_block_multi_items_not_cross_paired() -> None:
@@ -1082,7 +1105,7 @@ def test_group_change_anchor_is_metadata_not_warning() -> None:
     variant = make_snapshot(result=payload)
 
     comparison = compare_runs(base, variant)
-    failures, warnings = check_scenario_properties(
+    failures, _ = check_scenario_properties(
         comparison,
         {
             "group_logic_changed_to": "any_of",
@@ -1093,7 +1116,6 @@ def test_group_change_anchor_is_metadata_not_warning() -> None:
         changed_regions=frozenset({anchor_ids(RAW_TEXT)[2]}),
     )
     assert failures == []
-    assert not any("group_change_anchor" in w for w in warnings)
 
 
 def test_any_of_group_mixed_with_standalone_no_false_failure() -> None:
@@ -1299,15 +1321,19 @@ def test_compare_split_blocks_to_merged_block_no_item_loss() -> None:
     assert failures == []
 
 
-def test_unknown_scenario_property_still_warns() -> None:
-    """真正未知的期望属性仍产生 warning（与元数据字段区分）。"""
+def test_group_change_anchor_metadata_and_unknown_property_distinguished() -> None:
+    """group_change_anchor 是元数据（无 warning），真正未知属性仍 warning。"""
     base = make_snapshot()
     variant = make_snapshot()
 
     _, warnings = check_scenario_properties(
         compare_runs(base, variant),
-        {"totally_unknown_property": True},
+        {
+            "group_change_anchor": "熟悉技术甲和框架乙",
+            "totally_unknown_property": True,
+        },
     )
+    assert not any("group_change_anchor" in w for w in warnings)
     assert any("totally_unknown_property" in w for w in warnings)
 
 

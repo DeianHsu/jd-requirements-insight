@@ -690,39 +690,63 @@ def _pair_items(
         fallback_candidates = []
         for base_position, (_, base_entry) in enumerate(remaining_base):
             for variant_position, (_, variant_entry) in enumerate(remaining_variant):
-                # 语义数字兼容检查：evidence 数字串集合不同（如 3年 vs 5年）
-                # 不得兜底配对；集合相同（如 熟悉→精通 无数字）才允许。
-                if _evidence_digits(base_entry[2].evidence) != _evidence_digits(
-                    variant_entry[2].evidence
+                base_item = base_entry[2]
+                variant_item = variant_entry[2]
+                if not isinstance(base_item, RequirementItem) or not isinstance(
+                    variant_item, RequirementItem
+                ):
+                    continue
+                # 语义数字兼容：evidence 数字串集合不同（如 3年 vs 5年）
+                # 不得兜底配对。
+                if _evidence_digits(base_item.evidence) != _evidence_digits(
+                    variant_item.evidence
+                ):
+                    continue
+                # 可靠语义依据：raw_name 有明确包含/相等关系（文本整体替换
+                # 但条件名保留，如 "熟悉技术甲" → "有技术甲相关项目经验者
+                # 优先"）。category/importance/proficiency/group_logic 不能
+                # 证明同一事实，只用于合法候选之间排序。
+                base_label = item_label(base_item)
+                variant_label = item_label(variant_item)
+                if not base_label or not variant_label:
+                    continue
+                if not (
+                    base_label in variant_label or variant_label in base_label
                 ):
                     continue
                 score = _pair_score(
-                    base_entry[2],
-                    variant_entry[2],
+                    base_item,
+                    variant_item,
                     base_group_ids,
                     variant_group_ids,
                 )
-                if score >= 2.2:  # 至少两个字段一致（含 0.2 名称辅助）
-                    fallback_candidates.append((score, base_position, variant_position))
-                    continue
-                # 名称身份兜底：文本整体替换但条件名保留（如 "熟悉技术甲"
-                # → "有技术甲相关项目经验者优先"）时，名称包含 + 类别一致
-                # + 数字集合相同即可配对（名称不单独决定配对）。
-                base_item = base_entry[2]
-                variant_item = variant_entry[2]
-                if (
-                    isinstance(base_item, RequirementItem)
-                    and isinstance(variant_item, RequirementItem)
-                    and base_item.category == variant_item.category
-                ):
-                    base_label = item_label(base_item)
-                    variant_label = item_label(variant_item)
-                    if base_label and variant_label and (
-                        base_label in variant_label or variant_label in base_label
-                    ):
-                        fallback_candidates.append(
-                            (0.0 + score, base_position, variant_position)
-                        )
+                fallback_candidates.append((score, base_position, variant_position))
+
+        # 歧义防护：同一项与多个候选存在名称包含关系时（如 "技术甲" 同时
+        # 是 "技术甲" 与 "技术甲相关项目经验" 的子串），全部不配对，宁可
+        # 保持 unmatched。
+        base_degree: dict[int, int] = {}
+        variant_degree: dict[int, int] = {}
+        for _, base_position, variant_position in fallback_candidates:
+            base_degree[base_position] = base_degree.get(base_position, 0) + 1
+            variant_degree[variant_position] = variant_degree.get(
+                variant_position, 0
+            ) + 1
+        ambiguous = {
+            position
+            for position, degree in base_degree.items()
+            if degree > 1
+        } | {
+            position
+            for position, degree in variant_degree.items()
+            if degree > 1
+        }
+        fallback_candidates = [
+            (score, base_position, variant_position)
+            for score, base_position, variant_position in fallback_candidates
+            if base_position not in ambiguous
+            and variant_position not in ambiguous
+        ]
         for _, base_position, variant_position in sorted(
             fallback_candidates, key=lambda item: (-item[0], item[1], item[2])
         ):
