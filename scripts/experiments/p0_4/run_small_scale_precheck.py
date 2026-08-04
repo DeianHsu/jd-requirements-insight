@@ -99,6 +99,13 @@ def main() -> int:
         help="抽取器版本；缺省使用当前唯一配置 v0.10 + Schema V3",
     )
     parser.add_argument(
+        "--job-ids",
+        type=int,
+        nargs="*",
+        default=None,
+        help="只预检指定JD；缺省为全部",
+    )
+    parser.add_argument(
         "--target-size",
         type=int,
         default=75,
@@ -142,7 +149,9 @@ def main() -> int:
             session_factory = create_session_factory(engine)
             with session_factory() as session:
                 selection = load_consolidation_selection(
-                    session, extractor_version=args.extractor_version
+                    session,
+                    job_ids=set(args.job_ids) if args.job_ids else None,
+                    extractor_version=args.extractor_version,
                 )
         except RuntimeError as exc:
             # 数据库结构门禁错误：旧库/残缺库才提示重建。
