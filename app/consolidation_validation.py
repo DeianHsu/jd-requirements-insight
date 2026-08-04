@@ -182,32 +182,24 @@ def validate_contract(
     )
 
 
-def validate_persisted_consistency(
-    persisted: PersistedConsolidationResult,
+def validate_exact_identity(
+    result: RequirementConsolidationResult,
+    expected_ids: set[int],
 ) -> list[str]:
-    """校验持久化批次与真实输入集合的一致性，返回违规列表。
+    """以真实输入 ID 集合为真值，校验结果的精确覆盖与归属一致性。
 
-    使用批次记录回查得到的 expected_requirement_ids 作为真值：
+    返回违规列表（空列表 = 通过）。检查：
 
-    - record.occurrence_count == len(expected_requirement_ids)；
-    - mapping requirement ID 集合 == expected_requirement_ids；
-    - 全部 source_requirement_ids 的并集 == expected_requirement_ids；
+    - mapping requirement ID 集合 == expected_ids；
+    - 全部 source_requirement_ids 的并集 == expected_ids；
     - 每个 source_requirement_id 只出现一次；
-    - mapping 的 canonical 归属 == source_requirement_ids 声明的归属。
-
-    不重新构造抽取输入；本函数是面向 persisted result 的轻量确定性
-    验证。
+    - mapping 的 canonical 归属 == source_requirement_ids 声明的归属；
+    - 不存在未知 requirement ID 或未知 canonical 引用。
     """
     failures: list[str] = []
-    expected = persisted.expected_requirement_ids
+    expected = set(expected_ids)
 
-    if persisted.occurrence_count != len(expected):
-        failures.append(
-            f"occurrence_count 与真实输入不一致："
-            f"{persisted.occurrence_count} != {len(expected)}"
-        )
-
-    mapping_ids = {mapping.requirement_id for mapping in persisted.result.mappings}
+    mapping_ids = {mapping.requirement_id for mapping in result.mappings}
     missing_mappings = sorted(expected - mapping_ids)
     unexpected_mappings = sorted(mapping_ids - expected)
     if missing_mappings:
@@ -216,7 +208,7 @@ def validate_persisted_consistency(
         failures.append(f"多余 mapping requirement_id：{unexpected_mappings}")
 
     declared: dict[int, str] = {}
-    for canonical in persisted.result.canonical_requirements:
+    for canonical in result.canonical_requirements:
         for requirement_id in canonical.source_requirement_ids:
             if requirement_id in declared:
                 failures.append(
@@ -231,7 +223,14 @@ def validate_persisted_consistency(
     if unknown_source:
         failures.append(f"来源分区包含未知 requirement_id：{unknown_source}")
 
-    for mapping in persisted.result.mappings:
+    known_canonical_ids = {
+        item.canonical_requirement_id for item in result.canonical_requirements
+    }
+    for mapping in result.mappings:
+        if mapping.canonical_requirement_id not in known_canonical_ids:
+            failures.append(
+                f"mapping 引用未知 canonical：{mapping.canonical_requirement_id}"
+            )
         declared_canonical = declared.get(mapping.requirement_id)
         if mapping.canonical_requirement_id != declared_canonical:
             failures.append(
@@ -239,6 +238,38 @@ def validate_persisted_consistency(
                 f"（mapping→{mapping.canonical_requirement_id}，"
                 f"来源→{declared_canonical}）"
             )
+    return failures
+
+
+def result_fingerprint(result: RequirementConsolidationResult) -> str:
+    """规范化结果的确定性指纹（用于审核与定稿绑定）。"""
+    import hashlib
+
+    payload = json.dumps(
+        result.model_dump(mode="json"), ensure_ascii=False, sort_keys=True
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def validate_persisted_consistency(
+    persisted: PersistedConsolidationResult,
+) -> list[str]:
+    """校验持久化批次与真实输入集合的一致性，返回违规列表。
+
+    使用批次记录回查得到的 expected_requirement_ids 作为真值，
+    复用 validate_exact_identity 的精确 ID 校验，并额外核对
+    occurrence_count 记录。
+    """
+    failures: list[str] = []
+    expected = persisted.expected_requirement_ids
+
+    if persisted.occurrence_count != len(expected):
+        failures.append(
+            f"occurrence_count 与真实输入不一致："
+            f"{persisted.occurrence_count} != {len(expected)}"
+        )
+
+    failures.extend(validate_exact_identity(persisted.result, expected))
     return failures
 
 

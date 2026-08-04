@@ -30,9 +30,39 @@ updated_at: 2026-08-04
 - 5 份真实 JD 已导入 `data/jd_skill_insight.db`（重复导入幂等跳过）；
 - **已持久化正式抽取结果：JD 1/2/3**（deepseek-v4-flash、
   `prompt:0.10|schema:3.0`，要求数 37/30/16，幂等已验证）；
-- **无归并批次**（P0-4 未执行）；
+- **已持久化正式归并批次：1 份**（job_ids=1,2,3，83 条精确覆盖，
+  deepseek-v4-flash `prompt:4.3|schema:3.0`，来源 run-1 + 人工审核决定）；
 - 真实 JD 原文属于私有输入（Git 忽略；重新克隆仓库的环境不会包含
   这些私有文件）。
+
+## P0-4 要求归并定稿（2026-08-05，离线完成）
+
+- **Prompt 基线冻结为 4.3**：比较 4.2（Jaccard 64/50/73/78）与 4.3
+  （60/70/58/43）；4.3 明确修复两个重要错误（56/74 AI/LLM 落地经验
+  漏并、71/72 LangChain/AutoGen 错误合并），因此保留 4.3，不再继续
+  调整 Prompt；
+- **验收**（3 次独立运行 + 顺序变形）：coverage=100%、结构违规=0；
+  稳定对 6 个（3/3 次同簇），不稳定对 6 个；
+- **业务影响稳定性分析**：`reports/P0-4/stability-report.json`（脱敏，
+  只含 ID 与统计）、`data/private/experiments/P0-4/stability-analysis.json`
+  （含名称/evidence）；
+- **人工裁决**：`data/private/experiments/P0-4/review-decisions.json`
+  （私有，与输入指纹绑定）——must-link 4 组（5-46、11-43、23-27-53-81、
+  17-45），cannot-link 1 组（71-72）；团队协作 canonical 的 JD 覆盖数
+  由裁决确定为 3，不再依赖随机运行；
+- **确定性应用**：`apply_review_decisions.py` 从验收运行 run-1 生成
+  最终结果（canonical=72、mappings=83、coverage=1.0、结构违规=0），
+  记录来源运行指纹与审核决定文件指纹；
+- **定稿安全门**：`finalize_consolidation.py` 核对报告↔raw 全部身份
+  （input_fingerprint/extractor/model/prompt/schema/selected_job_ids/
+  run_count）、审核绑定（approved_run_index + approved_result_fingerprint）、
+  精确 ID 覆盖（数量相同但 ID 被替换也拒绝）；批次 raw_response 记录
+  review_decisions_fingerprint；
+- **离线归并验证**：持久化批次精确 ID 一致性检查通过（83 条全覆盖、
+  无缺失/多余/重复归属/归属冲突）；重复定稿幂等（仅 1 份批次）；
+- **范围声明**：当前只证明 3 份 JD（83 条实例）范围的归并质量；
+  15～20 份 JD 扩展仍需分阶段验证（新增 JD 会引入新的边界对，需
+  重新走稳定性分析 + 人工裁决流程）。
 
 ## P0-3A 规则场景验收（2026-08-04，已授权付费）
 
@@ -71,12 +101,12 @@ hard gate=0）与 P0-3B（JD 1/2/3 累计 hard gate=0、人工审计无阻塞
 
 ## 下一步
 
-1. 执行 P0-4 小规模预检（按真实 requirement instance 数量选择
-   target-size，不超过实际可用数量）；
-2. 执行 P0-4 正式验收（coverage=100%、结构违规=0、顺序变形无合同
-   失败、人工检查所有多成员 cluster）；
-3. 生成并离线验证正式归并批次；
-4. 实现 `generate-report`（市场统计 + 证据追溯 Markdown 报告）。
+1. **进入报告生成前验证**：确认不进入 P0-6/报告生成模块（模块边界
+   约束：定稿后先做下游统计冒烟验证，再实现 `generate-report`）；
+2. 实现 `generate-report`（市场统计 + 证据追溯 Markdown 报告，基于
+   已定稿的 83 条归并批次）；
+3. 若扩展到 15～20 份 JD：分阶段重新走稳定性分析 + 人工裁决流程
+   （当前只证明 3 份 JD 范围）。
 
 ## 付费与私有数据依赖
 

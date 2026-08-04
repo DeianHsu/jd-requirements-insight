@@ -134,6 +134,7 @@ def _valid_result() -> RequirementConsolidationResult:
 def _write_inputs(tmp_path: Path, database_path: Path) -> tuple[Path, Path]:
     """写验收报告与私有原始结果，返回（report_path, raw_path）。"""
     from app.consolidation import load_consolidation_selection
+    from app.consolidation_validation import result_fingerprint
 
     engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
     try:
@@ -142,18 +143,36 @@ def _write_inputs(tmp_path: Path, database_path: Path) -> tuple[Path, Path]:
             selection = load_consolidation_selection(session, job_ids={1})
             fingerprint = selection.input_fingerprint
             extractor_version = selection.extractor_version
+            instance_count = len(selection.consolidation_input.occurrences)
     finally:
         engine.dispose()
+
+    valid_result = _valid_result().model_dump(mode="json")
+    run_fingerprint = result_fingerprint(_valid_result())
 
     report_path = tmp_path / "report.json"
     report_path.write_text(
         json.dumps(
             {
+                "input_identity": {
+                    "model": "test-model",
+                    "prompt_version": CONSOLIDATION_PROMPT_VERSION,
+                    "schema_version": CONSOLIDATION_SCHEMA_VERSION,
+                    "extractor_version": extractor_version,
+                    "input_fingerprint": fingerprint,
+                    "instance_count": instance_count,
+                    "job_count": 1,
+                    "selected_job_ids": [1],
+                },
+                "p0_4_stability": {"run_count": 1},
                 "hard_gate_failures": [],
                 "manual_cluster_review": {
                     "clusters": [],
                     "reviewed_by": "tester",
                     "reviewed_at": "2026-08-04T00:00:00+00:00",
+                    "approved_run_index": 0,
+                    "approved_result_fingerprint": run_fingerprint,
+                    "conclusion": "ok",
                     "notes": "ok",
                 },
             },
@@ -168,14 +187,20 @@ def _write_inputs(tmp_path: Path, database_path: Path) -> tuple[Path, Path]:
                 "extractor_version": extractor_version,
                 "input_fingerprint": fingerprint,
                 "selected_job_ids": [1],
+                "model": "test-model",
+                "prompt_version": CONSOLIDATION_PROMPT_VERSION,
+                "schema_version": CONSOLIDATION_SCHEMA_VERSION,
+                "run_count": 1,
                 "runs": [
                     {
+                        "run_identifier": "run-0",
+                        "result_fingerprint": run_fingerprint,
                         "metadata": {
                             "model": "test-model",
                             "prompt_version": CONSOLIDATION_PROMPT_VERSION,
                             "schema_version": CONSOLIDATION_SCHEMA_VERSION,
                         },
-                        "result": _valid_result().model_dump(mode="json"),
+                        "result": valid_result,
                         "raw_response": {
                             "model_response": {"canonical_requirements": []},
                             "attempt_count": 1,
@@ -271,6 +296,214 @@ def test_finalize_rejects_unreviewed_run(monkeypatch, tmp_path) -> None:
     assert _run_finalize(monkeypatch, tmp_path, report_path, raw_path, db_path) == 1
 
 
+def _run_apply_review_decisions(monkeypatch, tmp_path, raw_path, decisions_path, db_path) -> int:
+    import scripts.experiments.p0_4.apply_review_decisions as apply_script
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "apply_review_decisions",
+            "--raw-output",
+            str(raw_path),
+            "--review-decisions",
+            str(decisions_path),
+            "--run-index",
+            "0",
+            "--output",
+            str(tmp_path / "final.json"),
+            "--report",
+            str(tmp_path / "final-summary.json"),
+            "--database-url",
+            f"sqlite:///{db_path.as_posix()}",
+        ],
+    )
+    return apply_script.main()
+
+
+def test_apply_review_decisions_must_link_merges_canonicals(
+    monkeypatch, tmp_path
+) -> None:
+    """must-link 把两个 singleton 合并为同一 canonical 并重建 mappings。"""
+    db_path = tmp_path / "finalize.db"
+    _seed_database(db_path)
+    _, raw_path = _write_inputs(tmp_path, db_path)
+    decisions_path = tmp_path / "decisions.json"
+    decisions_path.write_text(
+        json.dumps(
+            {
+                "input_fingerprint": json.loads(
+                    raw_path.read_text(encoding="utf-8")
+                )["input_fingerprint"],
+                "extractor_version": "test-model|prompt:0.10|schema:3.0",
+                "selected_job_ids": [1],
+                "model": "test-model",
+                "prompt_version": CONSOLIDATION_PROMPT_VERSION,
+                "schema_version": CONSOLIDATION_SCHEMA_VERSION,
+                "reviewed_by": "tester",
+                "reviewed_at": "2026-08-04T00:00:00+00:00",
+                "decisions": [
+                    {
+                        "decision": "must_link",
+                        "requirement_ids": [2, 3],
+                        "rationale": "测试合并",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        _run_apply_review_decisions(
+            monkeypatch, tmp_path, raw_path, decisions_path, db_path
+        )
+        == 0
+    )
+
+    final = json.loads(
+        (tmp_path / "final.json").read_text(encoding="utf-8")
+    )
+    result = final["result"]
+    member_to_cid = {
+        rid: c["canonical_requirement_id"]
+        for c in result["canonical_requirements"]
+        for rid in c["source_requirement_ids"]
+    }
+    assert member_to_cid[2] == member_to_cid[3]  # 合并
+    assert member_to_cid[1] != member_to_cid[2]  # 其余不受影响
+    assert len(result["mappings"]) == 3
+    assert final["source_run_identifier"] == "run-0"
+    assert final["review_decisions_fingerprint"]
+
+
+def test_apply_review_decisions_cannot_link_splits_canonical(
+    monkeypatch, tmp_path
+) -> None:
+    """cannot-link 把同 canonical 的成员拆成独立 singleton。"""
+    db_path = tmp_path / "finalize.db"
+    _seed_database(db_path)
+    _, raw_path = _write_inputs(tmp_path, db_path)
+    raw = json.loads(raw_path.read_text(encoding="utf-8"))
+    # 先把 2、3 归入同一 canonical（cr-2），再验证 cannot-link 拆开。
+    raw["runs"][0]["result"]["canonical_requirements"] = [
+        raw["runs"][0]["result"]["canonical_requirements"][0],
+        {
+            "canonical_requirement_id": "cr-2",
+            "canonical_name": "数据分析经验与学历",
+            "source_requirement_ids": [2, 3],
+            "rationale": "测试",
+            "confidence": 0.9,
+        },
+    ]
+    raw["runs"][0]["result"]["mappings"] = [
+        {
+            "requirement_id": 1,
+            "canonical_requirement_id": "cr-1",
+            "rationale": "测试",
+            "confidence": 0.9,
+        },
+        {
+            "requirement_id": 2,
+            "canonical_requirement_id": "cr-2",
+            "rationale": "测试",
+            "confidence": 0.9,
+        },
+        {
+            "requirement_id": 3,
+            "canonical_requirement_id": "cr-2",
+            "rationale": "测试",
+            "confidence": 0.9,
+        },
+    ]
+    from app.consolidation_validation import result_fingerprint
+    from app.requirement_consolidation import RequirementConsolidationResult
+
+    raw["runs"][0]["result_fingerprint"] = result_fingerprint(
+        RequirementConsolidationResult.model_validate(raw["runs"][0]["result"])
+    )
+    raw_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+
+    decisions_path = tmp_path / "decisions.json"
+    decisions_path.write_text(
+        json.dumps(
+            {
+                "input_fingerprint": raw["input_fingerprint"],
+                "extractor_version": raw["extractor_version"],
+                "selected_job_ids": [1],
+                "model": "test-model",
+                "prompt_version": CONSOLIDATION_PROMPT_VERSION,
+                "schema_version": CONSOLIDATION_SCHEMA_VERSION,
+                "reviewed_by": "tester",
+                "reviewed_at": "2026-08-04T00:00:00+00:00",
+                "decisions": [
+                    {
+                        "decision": "cannot_link",
+                        "requirement_ids": [2, 3],
+                        "rationale": "测试拆分",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        _run_apply_review_decisions(
+            monkeypatch, tmp_path, raw_path, decisions_path, db_path
+        )
+        == 0
+    )
+
+    final = json.loads(
+        (tmp_path / "final.json").read_text(encoding="utf-8")
+    )
+    result = final["result"]
+    member_to_cid = {
+        rid: c["canonical_requirement_id"]
+        for c in result["canonical_requirements"]
+        for rid in c["source_requirement_ids"]
+    }
+    assert member_to_cid[2] != member_to_cid[3]  # 已拆开
+    assert len(result["mappings"]) == 3
+
+
+def test_apply_review_decisions_rejects_identity_mismatch(
+    monkeypatch, tmp_path
+) -> None:
+    """审核决定文件与 raw 输入指纹不一致时拒绝应用。"""
+    db_path = tmp_path / "finalize.db"
+    _seed_database(db_path)
+    _, raw_path = _write_inputs(tmp_path, db_path)
+    decisions_path = tmp_path / "decisions.json"
+    decisions_path.write_text(
+        json.dumps(
+            {
+                "input_fingerprint": "f" * 64,
+                "extractor_version": "test-model|prompt:0.10|schema:3.0",
+                "selected_job_ids": [1],
+                "model": "test-model",
+                "prompt_version": CONSOLIDATION_PROMPT_VERSION,
+                "schema_version": CONSOLIDATION_SCHEMA_VERSION,
+                "reviewed_by": "tester",
+                "reviewed_at": "2026-08-04T00:00:00+00:00",
+                "decisions": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        _run_apply_review_decisions(
+            monkeypatch, tmp_path, raw_path, decisions_path, db_path
+        )
+        == 1
+    )
+
+
 def test_finalize_rejects_incomplete_coverage(monkeypatch, tmp_path) -> None:
     """来源分区不完整（coverage < 100%）时拒绝定稿。"""
     db_path = tmp_path / "finalize.db"
@@ -278,6 +511,65 @@ def test_finalize_rejects_incomplete_coverage(monkeypatch, tmp_path) -> None:
     report_path, raw_path = _write_inputs(tmp_path, db_path)
     raw = json.loads(raw_path.read_text(encoding="utf-8"))
     raw["runs"][0]["result"]["mappings"] = raw["runs"][0]["result"]["mappings"][:2]
+    raw_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+
+    assert _run_finalize(monkeypatch, tmp_path, report_path, raw_path, db_path) == 1
+
+
+def test_finalize_rejects_swapped_ids_same_count(monkeypatch, tmp_path) -> None:
+    """数量相同但 mapping ID 被替换（把 2 换成 999）时拒绝定稿。"""
+    from app.consolidation_validation import result_fingerprint
+
+    db_path = tmp_path / "finalize.db"
+    _seed_database(db_path)
+    report_path, raw_path = _write_inputs(tmp_path, db_path)
+    raw = json.loads(raw_path.read_text(encoding="utf-8"))
+    for mapping in raw["runs"][0]["result"]["mappings"]:
+        if mapping["requirement_id"] == 2:
+            mapping["requirement_id"] = 999
+    raw["runs"][0]["result_fingerprint"] = result_fingerprint(
+        __import__(
+            "app.requirement_consolidation",
+            fromlist=["RequirementConsolidationResult"],
+        ).RequirementConsolidationResult.model_validate(
+            raw["runs"][0]["result"]
+        )
+    )
+    raw_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+
+    assert _run_finalize(monkeypatch, tmp_path, report_path, raw_path, db_path) == 1
+
+
+def test_finalize_rejects_report_with_foreign_raw(monkeypatch, tmp_path) -> None:
+    """已审核报告与另一份 raw 组合（身份字段不一致）时拒绝定稿。"""
+    db_path = tmp_path / "finalize.db"
+    _seed_database(db_path)
+    report_path, raw_path = _write_inputs(tmp_path, db_path)
+    raw = json.loads(raw_path.read_text(encoding="utf-8"))
+    raw["model"] = "other-model"  # 报告身份仍为 test-model
+    raw_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+
+    assert _run_finalize(monkeypatch, tmp_path, report_path, raw_path, db_path) == 1
+
+
+def test_finalize_rejects_unapproved_run_index(monkeypatch, tmp_path) -> None:
+    """审核批准 run0 而 --run-index 选择 run1 时拒绝定稿。"""
+    from app.consolidation_validation import result_fingerprint
+
+    db_path = tmp_path / "finalize.db"
+    _seed_database(db_path)
+    report_path, raw_path = _write_inputs(tmp_path, db_path)
+    raw = json.loads(raw_path.read_text(encoding="utf-8"))
+    second = json.loads(json.dumps(raw["runs"][0]))
+    second["run_identifier"] = "run-1"
+    second["result_fingerprint"] = result_fingerprint(
+        __import__(
+            "app.requirement_consolidation",
+            fromlist=["RequirementConsolidationResult"],
+        ).RequirementConsolidationResult.model_validate(second["result"])
+    )
+    raw["runs"].append(second)
+    raw["run_count"] = 2
     raw_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
 
     assert _run_finalize(monkeypatch, tmp_path, report_path, raw_path, db_path) == 1

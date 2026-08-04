@@ -34,6 +34,7 @@ from app.consolidation_validation import (
     build_acceptance_report,
     mapping_clusters,
     positive_pair_jaccard,
+    result_fingerprint,
     singleton_and_canonical_drift,
     validate_contract,
     write_acceptance_report,
@@ -343,6 +344,7 @@ def main() -> int:
             "input_fingerprint": selection.input_fingerprint,
             "instance_count": len(consolidation_input.occurrences),
             "job_count": len(job_ids),
+            "selected_job_ids": sorted(job_ids),
         },
         contract=contract_violations[0],
         stability={
@@ -372,10 +374,15 @@ def main() -> int:
         ],
     )
     # 人工复核记录：cluster 成员清单与人工检查确认字段。
+    # approved_run_index / approved_result_fingerprint 由人工审核时填写，
+    # 定稿时核对被选运行，不得只凭 reviewed_by 放行任意 run。
     report["manual_cluster_review"] = {
         "clusters": cluster_members,
         "reviewed_by": None,
         "reviewed_at": None,
+        "approved_run_index": None,
+        "approved_result_fingerprint": None,
+        "conclusion": "",
         "notes": "",
     }
     write_acceptance_report(report, args.report)
@@ -388,13 +395,21 @@ def main() -> int:
 
     # 原始运行结果（含证据）只写私有位置：独立运行 + 顺序变形运行
     # （模型身份、规范化结果、成功响应、输入顺序种子，供离线分析）。
+    # 顶层身份字段与每 run 的 run_identifier / result_fingerprint 供
+    # 定稿时与验收报告精确核对，拒绝报告与 raw 错配。
     args.raw_output.parent.mkdir(parents=True, exist_ok=True)
     raw_payload: dict[str, object] = {
         "extractor_version": selection.extractor_version,
         "input_fingerprint": selection.input_fingerprint,
-        "selected_job_ids": job_ids,
+        "selected_job_ids": sorted(job_ids),
+        "model": runs[0]["metadata"].model_name,
+        "prompt_version": runs[0]["metadata"].prompt_version,
+        "schema_version": runs[0]["metadata"].schema_version,
+        "run_count": len(runs),
         "runs": [
             {
+                "run_identifier": f"run-{index}",
+                "result_fingerprint": result_fingerprint(run["result"]),
                 "metadata": {
                     "model": run["metadata"].model_name,
                     "prompt_version": run["metadata"].prompt_version,
@@ -403,7 +418,7 @@ def main() -> int:
                 "result": run["result"].model_dump(mode="json"),
                 "raw_response": run["raw"],
             }
-            for run in runs
+            for index, run in enumerate(runs)
         ],
     }
     if order_result is not None and order_metadata is not None:
