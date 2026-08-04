@@ -96,7 +96,7 @@ def seed_batch(session_factory) -> int:
 
         consolidation = JobConsolidation(
             scope_key="all",
-            consolidator_version="test-model|prompt:4.2|schema:3.0",
+            consolidator_version="test-model|prompt:4.3|schema:3.0",
             input_fingerprint="f" * 64,
             extractor_version="test-model|prompt:0.10|schema:3.0",
             selected_job_ids=[jobs[0].id, jobs[1].id],
@@ -311,7 +311,7 @@ def test_sorting_prefers_job_count_over_instance_count(tmp_path: Path) -> None:
 
             consolidation = JobConsolidation(
                 scope_key="all",
-                consolidator_version="test-model|prompt:4.2|schema:3.0",
+                consolidator_version="test-model|prompt:4.3|schema:3.0",
                 input_fingerprint="e" * 64,
                 extractor_version="test-model|prompt:0.10|schema:3.0",
                 selected_job_ids=[jobs[0].id, jobs[1].id, jobs[2].id],
@@ -446,7 +446,7 @@ def test_importance_job_counts_merge_by_priority(tmp_path: Path) -> None:
 
             consolidation = JobConsolidation(
                 scope_key="all",
-                consolidator_version="test-model|prompt:4.2|schema:3.0",
+                consolidator_version="test-model|prompt:4.3|schema:3.0",
                 input_fingerprint="d" * 64,
                 extractor_version="test-model|prompt:0.10|schema:3.0",
                 selected_job_ids=[jobs[0].id, jobs[1].id],

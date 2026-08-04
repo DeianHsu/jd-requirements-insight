@@ -339,7 +339,7 @@ def test_old_consolidator_version_does_not_share_idempotency(
         )
     assert versions == {
         "test-model|prompt:4.0|schema:2.0",
-        "test-model|prompt:4.2|schema:3.0",
+        "test-model|prompt:4.3|schema:3.0",
     }
 
 

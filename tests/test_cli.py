@@ -307,7 +307,7 @@ def _seed_validate_batch(tmp_path: Path, monkeypatch) -> None:
         )
         record = JobConsolidation(
             scope_key="all",
-            consolidator_version="test-model|prompt:4.2|schema:3.0",
+            consolidator_version="test-model|prompt:4.3|schema:3.0",
             input_fingerprint="b" * 64,
             extractor_version="test-model|prompt:0.10|schema:3.0",
             selected_job_ids=[1],
