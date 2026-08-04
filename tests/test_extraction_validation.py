@@ -1046,6 +1046,33 @@ def test_pair_items_ambiguous_name_containment_not_paired() -> None:
     assert len(unmatched_variant) == 2
 
 
+def test_pair_items_ambiguity_filter_keeps_unrelated_namespace_pair() -> None:
+    """base 侧歧义位置与 variant 侧合法配对位置数字相同时，合法配对保留。"""
+    from app.extraction_validation import _pair_items
+
+    # base 位置 1（框架乙）有两个名称包含候选（歧义）；
+    # variant 位置 1（平台丙）是另一条唯一合法配对，不得被误删。
+    base = [
+        ("requirement", 0, _req_item("技术甲", evidence="熟悉技术甲")),
+        ("requirement", 1, _req_item("框架乙", evidence="熟悉框架乙")),
+        ("requirement", 2, _req_item("平台丙", evidence="熟悉平台丙")),
+    ]
+    variant = [
+        ("requirement", 0, _req_item("技术甲", evidence="熟悉技术甲相关经验")),
+        ("requirement", 1, _req_item("平台丙", evidence="熟悉平台丙相关经验")),
+        ("requirement", 2, _req_item("框架乙", evidence="熟悉框架乙相关经验")),
+        ("requirement", 3, _req_item("框架乙相关项目经验", evidence="有框架乙相关项目经验")),
+    ]
+
+    pairs, unmatched_base, unmatched_variant = _pair_items(base, variant)
+
+    # 歧义项（base 位置 1 的两个候选）被过滤，唯一合法配对保留。
+    assert (0, 0) in pairs  # 技术甲 ↔ 技术甲
+    assert (2, 1) in pairs  # 平台丙 ↔ 平台丙（variant 位置 1）
+    assert len(pairs) == 2
+    assert not any(i == 1 for i, _ in pairs)  # base 歧义位置不产生配对
+
+
 def test_pair_items_same_block_multi_items_not_cross_paired() -> None:
     """同块多个字段相近的要求不得因字段相同而错误交叉配对。"""
     from app.extraction_validation import _pair_items

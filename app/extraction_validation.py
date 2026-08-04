@@ -724,7 +724,8 @@ def _pair_items(
 
         # 歧义防护：同一项与多个候选存在名称包含关系时（如 "技术甲" 同时
         # 是 "技术甲" 与 "技术甲相关项目经验" 的子串），全部不配对，宁可
-        # 保持 unmatched。
+        # 保持 unmatched。base 与 variant 的位置索引属于不同命名空间，
+        # 必须分别维护，避免数字相同但互不相关的合法配对被误删。
         base_degree: dict[int, int] = {}
         variant_degree: dict[int, int] = {}
         for _, base_position, variant_position in fallback_candidates:
@@ -732,11 +733,12 @@ def _pair_items(
             variant_degree[variant_position] = variant_degree.get(
                 variant_position, 0
             ) + 1
-        ambiguous = {
+        ambiguous_base = {
             position
             for position, degree in base_degree.items()
             if degree > 1
-        } | {
+        }
+        ambiguous_variant = {
             position
             for position, degree in variant_degree.items()
             if degree > 1
@@ -744,8 +746,8 @@ def _pair_items(
         fallback_candidates = [
             (score, base_position, variant_position)
             for score, base_position, variant_position in fallback_candidates
-            if base_position not in ambiguous
-            and variant_position not in ambiguous
+            if base_position not in ambiguous_base
+            and variant_position not in ambiguous_variant
         ]
         for _, base_position, variant_position in sorted(
             fallback_candidates, key=lambda item: (-item[0], item[1], item[2])
