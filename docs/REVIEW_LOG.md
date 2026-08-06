@@ -1,17 +1,10 @@
 # 评审日志（Review Log）
 
-供外部 Reviewer（如 ChatGPT）读取的每轮执行摘要。按轮次追加，不覆盖
-历史。项目状态以 `docs/CURRENT_STATE.md` / `docs/PROJECT_PLAN.md` 为准。
+最近一次任务的执行摘要，供外部 Reviewer（如 ChatGPT）读取。每次任务
+完成时覆盖更新，只保留最新一轮；历史由 Git 保存。项目状态以
+`docs/CURRENT_STATE.md` / `docs/PROJECT_PLAN.md` 为准。
 
-## 轮次索引
-
-| 日期 | 轮次 | 摘要 |
-|---|---|---|
-| 2026-08-07 | 第五轮 | 评审 P0-1/P0-2 收口：finalize 旧格式通道关闭 + backfill 重放式安全门 |
-
----
-
-## 2026-08-07 第五轮评审收口
+## 最近一轮：第五轮评审收口（2026-08-07）
 
 ### 评审要求（要点）
 
@@ -40,4 +33,4 @@
 
 - P0-7 两个历史兼容口已封死：finalize 只接受完整新合同；backfill 可证明完整裁决链；
 - 非阻塞待办：`reviewed_unbound` 状态命名细分；归并稳定性 5→6→7→8 测量；**JD 1～3 豁免/重验悬置决策**（报告持续标注 provenance）；
-- 新增「评审日志」规则（AGENTS.md）与 `docs/REVIEW_LOG.md`（本轮开始按简短摘要记录）。
+- 「评审日志」规则（AGENTS.md）已按"覆盖更新、只保留最新一轮"执行。
