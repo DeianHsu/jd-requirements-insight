@@ -27,7 +27,8 @@ AGENTS.md
 ```
 
 涉及完整项目检查、生产验收、模块关闭、正式数据发布时，必须先读
-`docs/review/PRODUCTION_AUDIT.md` 并按其中协议执行（普通提交检查不触发）。
+`docs/review/PRODUCTION_AUDIT.md`，按检查对象和影响范围选择审计等级
+（L1/L2/L3）执行（普通提交检查不触发）。
 
 ## 事实优先级
 
