@@ -7,7 +7,7 @@ requirement → 独立 JD 统计 → 原文证据追溯 → Markdown 市场分�
 ## 当前具备的能力
 
 - **JD 导入**：Markdown JD（frontmatter + 正文）批量导入与内容去重；
-- **v0.9 结构化抽取**：两段式（发现段全局分句归属 + 判断段局部语义判断）、
+- **v0.10 结构化抽取**（两段式：发现段全局分句归属 + 判断段局部语义判断）、
   三级熟练度、any_of 逻辑组、原文证据强制校验、有限重试、幂等持久化；
 - **抽取质量验证**：P0-3A 规则场景变形测试（领域中性场景 + 确定性变换）、
   P0-3B 真实 JD 验证（合同检查、漂移、异常项索引）；
@@ -16,8 +16,15 @@ requirement → 独立 JD 统计 → 原文证据追溯 → Markdown 市场分�
   幂等持久化；
 - **归并验证**：coverage、结构违规、positive-pair Jaccard、canonical/
   singleton 漂移、顺序变形、人工 cluster 复核；
-- **市场统计**：每个 canonical requirement 的实例数、独立 JD 数、
-  must/preferred/mentioned 分布、来源 JD 集合与原文证据（`app/market_analysis.py`）。
+- **市场统计**：每个 canonical requirement 的实例数、独立 JD 数（同一
+  JD 多实例只计一次）、must/preferred/mentioned 分布、来源 JD 集合与
+  原文证据（`app/market_analysis.py`）；
+- **Markdown 市场报告**：`generate-report` 从显式归并批次离线生成
+  可读报告（总览、跨 JD 共同要求、单 JD 长尾、逐 canonical 证据追溯），
+  生成前执行完整数据一致性门禁，输出确定可复现（`app/market_report.py`）。
+  报告结构样例见 `examples/market-report-sample.md`（合成数据）；
+  真实报告默认输出到 `reports/`（含真实 evidence，属私有材料，
+  **不应提交到公开仓库**）。
 
 ## 安装
 
@@ -54,6 +61,12 @@ python -m app.cli list-extractions
 python -m app.cli list-consolidations
 # 离线验证（不付费；coverage 以批次真实输入集合为分母，失败返回非零）
 python -m app.cli validate-consolidation --consolidation-id 1
+
+# 生成市场报告（完全离线、不付费；显式指定归并批次）
+python -m app.cli generate-report --consolidation-id 1
+# 可选 --output 指定路径；默认 reports/P0-5/market-report-<id>.md（私有，
+# 含真实 evidence，不应提交）。公开结构样例：
+python -m scripts.make_sample_report   # 生成 examples/market-report-sample.md
 ```
 
 验证脚本（付费调用必须显式 `--execute`；`--dry-run` 预检不付费）：

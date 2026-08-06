@@ -63,6 +63,9 @@ class MarketStatistics:
     input_fingerprint: str
     occurrence_count: int
     canonical_count: int
+    selected_job_ids: tuple[int, ...]
+    total_job_count: int
+    job_summaries: tuple[dict[str, Any], ...]
     canonical_items: tuple[CanonicalMarketStats, ...]
 
     def to_dict(self) -> dict[str, Any]:
@@ -75,6 +78,9 @@ class MarketStatistics:
             "input_fingerprint": self.input_fingerprint,
             "occurrence_count": self.occurrence_count,
             "canonical_count": self.canonical_count,
+            "selected_job_ids": list(self.selected_job_ids),
+            "total_job_count": self.total_job_count,
+            "job_summaries": list(self.job_summaries),
             "canonical_items": [
                 {
                     "canonical_requirement_id": item.canonical_requirement_id,
@@ -120,6 +126,28 @@ def build_market_statistics(
             for item in record.canonical_requirements
         }
         mappings: list[RequirementMappingRecord] = list(record.mappings)
+
+        # 批次选定 JD 与其摘要（报告身份与覆盖率分母）。
+        selected_job_ids = tuple(sorted(record.selected_job_ids))
+        job_summaries: tuple[dict[str, Any], ...] = ()
+        if selected_job_ids:
+            from app.models import JobDescription
+
+            job_rows = session.scalars(
+                select(JobDescription).where(
+                    JobDescription.id.in_(selected_job_ids)
+                )
+            ).all()
+            job_summaries = tuple(
+                {
+                    "job_id": job.id,
+                    "company": job.company,
+                    "title": job.title,
+                    "city": job.city,
+                    "company_type": job.company_type,
+                }
+                for job in sorted(job_rows, key=lambda j: j.id)
+            )
 
         requirement_ids = [mapping.requirement_id for mapping in mappings]
         requirements: dict[int, JobRequirement] = {}
@@ -227,5 +255,8 @@ def build_market_statistics(
             input_fingerprint=record.input_fingerprint,
             occurrence_count=record.occurrence_count,
             canonical_count=len(items),
+            selected_job_ids=selected_job_ids,
+            total_job_count=len(selected_job_ids),
+            job_summaries=job_summaries,
             canonical_items=tuple(items),
         )

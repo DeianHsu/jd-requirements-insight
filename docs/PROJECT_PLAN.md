@@ -15,14 +15,14 @@ requirement → 独立 JD 统计 → 原文证据追溯 → Markdown 市场分�
 | P0-3A 规则场景验证 | 领域中性场景 + 确定性变换，合同检查与变形属性检查 | ✅ 已完成（Prompt 0.10，13 场景 hard gate=0） |
 | P0-3B 真实 JD 验证 | 显式选择 JD、重复运行、合同/漂移检查、异常项索引 | ✅ 已完成（JD 1/2/3 累计 hard gate=0，人工审计通过） |
 | P0-4 要求事实归并 | instance → canonical → 唯一映射；合同校验、positive-pair Jaccard、漂移与变形检查 | ✅ 已关闭（Prompt 4.3 冻结；83 条精确覆盖、coverage=100%、结构违规=0；稳定性分析含完整成员与顺序变形；人工裁决覆盖全部 unstable 跨 JD 对并确定性应用；幂等安全门拒绝结果冲突；仅证明 3 份 JD 范围） |
-| P0-5 市场统计、证据追溯与 Markdown 报告 | `app/market_analysis.py` 统计模块已完成；`generate-report` 与证据追溯报告待实现 | 🟡 进行中 |
+| P0-5 市场统计、证据追溯与 Markdown 报告 | 独立 JD 数口径统计 + 完整性门禁 + `generate-report` 离线 Markdown 报告（总览/共同/长尾/证据追溯）；真实报告私有，公开样例 `examples/market-report-sample.md` | ✅ 已完成（大模块 3 关闭，样本限制声明明确） |
 
 ## 当前下一步
 
-1. 基于已定稿的 83 条归并批次（Prompt 4.3，来源 run-1 + 人工审核
-   决定）实现 `generate-report`；
-2. 扩展样本前先分阶段验证归并稳定性（15～20 份 JD 需重新走稳定性
-   分析 + 人工裁决，当前仅证明 3 份 JD 范围）。
+1. 样本扩展（6～20 份 JD）前先分阶段验证抽取与归并稳定性
+   （当前仅证明 3 份 JD 范围）；扩展后重新生成市场报告；
+2. 报告生成流程已闭环（`generate-report --consolidation-id`），
+   后续样本变化仅需重新生成。
 
 边界与硬依赖见 `AGENTS.md`（不维护旧版本兼容、付费调用必须
 `--execute`、私有材料不提交 Git、MVP 轻量开发原则）。

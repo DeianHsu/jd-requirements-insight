@@ -28,6 +28,8 @@ from app.extraction import (
     extract_jobs,
     list_extractions,
 )
+from app.market_analysis import build_market_statistics
+from app.market_report import build_market_report, validate_report_inputs
 from app.models import JobDescription
 from sqlalchemy import select
 from app.ingestion import import_directory, list_jobs
@@ -369,6 +371,66 @@ def validate_consolidation_cmd(
         console.print(f"  [red]- {failure}[/red]")
     if failures:
         raise typer.Exit(code=1)
+
+
+@cli.command("generate-report")
+def generate_report_cmd(
+    consolidation_id: int = typer.Option(
+        ...,
+        "--consolidation-id",
+        min=1,
+        help="显式指定生成报告使用的持久化归并批次ID",
+    ),
+    output: Path = typer.Option(
+        None,
+        "--output",
+        help="Markdown 报告输出路径；默认 reports/P0-5/market-report-<id>.md",
+    ),
+) -> None:
+    """从显式归并批次离线生成 Markdown 市场分析报告。
+
+    完全离线：不读取 LLM 配置、不调用模型、不需要 --execute。
+    生成前执行完整数据一致性门禁（精确 ID 覆盖、mapping 与来源分区
+    一致、占位名称检测、requirement→extraction→JD 回查），任何失败
+    都拒绝生成并返回非零。报告为可再生派生产物，覆盖已有文件时会
+    明确提示。
+    """
+    engine, session_factory = database_resources()
+    try:
+        failures = validate_report_inputs(session_factory, consolidation_id)
+        if failures:
+            console.print("[red]数据完整性门禁未通过，拒绝生成报告：[/red]")
+            for failure in failures:
+                console.print(f"  [red]- {failure}[/red]")
+            raise typer.Exit(code=1)
+
+        stats = build_market_statistics(session_factory, consolidation_id)
+    finally:
+        engine.dispose()
+
+    report_path = output or Path(
+        f"reports/P0-5/market-report-{consolidation_id}.md"
+    )
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    if report_path.exists():
+        console.print(
+            f"[yellow]报告为可再生派生产物，将覆盖：{report_path}[/yellow]"
+        )
+    report_path.write_text(
+        build_market_report(stats), encoding="utf-8"
+    )
+
+    console.print(f"[green]报告已生成：{report_path}[/green]")
+    console.print(f"归并批次 #{stats.consolidation_id}（{stats.scope_key}）")
+    console.print(f"JD 数 [bold]{stats.total_job_count}[/bold]，"
+                  f"实例数 [bold]{stats.occurrence_count}[/bold]，"
+                  f"canonical 数 [bold]{stats.canonical_count}[/bold]")
+    common = [item for item in stats.canonical_items if item.distinct_job_count > 1]
+    if common:
+        console.print(
+            f"高频要求：{common[0].canonical_name}（"
+            f"{common[0].distinct_job_count}/{stats.total_job_count} 份 JD）"
+        )
 
 
 @cli.command("list-extractions")

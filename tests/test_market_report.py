@@ -1,0 +1,474 @@
+"""generate-report 市场报告闭环核心测试（离线，不调用模型）。
+
+覆盖模块业务合同：
+
+1. 显式归并批次能够生成报告；
+2. 批次不存在时拒绝；
+3. 批次不完整或映射损坏时拒绝；
+4. 同一 JD 多个实例只计一次 JD 覆盖；
+5. JD 覆盖率分母来自批次实际选定 JD；
+6. JD 级 importance 优先级正确；
+7. 排序稳定；
+8. 每个统计项能追溯到 requirement、JD 和 evidence；
+9. Markdown 特殊字符和多行 evidence 不破坏报告结构；
+10. 相同输入重复生成内容一致；
+11. CLI 不初始化或调用 LLM；
+12. 公开样例不包含真实 JD、密钥、私有路径或模型原始响应。
+"""
+from __future__ import annotations
+
+from datetime import date
+from pathlib import Path
+
+from app.consolidation import (
+    CONSOLIDATION_PROMPT_VERSION,
+    CONSOLIDATION_SCHEMA_VERSION,
+    ConsolidatorMetadata,
+    load_consolidation_selection,
+    persist_consolidation,
+    scope_key_for,
+)
+from app.database import (
+    create_database_engine,
+    create_session_factory,
+    initialize_database,
+)
+from app.market_analysis import build_market_statistics
+from app.market_report import (
+    build_market_report,
+    validate_report_inputs,
+)
+from app.models import (
+    JobConsolidation,
+    JobDescription,
+    JobExtraction,
+    JobRequirement,
+    RequirementMappingRecord,
+)
+from app.requirement_consolidation import (
+    CanonicalRequirement,
+    RequirementConsolidationResult,
+    build_mappings_from_canonical_partition,
+)
+
+
+def _seed_market_db(database_path: Path) -> None:
+    """合成市场数据库：3 份 JD、跨 JD canonical、importance 与特殊字符。"""
+    engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
+    try:
+        initialize_database(engine)
+        session_factory = create_session_factory(engine)
+        with session_factory() as session:
+            jobs = []
+            for index, (company, title, city) in enumerate(
+                (
+                    ("示例科技", "大模型应用工程师", "北京"),
+                    ("示例智能", "Agent 开发工程师", "上海"),
+                    ("示例数据", "RAG 平台工程师", "深圳"),
+                ),
+                start=1,
+            ):
+                job = JobDescription(
+                    source_hash=f"m{index}" + "a" * (64 - len(f"m{index}")),
+                    source_file=f"sample-{index}.md",
+                    source_type="test",
+                    collected_at=date(2026, 8, 1),
+                    company=company,
+                    title=title,
+                    city=city,
+                    company_type="medium_company",
+                    tags=[],
+                    extra_metadata={},
+                    raw_text=f"# {title}\n\n职责与要求。",
+                )
+                session.add(job)
+                jobs.append(job)
+            session.flush()
+
+            # 每 JD 一份 v0.10 + Schema V3 抽取。
+            # 实例设计：
+            #   JD1: 1 编程语言(must) 2 协作能力(must) 3 数据分析经验(preferred)
+            #   JD2: 4 编程语言(must) 5 协作能力(preferred) 6 特殊字符(mentioned)
+            #   JD3: 7 编程语言(preferred) 8 学历(unknown)
+            by_job = {
+                jobs[0].id: [
+                    ("编程语言", "must", "1. 熟悉主流编程语言。"),
+                    ("协作能力", "must", "具备跨团队协作能力。"),
+                    ("数据分析经验", "preferred", "有数据分析经验者优先。"),
+                ],
+                jobs[1].id: [
+                    ("编程语言", "must", "掌握常用编程语言。"),
+                    ("协作能力", "preferred", "具备良好沟通与协作精神。"),
+                    ("特殊字符", "mentioned", "熟悉 `LangChain`、*RAG* 等工具|\n第二行证据（多行）。"),
+                ],
+                jobs[2].id: [
+                    ("编程语言", "preferred", "熟悉编程语言者加分。"),
+                    ("学历", "unknown", "本科及以上学历。"),
+                ],
+            }
+            requirement_ids: dict[str, list[int]] = {}
+            for job in jobs:
+                extraction = JobExtraction(
+                    job_id=job.id,
+                    extractor_version="test-model|prompt:0.10|schema:3.0",
+                    model_name="test-model",
+                    prompt_version="0.10",
+                    schema_version="3.0",
+                    role_family="other",
+                    seniority="unknown",
+                    raw_response={},
+                )
+                session.add(extraction)
+                session.flush()
+                for raw_name, importance, evidence in by_job[job.id]:
+                    requirement = JobRequirement(
+                        extraction_id=extraction.id,
+                        raw_name=raw_name,
+                        category="other",
+                        importance=importance,
+                        proficiency="basic",
+                        group_id=None,
+                        group_logic="standalone",
+                        min_years=None,
+                        max_years=None,
+                        years_text=None,
+                        evidence=evidence,
+                        confidence=0.9,
+                    )
+                    session.add(requirement)
+                    session.flush()
+                    requirement_ids.setdefault(raw_name, []).append(requirement.id)
+            session.commit()
+            job_ids = {job.id for job in jobs}
+
+        # 归并批次：编程语言跨 3 JD，协作能力跨 2 JD，其余单 JD。
+        canonical_items = [
+            CanonicalRequirement(
+                canonical_requirement_id="cr-lang",
+                canonical_name="编程语言",
+                source_requirement_ids=sorted(
+                    requirement_ids["编程语言"]
+                ),
+                rationale="合成数据",
+                confidence=0.9,
+            ),
+            CanonicalRequirement(
+                canonical_requirement_id="cr-collab",
+                canonical_name="团队协作能力",
+                source_requirement_ids=sorted(requirement_ids["协作能力"]),
+                rationale="合成数据",
+                confidence=0.9,
+            ),
+            CanonicalRequirement(
+                canonical_requirement_id="cr-data",
+                canonical_name="数据分析经验",
+                source_requirement_ids=sorted(requirement_ids["数据分析经验"]),
+                rationale="合成数据",
+                confidence=0.9,
+            ),
+            CanonicalRequirement(
+                canonical_requirement_id="cr-special",
+                canonical_name="特殊字符要求",
+                source_requirement_ids=sorted(requirement_ids["特殊字符"]),
+                rationale="合成数据",
+                confidence=0.9,
+            ),
+            CanonicalRequirement(
+                canonical_requirement_id="cr-edu",
+                canonical_name="本科及以上学历",
+                source_requirement_ids=sorted(requirement_ids["学历"]),
+                rationale="合成数据",
+                confidence=0.9,
+            ),
+        ]
+        result = RequirementConsolidationResult(
+            canonical_requirements=canonical_items,
+            mappings=build_mappings_from_canonical_partition(canonical_items),
+        )
+        with session_factory() as session:
+            selection = load_consolidation_selection(session, job_ids=job_ids)
+            metadata = ConsolidatorMetadata(
+                model_name="test-model",
+                prompt_version=CONSOLIDATION_PROMPT_VERSION,
+                schema_version=CONSOLIDATION_SCHEMA_VERSION,
+            )
+            persist_consolidation(
+                session,
+                selection,
+                result,
+                {"model_response": {"canonical_requirements": []}},
+                metadata,
+                scope_key_for(job_ids or None),
+            )
+    finally:
+        engine.dispose()
+
+
+def _build_stats(database_path: Path) -> object:
+    engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
+    try:
+        session_factory = create_session_factory(engine)
+        with session_factory() as session:
+            consolidation_id = session.query(JobConsolidation).one().id
+        return build_market_statistics(session_factory, consolidation_id)
+    finally:
+        engine.dispose()
+
+
+def test_report_generated_for_explicit_batch(tmp_path) -> None:
+    """显式归并批次能够生成完整报告。"""
+    db_path = tmp_path / "market.db"
+    _seed_market_db(db_path)
+    stats = _build_stats(db_path)
+
+    report = build_market_report(stats)
+
+    assert "岗位要求市场分析报告" in report
+    assert "样本限制" in report
+    assert "流程与证据追溯能力演示" in report
+    assert f"#{stats.consolidation_id}" in report
+    assert "3" in report  # JD 数
+    assert "跨 JD 共同要求" in report
+    assert "单 JD 特有要求" in report
+    assert "证据追溯" in report
+    assert "编程语言" in report
+    assert "团队协作能力" in report
+
+
+def test_report_rejects_missing_batch(tmp_path) -> None:
+    """批次不存在时拒绝生成。"""
+    db_path = tmp_path / "market.db"
+    _seed_market_db(db_path)
+    engine = create_database_engine(f"sqlite:///{db_path.as_posix()}")
+    try:
+        session_factory = create_session_factory(engine)
+        failures = validate_report_inputs(session_factory, 999)
+    finally:
+        engine.dispose()
+
+    assert any("不存在" in failure for failure in failures)
+
+
+def test_report_rejects_corrupted_batch(tmp_path) -> None:
+    """批次映射损坏（删除一条 mapping）时拒绝生成。"""
+    db_path = tmp_path / "market.db"
+    _seed_market_db(db_path)
+    engine = create_database_engine(f"sqlite:///{db_path.as_posix()}")
+    try:
+        session_factory = create_session_factory(engine)
+        with session_factory() as session:
+            consolidation_id = session.query(JobConsolidation).one().id
+            first = session.query(RequirementMappingRecord).first()
+            session.delete(first)
+            session.commit()
+        failures = validate_report_inputs(session_factory, consolidation_id)
+    finally:
+        engine.dispose()
+
+    assert failures  # 精确 ID 覆盖校验必须失败
+
+
+def test_same_job_multiple_instances_counted_once(tmp_path) -> None:
+    """同一 JD 多个实例只贡献一次 JD 覆盖。"""
+    db_path = tmp_path / "market.db"
+    _seed_market_db(db_path)
+    stats = _build_stats(db_path)
+
+    programming = next(
+        item for item in stats.canonical_items if item.canonical_name == "编程语言"
+    )
+    assert programming.instance_count == 3
+    assert programming.distinct_job_count == 3  # JD1/2/3 各一次
+
+    collaboration = next(
+        item
+        for item in stats.canonical_items
+        if item.canonical_name == "团队协作能力"
+    )
+    assert collaboration.instance_count == 2
+    assert collaboration.distinct_job_count == 2  # JD1 + JD2
+
+
+def test_coverage_denominator_uses_selected_jobs(tmp_path) -> None:
+    """JD 覆盖率分母来自批次实际选定 JD。"""
+    db_path = tmp_path / "market.db"
+    _seed_market_db(db_path)
+    stats = _build_stats(db_path)
+
+    assert stats.total_job_count == 3
+    assert stats.selected_job_ids == (1, 2, 3)
+    programming = next(
+        item for item in stats.canonical_items if item.canonical_name == "编程语言"
+    )
+    assert programming.distinct_job_count / stats.total_job_count == 1.0
+    collaboration = next(
+        item
+        for item in stats.canonical_items
+        if item.canonical_name == "团队协作能力"
+    )
+    assert collaboration.distinct_job_count / stats.total_job_count == 2 / 3
+
+
+def test_importance_priority(tmp_path) -> None:
+    """JD 级 importance 按 must > preferred > mentioned > unknown 归并。"""
+    db_path = tmp_path / "market.db"
+    _seed_market_db(db_path)
+    stats = _build_stats(db_path)
+
+    programming = next(
+        item for item in stats.canonical_items if item.canonical_name == "编程语言"
+    )
+    # JD1 must、JD2 must、JD3 preferred → JD 级按优先级归并。
+    assert programming.importance_job_counts == {"must": 2, "preferred": 1}
+    # 实例级保留完整分布（诊断口径）。
+    assert programming.importance_instance_counts == {"must": 2, "preferred": 1}
+
+    collaboration = next(
+        item
+        for item in stats.canonical_items
+        if item.canonical_name == "团队协作能力"
+    )
+    assert collaboration.importance_job_counts == {"must": 1, "preferred": 1}
+
+
+def test_sorting_stable(tmp_path) -> None:
+    """排序稳定且符合（JD 数降序、实例数降序、名称升序）。"""
+    db_path = tmp_path / "market.db"
+    _seed_market_db(db_path)
+    first = _build_stats(db_path)
+    second = _build_stats(db_path)
+
+    names_first = [item.canonical_name for item in first.canonical_items]
+    names_second = [item.canonical_name for item in second.canonical_items]
+    assert names_first == names_second  # 重复计算稳定
+    # 排序规则抽查。
+    assert names_first[0] == "编程语言"  # 3 JD
+    assert names_first[1] == "团队协作能力"  # 2 JD
+    keys = [
+        (-item.distinct_job_count, -item.instance_count, item.canonical_name)
+        for item in first.canonical_items
+    ]
+    assert keys == sorted(keys)
+
+
+def test_traceability(tmp_path) -> None:
+    """每个统计项可追溯到 requirement、JD 和 evidence。"""
+    db_path = tmp_path / "market.db"
+    _seed_market_db(db_path)
+    stats = _build_stats(db_path)
+    report = build_market_report(stats)
+
+    collaboration = next(
+        item
+        for item in stats.canonical_items
+        if item.canonical_name == "团队协作能力"
+    )
+    assert collaboration.source_job_ids == (1, 2)
+    assert len(collaboration.source_requirements) == 2
+    # 报告包含 JD 标签、实例 ID 与 evidence 文本。
+    assert "JD 1｜实例" in report
+    assert "具备跨团队协作能力" in report
+    assert "importance=must" in report
+
+
+def test_markdown_special_chars_and_multiline(tmp_path) -> None:
+    """Markdown 特殊字符与多行 evidence 不破坏报告结构。"""
+    db_path = tmp_path / "market.db"
+    _seed_market_db(db_path)
+    stats = _build_stats(db_path)
+    report = build_market_report(stats)
+
+    # 特殊字符 evidence 原样保留（转义后展示）。
+    assert "LangChain" in report
+    assert "RAG" in report
+    assert "第二行证据（多行）" in report
+    # 表格结构完整：表头 + 共同要求行数（2 个跨 JD canonical）。
+    common_table = report.split("## 跨 JD 共同要求")[1].split("## 单 JD")[0]
+    rows = [line for line in common_table.splitlines() if line.startswith("|")]
+    assert len(rows) == 1 + 1 + 2  # 表头 + 分隔行 + 2 个共同要求
+    # 长尾表：3 个单 JD canonical。
+    tail_table = report.split("## 单 JD 特有要求")[1].split("## 证据追溯")[0]
+    tail_rows = [line for line in tail_table.splitlines() if line.startswith("|")]
+    assert len(tail_rows) == 1 + 1 + 3
+
+
+def test_deterministic_output(tmp_path) -> None:
+    """相同输入重复生成内容一致。"""
+    db_path = tmp_path / "market.db"
+    _seed_market_db(db_path)
+    stats = _build_stats(db_path)
+
+    assert build_market_report(stats) == build_market_report(stats)
+
+
+def test_cli_generate_report_offline(tmp_path, monkeypatch) -> None:
+    """CLI 生成报告不初始化 LLM 客户端。"""
+    from typer.testing import CliRunner
+
+    from app import cli as cli_module
+
+    db_path = tmp_path / "market.db"
+    _seed_market_db(db_path)
+    report_path = tmp_path / "report.md"
+
+    def exploding_settings():
+        raise AssertionError("不应加载 LLM 配置")
+
+    monkeypatch.setattr(cli_module, "load_llm_settings", exploding_settings)
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_module.cli,
+        [
+            "generate-report",
+            "--consolidation-id",
+            "1",
+            "--output",
+            str(report_path),
+        ],
+        env={"DATABASE_URL": f"sqlite:///{db_path.as_posix()}"},
+    )
+    assert result.exit_code == 0, result.output
+    assert report_path.exists()
+    assert "报告已生成" in result.output
+    assert "sk-" not in result.output
+
+
+def test_cli_rejects_missing_batch(tmp_path) -> None:
+    """CLI 对不存在的批次返回非零。"""
+    from typer.testing import CliRunner
+
+    from app import cli as cli_module
+
+    db_path = tmp_path / "market.db"
+    _seed_market_db(db_path)
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_module.cli,
+        ["generate-report", "--consolidation-id", "999"],
+        env={"DATABASE_URL": f"sqlite:///{db_path.as_posix()}"},
+    )
+    assert result.exit_code == 1
+    assert "不存在" in result.output
+
+
+def test_sample_report_is_public_safe(tmp_path) -> None:
+    """公开样例不包含真实 JD、密钥、私有路径或模型原始响应。"""
+    import scripts.make_sample_report as sample_script
+
+    output_path = tmp_path / "sample.md"
+    assert sample_script.main(["--output", str(output_path)]) == 0
+
+    content = output_path.read_text(encoding="utf-8")
+    for forbidden in (
+        "data/private",
+        "data/raw_jds",
+        "sk-",
+        "model_response",
+        "raw_response",
+        "C:\\Users",
+        "D:\\MyAIWork",
+    ):
+        assert forbidden not in content, forbidden
+    assert "岗位要求市场分析报告" in content
+    assert "样本限制" in content
+    assert "流程与证据追溯能力演示" in content
