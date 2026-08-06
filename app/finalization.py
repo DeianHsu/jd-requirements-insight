@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import datetime
 from dataclasses import dataclass
 from typing import Any
 
@@ -34,6 +35,11 @@ EXTRACTION_FINALIZATION_FIELDS = (
 CONSOLIDATION_FINALIZATION_FIELDS = (
     "review_decisions_fingerprint",
     "source_run_identifier",
+    "reviewed_by",
+    "reviewed_at",
+    "approved_run_index",
+    "approved_result_fingerprint",
+    "final_result_fingerprint",
 )
 
 
@@ -59,17 +65,26 @@ def validate_consolidation_finalization(
     record: JobConsolidation,
     persisted: PersistedConsolidationResult,
 ) -> list[str]:
-    """验证正式归并的审核绑定及持久化结果指纹。"""
+    """验证正式归并的完整审核绑定及持久化结果指纹。
+
+    报告门禁与审计共用：批次必须带完整人工审核元数据（审核人/时间/
+    批准运行/批准结果指纹/审核决定指纹）与最终结果指纹，缺任一字段
+    或指纹与当前持久化结果不一致都失败；reviewed_at 必须可解析。
+    """
     raw_response = record.raw_response or {}
     missing = missing_finalization_fields(
         raw_response, CONSOLIDATION_FINALIZATION_FIELDS
     )
     failures = [f"归并批次缺少定稿元数据：{field}" for field in missing]
     recorded_fingerprint = raw_response.get("final_result_fingerprint")
-    if recorded_fingerprint and recorded_fingerprint != result_fingerprint(
-        persisted.result
-    ):
+    if recorded_fingerprint != result_fingerprint(persisted.result):
         failures.append("定稿结果指纹与当前持久化归并结果不一致")
+    reviewed_at = raw_response.get("reviewed_at")
+    if reviewed_at:
+        try:
+            datetime.datetime.fromisoformat(str(reviewed_at).replace("Z", "+00:00"))
+        except ValueError:
+            failures.append(f"reviewed_at 格式无效：{reviewed_at}")
     return failures
 
 

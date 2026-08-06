@@ -30,6 +30,7 @@ from app.consolidation import (
     persist_consolidation,
     scope_key_for,
 )
+from app.consolidation_validation import result_fingerprint
 from app.database import (
     create_database_engine,
     create_session_factory,
@@ -204,6 +205,11 @@ def _seed_market_db(database_path: Path) -> None:
                     "normalized_result": result.model_dump(mode="json"),
                     "review_decisions_fingerprint": "synthetic-review",
                     "source_run_identifier": "run-0",
+                    "reviewed_by": "tester",
+                    "reviewed_at": "2026-08-05T00:00:00+00:00",
+                    "approved_run_index": 0,
+                    "approved_result_fingerprint": result_fingerprint(result),
+                    "final_result_fingerprint": result_fingerprint(result),
                 },
                 metadata,
                 scope_key_for(job_ids or None),
@@ -254,6 +260,26 @@ def test_build_market_report_renders_provenance_note(tmp_path) -> None:
 
     noted = build_market_report(stats, provenance_note="JD 1:unverified（无豁免）")
     assert "**上游来源绑定**：JD 1:unverified（无豁免）" in noted
+
+
+def test_report_rejects_incomplete_consolidation_finalization(tmp_path) -> None:
+    """旧格式批次（仅 2 个定稿字段）被报告门禁拒绝（完整审核元数据必需）。"""
+    db_path = tmp_path / "market.db"
+    _seed_market_db(db_path)
+    engine = create_database_engine(f"sqlite:///{db_path.as_posix()}")
+    try:
+        session_factory = create_session_factory(engine)
+        with session_factory() as session:
+            record = session.query(JobConsolidation).one()
+            record.raw_response = {
+                "review_decisions_fingerprint": "synthetic-review",
+                "source_run_identifier": "run-0",
+            }
+            session.commit()
+        failures = validate_report_inputs(session_factory, 1)
+        assert any("定稿元数据" in failure for failure in failures)
+    finally:
+        engine.dispose()
 
 
 def test_cli_generate_report_marks_unbound_upstream(tmp_path) -> None:
