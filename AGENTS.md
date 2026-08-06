@@ -26,6 +26,9 @@ AGENTS.md
 → 根据任务读取 GLOSSARY、annotation 或对应代码
 ```
 
+涉及完整项目检查、生产验收、模块关闭、正式数据发布时，必须先读
+`docs/review/PRODUCTION_AUDIT.md` 并按其中协议执行（普通提交检查不触发）。
+
 ## 事实优先级
 
 1. 当前代码、测试、数据结构和 Git 状态；
