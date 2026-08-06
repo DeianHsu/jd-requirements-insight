@@ -4,37 +4,36 @@
 完成时覆盖更新，只保留最新一轮；历史由 Git 保存。项目状态以
 `docs/CURRENT_STATE.md` / `docs/PROJECT_PLAN.md` 为准。
 
-## 最近一轮：backfill 重放核实与修复（2026-08-07）
+## 最近一轮：backfill raw provenance 边界核实与修复（2026-08-07）
 
 ### 评审要求（要点）
 
-1. 核实 `backfill_consolidation_metadata.py` 是否验证 final-result 的 `result` 内容与其声明指纹一致、是否完整核对批次身份；
-2. 核实"重放式校验"表述是否强于实际实现；
-3. 检查 `approved_run_index` 非法类型与 `reviewed_at` 格式错误是否干净拒绝且不写库。
+1. 核实 raw 批准运行的记录 `result_fingerprint` 是否真正验证与 `result` 内容一致；
+2. 核实 raw 整轮身份与选中运行标识是否与 report、批次完整绑定；
+3. 区分"结果可由来源运行 + decisions 确定性重建"与"审核人/审核时间具有同等强度的机器证明"。
 
-### 核实结论（独立读码，三项全部成立）
+### 核实结论（独立读码，全部成立）
 
-- **final-result 内容指纹未校验**：代码只比较"声明 result_fingerprint vs 当前库复算指纹"，从未解析 `final["result"]` 内容——篡改 result 内容但同步声明指纹即可通过；
-- **final-result 批次身份未核对**：docstring 声称校验 6 个身份字段，实现只查 4 个链字段非空 + 3 个比对，身份字段未实现（声明强于实现）；
-- **"重放式"表述过强**：原实现是历史证据链一致性检查（校验声明字段自洽），未从批准运行 + decisions 重新生成结果；
-- **approved_run_index 非 int（如字符串 "0"）→ `0 <= "0"` TypeError 崩溃**（非干净拒绝）；**reviewed_at 非法格式未校验即写入**。
+- **记录指纹被直接信任**：`_run_fingerprint` 有记录值时直接返回，不验证与 `result` 内容一致（此前仅被重放间接兜底）；
+- **raw 整轮身份完全未校验**：backfill 只校验 report/final 身份，raw 顶层 selected_job_ids/input_fingerprint 等从不检查——传错批次的 raw 不会被发现（比评审描述的更明显）；
+- **证明强度两级**：结果重建是机器强证明；审核人/时间是验收报告文件声明（旧批次无报告指纹锚点，无法机器复核）。
 
 ### 执行（1 个提交）
 
-- `cc89308` fix(production): backfill 实现真正重放——
-  - 解析 `final["result"]` 校验内容指纹 == 声明 result_fingerprint；
-  - 校验 final-result 6 个批次身份字段与批次一致；
-  - 从 raw 批准运行结果 + 审核决定调用 `_apply_decisions`（与 apply_review_decisions 相同逻辑）**真正重放**，重放结果指纹必须 == 当前持久化结果；
-  - `approved_run_index` 类型/范围校验、`reviewed_at` fromisoformat 校验，非法即干净拒绝且不写库；
-  - +5 测试（内容指纹不符/身份不符/索引字符串/日期非法/重放不一致——后者验证命中"重放成功但结果不同"分支）。
+- `d697943` fix(production): backfill 补齐 raw provenance 边界——
+  - 批准运行记录指纹（存在时）显式校验 == `result` 内容指纹；`run_identifier`（存在时）== `run-N`；
+  - raw 顶层整轮身份：存在字段必须与批次一致（防错文件）；旧格式 raw（`acceptance-final.json` 缺 prompt_version/schema_version，是批次 #1 唯一可用 raw）缺失字段由验收报告身份兜底；
+  - docstring 新增证明强度两级说明（结果可机器证明 / 审核元数据为声明记录，人工审核行为固有边界）；
+  - +3 测试（记录指纹与内容不一致拒绝、raw 身份不一致拒绝、运行标识不一致拒绝）。
 
 ### 验证结果
 
-- 全量 **349 测试通过**（+5）、ruff 全过；
-- 真实库副本重放：批次 #1/#2 真正重放结果与当前持久化结果**完全一致**——"当前结果确由批准运行 + 审核决定确定性产生"从声明变为可证明；正式库无需修改；
-- 已 push（`db72512..cc89308`）。
+- 全量 **352 测试通过**（+3）、ruff 全过；
+- 真实库副本验证：批次 #1/#2 全部校验通过（含 raw 身份绑定与批准运行内容指纹）；
+- 已 push（`cc89308..d697943`）。
 
 ### 当前状态
 
-- "重放式安全门"表述现在与实现一致（真正重放 + 内容指纹 + 批次身份 + 类型干净拒绝）；
+- backfill 证据链覆盖：final-result 内容指纹、final 批次身份、raw 整轮身份、批准运行记录指纹/内容一致性、运行标识、真正重放、类型/格式干净拒绝；
+- 证明强度表述已在 docstring 区分（结果可机器证明；审核元数据为历史声明）；
 - 非阻塞待办不变：`reviewed_unbound` 命名细分；归并稳定性 5→6→7→8 测量；**JD 1～3 豁免/重验悬置决策**（报告持续标注 provenance）。
