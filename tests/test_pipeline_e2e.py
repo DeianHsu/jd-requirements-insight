@@ -263,13 +263,13 @@ class FakeSettings:
 def test_full_pipeline_import_extract_consolidate_statistics(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """主线端到端：import → extract → consolidate → statistics。"""
+    """最小合成闭环：候选不入库，审核定稿后才可统计。"""
     jd_dir = tmp_path / "jds"
     jd_dir.mkdir()
     _write_jd_files(jd_dir)
     database_path = tmp_path / "e2e.db"
 
-    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{database_path.as_posix()}")
+    database_args = ["--database-url", f"sqlite:///{database_path.as_posix()}"]
 
     import app.cli as cli_module
 
@@ -282,18 +282,198 @@ def test_full_pipeline_import_extract_consolidate_statistics(
     )
 
     # 1. import-jds
-    result = runner.invoke(cli, ["import-jds", str(jd_dir)])
+    result = runner.invoke(cli, ["import-jds", str(jd_dir), *database_args])
     assert result.exit_code == 0, result.output
 
-    # 2. extract-jds（全部；付费调用显式 --execute）
-    result = runner.invoke(cli, ["extract-jds", "--all", "--execute"])
+    # 2. 模型入口只生成候选，不写正式抽取表。
+    extraction_candidate = tmp_path / "extraction-candidate.json"
+    result = runner.invoke(
+        cli,
+        [
+            "extract-jds",
+            "--all",
+            "--execute",
+            "--candidate-output",
+            str(extraction_candidate),
+            *database_args,
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    candidate = json.loads(extraction_candidate.read_text(encoding="utf-8"))
+    engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
+    session_factory = create_session_factory(engine)
+    with session_factory() as session:
+        assert session.query(JobExtraction).count() == 0
+    engine.dispose()
+
+    # 3. 为合成候选构造最小审核产物，并逐 JD 离线定稿。
+    for candidate_run in candidate["runs"]:
+        job_id = candidate_run["job_id"]
+        acceptance_id = f"synthetic-extraction-{job_id}"
+        report_path = tmp_path / f"extraction-report-{job_id}.json"
+        raw_path = tmp_path / f"extraction-raw-{job_id}.json"
+        report_path.write_text(
+            json.dumps(
+                {
+                    "identity": {
+                        "run_identifier": acceptance_id,
+                        "model": candidate["model"],
+                        "prompt_version": candidate["prompt_version"],
+                        "schema_version": candidate["schema_version"],
+                    },
+                    "jobs": [
+                        {
+                            "job_id": job_id,
+                            "input_fingerprint": candidate_run["input_fingerprint"],
+                            "expected_runs": 1,
+                            "successful_runs": 1,
+                            "failed_runs": 0,
+                            "hard_gate_failures": [],
+                            "manual_review": {
+                                "reviewed_by": "synthetic-reviewer",
+                                "reviewed_at": "2026-08-06T00:00:00+00:00",
+                                "approved_run_index": 0,
+                                "approved_result_fingerprint": candidate_run[
+                                    "result_fingerprint"
+                                ],
+                            },
+                        }
+                    ],
+                    "hard_gate_failures": [],
+                    "passed": True,
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        raw_run = dict(candidate_run)
+        raw_run["run_identifier"] = f"job{job_id}_run0"
+        raw_path.write_text(
+            json.dumps(
+                {
+                    f"job{job_id}_run0": raw_run,
+                    "identity": {
+                        "run_identifier": acceptance_id,
+                        "model": candidate["model"],
+                        "prompt_version": candidate["prompt_version"],
+                        "schema_version": candidate["schema_version"],
+                        "job_ids": [job_id],
+                    },
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        result = runner.invoke(
+            cli,
+            [
+                "finalize-extraction",
+                "--report",
+                str(report_path),
+                "--raw-output",
+                str(raw_path),
+                "--job-id",
+                str(job_id),
+                *database_args,
+            ],
+        )
+        assert result.exit_code == 0, result.output
+
+    # 4. 归并入口同样只生成候选。
+    consolidation_candidate = tmp_path / "consolidation-candidate.json"
+    result = runner.invoke(
+        cli,
+        [
+            "consolidate-requirements",
+            "--all",
+            "--execute",
+            "--candidate-output",
+            str(consolidation_candidate),
+            *database_args,
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    consolidation = json.loads(
+        consolidation_candidate.read_text(encoding="utf-8")
+    )
+    engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
+    session_factory = create_session_factory(engine)
+    with session_factory() as session:
+        assert session.query(JobConsolidation).count() == 0
+    engine.dispose()
+
+    # 5. 最小审核后定稿归并，正式批次才出现。
+    consolidation_report = tmp_path / "consolidation-report.json"
+    consolidation_raw = tmp_path / "consolidation-raw.json"
+    identity = {
+        key: consolidation[key]
+        for key in (
+            "model",
+            "prompt_version",
+            "schema_version",
+            "extractor_version",
+            "input_fingerprint",
+            "selected_job_ids",
+        )
+    }
+    consolidation_report.write_text(
+        json.dumps(
+            {
+                "input_identity": identity,
+                "p0_4_stability": {"run_count": 1},
+                "hard_gate_failures": [],
+                "manual_cluster_review": {
+                    "reviewed_by": "synthetic-reviewer",
+                    "reviewed_at": "2026-08-06T00:00:00+00:00",
+                    "approved_run_index": 0,
+                    "approved_result_fingerprint": consolidation[
+                        "result_fingerprint"
+                    ],
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    consolidation_raw.write_text(
+        json.dumps(
+            {
+                **identity,
+                "run_count": 1,
+                "runs": [
+                    {
+                        "run_identifier": "run-0",
+                        "result_fingerprint": consolidation[
+                            "result_fingerprint"
+                        ],
+                        "result": consolidation["result"],
+                        "raw_response": consolidation["raw_response"],
+                        "metadata": {
+                            "model": consolidation["model"],
+                            "prompt_version": consolidation["prompt_version"],
+                            "schema_version": consolidation["schema_version"],
+                        },
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    result = runner.invoke(
+        cli,
+        [
+            "finalize-consolidation",
+            "--report",
+            str(consolidation_report),
+            "--raw-output",
+            str(consolidation_raw),
+            *database_args,
+        ],
+    )
     assert result.exit_code == 0, result.output
 
-    # 3. consolidate-requirements（付费调用显式 --execute）
-    result = runner.invoke(cli, ["consolidate-requirements", "--all", "--execute"])
-    assert result.exit_code == 0, result.output
-
-    # 4. statistics：读取归并批次并验证独立 JD 计数。
+    # 6. statistics：正式批次可统计。
     engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
     try:
         initialize_database(engine)
@@ -352,10 +532,11 @@ def test_extract_jds_requires_execute_confirmation(
     monkeypatch.setattr(
         cli_module, "OpenAICompatibleExtractionClient", FakeExtractionClient
     )
-    result = runner.invoke(cli, ["import-jds", str(jd_dir)])
+    database_args = ["--database-url", f"sqlite:///{database_path.as_posix()}"]
+    result = runner.invoke(cli, ["import-jds", str(jd_dir), *database_args])
     assert result.exit_code == 0, result.output
 
-    result = runner.invoke(cli, ["extract-jds", "--all"])
+    result = runner.invoke(cli, ["extract-jds", "--all", *database_args])
     assert result.exit_code == 2
     assert "未执行" in result.output
     assert "--execute" in result.output
@@ -427,7 +608,15 @@ def test_consolidate_requires_execute_confirmation(
     finally:
         engine.dispose()
 
-    result = runner.invoke(cli, ["consolidate-requirements", "--all"])
+    result = runner.invoke(
+        cli,
+        [
+            "consolidate-requirements",
+            "--all",
+            "--database-url",
+            f"sqlite:///{database_path.as_posix()}",
+        ],
+    )
     assert result.exit_code == 2
     assert "未执行" in result.output
     assert "--execute" in result.output
@@ -445,6 +634,8 @@ def test_documented_commands_and_paths_exist() -> None:
     for module_name in (
         "app.market_analysis",
         "app.requirement_consolidation",
+        "app.extraction_finalization",
+        "app.consolidation_finalization",
         "scripts.experiments.p0_3.run_acceptance",
         "scripts.experiments.p0_3.run_real_jd_acceptance",
         "scripts.experiments.p0_4.run_acceptance",
@@ -468,8 +659,11 @@ def test_documented_commands_and_paths_exist() -> None:
 
     # 关键示例命令包含脚本要求的必要参数（文档合同）。
     readme = Path("README.md").read_text(encoding="utf-8")
-    assert "extract-jds --all --execute" in readme
-    assert "consolidate-requirements --all --execute" in readme
+    assert "extract-jds --all --candidate-output" in readme
+    assert "consolidate-requirements --all --candidate-output" in readme
+    assert "finalize-extraction --report" in readme
+    assert "finalize-consolidation --report" in readme
+    assert "--use-project-database" in readme
     assert (
         "run_real_jd_acceptance --use-project-database --all --execute"
         in readme

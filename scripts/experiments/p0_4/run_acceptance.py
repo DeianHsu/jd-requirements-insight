@@ -172,14 +172,14 @@ def main() -> int:
     parser.add_argument(
         "--database-url",
         type=str,
-        default="sqlite:///data/jd_skill_insight.db",
-        help="数据库URL（测试与实验建议使用临时SQLite副本）",
+        required=True,
+        help="显式选择的数据库 URL（实验建议使用临时 SQLite 副本）",
     )
     parser.add_argument(
         "--raw-output",
         type=Path,
-        default=Path("data/private/experiments/P0-4/acceptance-runs.json"),
-        help="原始运行结果输出路径（含证据，私有）",
+        default=None,
+        help="显式指定原始运行结果输出路径（含证据，私有）",
     )
     args = parser.parse_args()
 
@@ -218,6 +218,10 @@ def main() -> int:
             return 1
     finally:
         engine.dispose()
+
+    if args.raw_output is None:
+        print("执行付费归并验收必须显式指定 --raw-output。")
+        return 2
 
     consolidation_input = build_input(selection)
     job_ids = sorted(selection.selected_job_ids)

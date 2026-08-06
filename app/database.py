@@ -97,6 +97,11 @@ def default_database_url() -> str | URL:
     return URL.create("sqlite", database=str(DEFAULT_DATABASE_PATH))
 
 
+def project_database_url() -> URL:
+    """返回项目正式 SQLite 地址，不读取环境变量。"""
+    return URL.create("sqlite", database=str(DEFAULT_DATABASE_PATH))
+
+
 def create_database_engine(database_url: str | URL | None = None) -> Engine:
     """根据数据库地址创建SQLAlchemy Engine，并确保SQLite父目录存在。"""
     url = database_url or default_database_url()

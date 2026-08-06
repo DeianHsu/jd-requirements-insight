@@ -536,9 +536,11 @@ def test_explicit_current_version_is_used_when_multiple_exist(
             "1",
             "--extractor-version",
             "test-model|prompt:0.10|schema:3.0",
-            "--report",
-            str(tmp_path / "report.json"),
-        ],
+                "--report",
+                str(tmp_path / "report.json"),
+                "--raw-output",
+                str(tmp_path / "raw.json"),
+            ],
     )
     monkeypatch.setattr(acceptance_script, "load_llm_settings", lambda: FakeSettings())
     monkeypatch.setattr(
@@ -790,9 +792,11 @@ def test_order_transformation_contract_violation_is_hard_gate(
             "1",
             "--runs",
             "1",
-            "--report",
-            str(tmp_path / "report.json"),
-        ],
+                "--report",
+                str(tmp_path / "report.json"),
+                "--raw-output",
+                str(tmp_path / "raw.json"),
+            ],
     )
     monkeypatch.setattr(acceptance_script, "load_llm_settings", lambda: FakeSettings())
     monkeypatch.setattr(
@@ -847,7 +851,12 @@ def test_precheck_legacy_database_fails_cleanly(
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run_small_scale_precheck", "--execute"],
+        [
+            "run_small_scale_precheck",
+            "--execute",
+            "--database-url",
+            f"sqlite:///{database_path.as_posix()}",
+        ],
     )
     monkeypatch.setattr(precheck_script, "load_llm_settings", lambda: FakeSettings())
     monkeypatch.setattr(
@@ -889,7 +898,12 @@ def test_precheck_input_error_has_no_rebuild_hint(
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run_small_scale_precheck", "--execute"],
+        [
+            "run_small_scale_precheck",
+            "--execute",
+            "--database-url",
+            f"sqlite:///{database_path.as_posix()}",
+        ],
     )
     monkeypatch.setattr(precheck_script, "load_llm_settings", lambda: FakeSettings())
 

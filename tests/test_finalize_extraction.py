@@ -531,7 +531,6 @@ def test_finalize_does_not_initialize_llm(monkeypatch, tmp_path) -> None:
     db_path = tmp_path / "finalize.db"
     job_id = _seed_job(db_path)
     report_path, raw_path = _write_acceptance(tmp_path, db_path, job_id)
-
     monkeypatch.setattr(
         sys,
         "argv",
@@ -548,3 +547,36 @@ def test_finalize_does_not_initialize_llm(monkeypatch, tmp_path) -> None:
         ],
     )
     assert finalize.main() == 0
+
+
+def test_extraction_source_audit_classifies_bound_and_unverified(
+    monkeypatch, tmp_path
+) -> None:
+    """来源审计只读区分完整定稿记录与缺少绑定的历史记录。"""
+    from app.finalization import audit_extraction_sources
+
+    db_path = tmp_path / "audit.db"
+    job_id = _seed_job(db_path)
+    engine = create_database_engine(f"sqlite:///{db_path.as_posix()}")
+    session_factory = create_session_factory(engine)
+    with session_factory() as session:
+        job = session.get(JobDescription, job_id)
+        session.add(
+            JobExtraction(
+                job=job,
+                extractor_version="old|prompt:0.10|schema:3.0",
+                model_name="old",
+                prompt_version="0.10",
+                schema_version="3.0",
+                role_family="other",
+                seniority="unknown",
+                raw_response={},
+            )
+        )
+        session.commit()
+    report_path, raw_path = _write_acceptance(tmp_path, db_path, job_id)
+    assert _run_finalize(monkeypatch, tmp_path, report_path, raw_path, db_path) == 0
+
+    items = audit_extraction_sources(session_factory)
+    engine.dispose()
+    assert [item.status for item in items] == ["unverified", "fully_bound"]

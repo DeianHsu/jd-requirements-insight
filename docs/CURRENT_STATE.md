@@ -6,23 +6,28 @@ updated_at: 2026-08-06
 
 | 命令 | 功能 |
 |---|---|
-| `python -m app.cli import-jds <目录>` | 导入 Markdown JD（frontmatter + 正文） |
-| `python -m app.cli list-jds` | 列出 JD 摘要 |
-| `python -m app.cli extract-jds [--all|--job-id N] --execute` | v0.10 + Schema V3 两段式抽取（付费，需 .env 配置与 --execute） |
-| `python -m app.cli list-extractions` | 列出抽取结果 |
-| `python -m app.cli consolidate-requirements --all|--job-id N --execute` | 跨 JD 归并为 canonical requirement（付费，需 --execute） |
-| `python -m app.cli list-consolidations` | 列出归并批次 |
-| `python -m app.cli validate-consolidation --consolidation-id N` | 离线验证（不付费；回查批次真实输入，失败返回非零） |
+| `python -m app.cli import-jds <目录> --use-project-database` | 显式选择项目库并导入 Markdown JD |
+| `python -m app.cli extract-jds ... --candidate-output <私有JSON> --execute` | 付费生成 v0.10 + Schema V3 抽取候选，不写正式抽取表 |
+| `python -m app.cli finalize-extraction ...` | 从已审核验收产物离线定稿正式抽取 |
+| `python -m app.cli consolidate-requirements ... --candidate-output <私有JSON> --execute` | 付费生成归并候选，不写正式归并表 |
+| `python -m app.cli finalize-consolidation ...` | 从已审核验收/裁决产物离线定稿正式归并 |
+| `python -m app.cli list-* ...` | 列出显式数据库目标中的正式记录 |
+| `python -m app.cli audit-extraction-sources ...` | 离线分类正式抽取来源绑定状态 |
+| `python -m app.cli audit-consolidation --consolidation-id N ...` | 显示批次脱敏身份和可报告状态 |
+| `python -m app.cli validate-consolidation --consolidation-id N ...` | 离线验证真实输入覆盖与持久化一致性 |
+| `python -m app.cli generate-report --consolidation-id N ...` | 仅从完成定稿的批次生成 Markdown 报告 |
 | `app/market_analysis.py` | 市场统计（实例数、独立 JD 数、importance 分布、来源证据、稳定排序），供下一阶段 `generate-report` 消费 |
 
 验证脚本（均需 `--execute` 才调用付费模型，`--dry-run` 预检不付费）：
 
 - P0-3A 规则场景：`python -m scripts.experiments.p0_3.run_acceptance --execute`
 - P0-3B 真实 JD：`python -m scripts.experiments.p0_3.run_real_jd_acceptance --use-project-database --all --execute`
-- P0-4 归并验收：`python -m scripts.experiments.p0_4.run_acceptance --execute`
+- P0-4 归并验收：`python -m scripts.experiments.p0_4.run_acceptance
+  --database-url <实验数据库> --raw-output <私有JSON> --execute`
   （缺省自动选择所选 JD 的唯一共同 v0.10 + Schema V3 抽取版本；查询前
   验证数据库结构；顺序变形合同违规计入 hard gate）
-- P0-4 小规模预检：`python -m scripts.experiments.p0_4.run_small_scale_precheck --execute`
+- P0-4 小规模预检：`python -m scripts.experiments.p0_4.run_small_scale_precheck
+  --database-url <实验数据库> --execute`
 
 ## 当前数据状态（本地私有，不入库提交）
 
@@ -42,6 +47,27 @@ updated_at: 2026-08-06
     旧语义）身份见 `reports/P0-4/previous-batch-2-note.json`）；
 - 真实 JD 原文属于私有输入（Git 忽略；重新克隆仓库的环境不会包含
   这些私有文件）。
+
+## 正式生产主线
+
+- 所有 CLI 数据库操作必须显式选择 `--database-url` 或
+  `--use-project-database`，二者必须且只能选择一个；只读入口不创建缺失的
+  SQLite 文件；
+- `extract-jds` 与 `consolidate-requirements` 只生成显式私有候选 JSON，
+  不写正式抽取或归并表；
+- `app/extraction_finalization.py` 与 `app/consolidation_finalization.py`
+  集中执行审核身份、输入/结果指纹、精确覆盖、幂等冲突和原子写入门禁；
+- `generate-report` 要求归并批次至少绑定审核决定指纹和来源运行标识；结构
+  合法但未经定稿的批次拒绝生成报告；
+- 当前批次 #2 的脱敏身份检查通过：job_ids=1～5、136 mappings、97
+  canonical、结果指纹 `edfe2c1a…`、审核决定指纹 `d7a6942c…`、来源
+  run-0，属于可报告正式批次；
+- 当前正式抽取来源绑定离线分类：JD 4/5 为 `fully_bound`；JD 1/2/3 的
+  数据库记录没有当前定稿合同所需的验收/审核/文件指纹，机器分类为
+  `unverified`。文档保留其既有人工审计结论，但本阶段不回填、不重跑、
+  不将其宣称为 `fully_bound`；
+- 合成端到端测试覆盖：模型候选不进入正式表，审核定稿后正式抽取/归并
+  才出现，并可进入市场统计和报告门禁。
 
 ## P0-4 要求归并定稿（2026-08-05，离线完成）
 
@@ -223,9 +249,9 @@ hard gate=0）与 P0-3B（JD 1/2/3 累计 hard gate=0、人工审计无阻塞
 
 ## 下一步
 
-1. **样本扩展**：已具备进入 6～8 JD 的条件（见大模块 4 收口），
-   等待下一模块指令后分阶段执行；
-2. 样本扩展后重新生成市场报告（流程不变，报告身份随批次更新）。
+1. 保持 5 JD / 批次 #2 基线，不自动扩样；
+2. 后续新增 JD 必须走候选、验收、人工审核、finalize、增量回归和报告门禁；
+3. JD 1～3 是否重建来源绑定作为独立决策，不与扩样或本次收口混做。
 
 ## 付费与私有数据依赖
 

@@ -21,6 +21,7 @@ from app.consolidation_validation import (
     load_persisted_consolidation_result,
     validate_persisted_consistency,
 )
+from app.finalization import validate_consolidation_finalization
 from app.market_analysis import MarketStatistics
 from app.models import (
     JobConsolidation,
@@ -283,6 +284,7 @@ def validate_report_inputs(
             return [f"归并结构合同校验失败：{exc}"]
 
         failures.extend(validate_persisted_consistency(persisted))
+        failures.extend(validate_consolidation_finalization(record, persisted))
 
         for item in persisted.result.canonical_requirements:
             if is_placeholder_canonical_name(item.canonical_name):

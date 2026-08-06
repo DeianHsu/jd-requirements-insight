@@ -180,7 +180,7 @@ def test_verify_passes_and_backfills_source_fields(
         session_factory = create_session_factory(engine)
         result = _make_result()
         with session_factory() as session:
-            job = session.query(JobDescription).get(job_id)
+            job = session.get(JobDescription, job_id)
             metadata = ExtractorMetadata(
                 model_name="test-model",
                 prompt_version="0.10",
@@ -259,7 +259,7 @@ def test_verify_rejects_fingerprint_mismatch(monkeypatch, tmp_path) -> None:
     try:
         session_factory = create_session_factory(engine)
         with session_factory() as session:
-            job = session.query(JobDescription).get(job_id)
+            job = session.get(JobDescription, job_id)
             metadata = ExtractorMetadata(
                 model_name="test-model",
                 prompt_version="0.10",

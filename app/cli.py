@@ -9,46 +9,96 @@ from rich.console import Console
 from rich.table import Table
 
 from app.config import load_llm_settings
+from app.candidates import (
+    write_consolidation_candidate,
+    write_extraction_candidates,
+)
 from app.consolidation import (
     ConsolidatorMetadata,
     OpenAICompatibleConsolidationClient,
-    consolidate_requirements,
     list_consolidations,
     load_consolidation_selection,
 )
+from app.consolidation_finalization import finalize_consolidation
 from app.consolidation_validation import (
     load_persisted_consolidation_result,
     validate_contract,
     validate_persisted_consistency,
 )
-from app.database import create_database_engine, create_session_factory, initialize_database
+from app.database import (
+    assert_current_database_schema,
+    create_database_engine,
+    create_session_factory,
+    initialize_database,
+    project_database_url,
+)
 from app.extraction import (
     ExtractorMetadata,
     OpenAICompatibleExtractionClient,
-    extract_jobs,
     list_extractions,
+)
+from app.extraction_finalization import finalize_extraction
+from app.finalization import (
+    audit_consolidation_identity,
+    audit_extraction_sources,
 )
 from app.market_analysis import build_market_statistics
 from app.market_report import build_market_report, validate_report_inputs
 from app.models import JobDescription
-from sqlalchemy import select
+from sqlalchemy import inspect, select
+from sqlalchemy.engine import make_url
 from app.ingestion import import_directory, list_jobs
 
 cli = typer.Typer(no_args_is_help=True, help="JD Skill Insight 本地数据工具")
 console = Console()
 
 
-def database_resources():
-    """为一次CLI调用创建数据库Engine、数据表和Session工厂。"""
-    engine = create_database_engine()
-    initialize_database(engine)
+def database_resources(
+    database_url: str | None,
+    use_project_database: bool,
+    *,
+    allow_create: bool = False,
+):
+    """打开显式选择的数据库；只读入口不创建不存在的 SQLite 文件。"""
+    if bool(database_url) == use_project_database:
+        console.print(
+            "[red]必须且只能选择 --database-url 或 "
+            "--use-project-database 之一。[/red]"
+        )
+        raise typer.Exit(code=2)
+    target = project_database_url() if use_project_database else database_url
+    assert target is not None
+    parsed = make_url(target)
+    if (
+        not allow_create
+        and parsed.drivername == "sqlite"
+        and parsed.database not in (None, ":memory:")
+        and not Path(parsed.database).exists()
+    ):
+        console.print(f"[red]数据库不存在：{parsed.database}[/red]")
+        raise typer.Exit(code=1)
+    engine = create_database_engine(target)
+    if allow_create:
+        initialize_database(engine)
+    else:
+        assert_current_database_schema(engine)
+        if not inspect(engine).get_table_names():
+            engine.dispose()
+            console.print("[red]数据库尚未初始化；只读命令不会创建业务表。[/red]")
+            raise typer.Exit(code=1)
     return engine, create_session_factory(engine)
 
 
 @cli.command("import-jds")
-def import_jds(directory: Path = typer.Argument(..., help="包含Markdown JD的目录")) -> None:
+def import_jds(
+    directory: Path = typer.Argument(..., help="包含Markdown JD的目录"),
+    database_url: str | None = typer.Option(None, "--database-url"),
+    use_project_database: bool = typer.Option(False, "--use-project-database"),
+) -> None:
     """把指定目录中的Markdown JD批量导入SQLite并显示汇总结果。"""
-    engine, session_factory = database_resources()
+    engine, session_factory = database_resources(
+        database_url, use_project_database, allow_create=True
+    )
     # 无论导入成功还是路径校验失败，都释放Engine持有的数据库连接资源。
     try:
         summary = import_directory(directory, session_factory)
@@ -73,9 +123,12 @@ def import_jds(directory: Path = typer.Argument(..., help="包含Markdown JD的�
 
 
 @cli.command("list-jds")
-def show_jds() -> None:
+def show_jds(
+    database_url: str | None = typer.Option(None, "--database-url"),
+    use_project_database: bool = typer.Option(False, "--use-project-database"),
+) -> None:
     """以表格形式列出已导入JD的摘要信息而不输出完整正文。"""
-    engine, session_factory = database_resources()
+    engine, session_factory = database_resources(database_url, use_project_database)
     # 查询结束后立即释放连接，避免Windows下SQLite文件长期被占用。
     try:
         jobs = list_jobs(session_factory)
@@ -118,8 +171,15 @@ def extract_jds(
     job_ids: list[int] | None = typer.Option(
         None, "--job-id", min=1, help="只抽取指定JD，可重复传入"
     ),
+    candidate_output: Path | None = typer.Option(
+        None,
+        "--candidate-output",
+        help="私有候选 JSON 输出路径；执行付费调用时必需",
+    ),
+    database_url: str | None = typer.Option(None, "--database-url"),
+    use_project_database: bool = typer.Option(False, "--use-project-database"),
 ) -> None:
-    """对选定JD执行v0.9抽取；付费调用必须显式--execute确认。"""
+    """对选定 JD 执行 v0.10 候选抽取；不写正式抽取表。"""
     if all_jobs and job_ids:
         console.print("[red]--all不能与--job-id同时使用。[/red]")
         raise typer.Exit(code=2)
@@ -127,7 +187,7 @@ def extract_jds(
     settings = load_llm_settings()
 
     # 只读计划：计算选择范围并展示，不初始化LLM客户端、不发起调用。
-    engine, session_factory = database_resources()
+    engine, session_factory = database_resources(database_url, use_project_database)
     try:
         with session_factory() as session:
             jobs = list(session.scalars(select(JobDescription).order_by(JobDescription.id)))
@@ -147,35 +207,43 @@ def extract_jds(
         console.print("[yellow]未执行：付费模型调用需要显式 --execute 确认。[/yellow]")
         raise typer.Exit(code=2)
 
+    if candidate_output is None:
+        console.print("[red]执行候选抽取必须显式指定 --candidate-output。[/red]")
+        raise typer.Exit(code=2)
+
     missing = settings.missing_fields()
     if missing:
         console.print(f"[red]缺少LLM配置：{', '.join(missing)}[/red]")
         console.print("请复制 .env.example 为 .env，并填写真实配置。")
         raise typer.Exit(code=1)
 
-    engine, session_factory = database_resources()
+    client = OpenAICompatibleExtractionClient(settings)
+    metadata = ExtractorMetadata(model_name=settings.model)
     try:
-        # 客户端和版本元数据在批次开始时固定，保证整批结果可以复现和比较。
-        client = OpenAICompatibleExtractionClient(settings)
-        metadata = ExtractorMetadata(model_name=settings.model)
-        summary = extract_jobs(
-            session_factory,
+        payload = write_extraction_candidates(
+            selected,
             client,
             metadata,
+            candidate_output,
             max_attempts=max_attempts,
-            limit=None if all_jobs or job_ids else limit,
-            job_ids=set(job_ids) if job_ids else None,
         )
-    finally:
-        engine.dispose()
+    except FileExistsError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
 
-    console.print(f"本次选择 [bold]{summary.discovered}[/bold] 份JD")
-    console.print(f"成功抽取 [green]{summary.extracted}[/green]")
-    console.print(f"同版本跳过 [yellow]{summary.skipped}[/yellow]")
-    console.print(f"失败 [red]{summary.failed}[/red]")
-    for error in summary.errors:
-        console.print(f"  [red]- JD {error.job_id} / {error.source_file}: {error.message}[/red]")
-    if summary.failed:
+    runs = payload["runs"]
+    failures = payload["failures"]
+    console.print(f"本次选择 [bold]{len(selected)}[/bold] 份JD")
+    console.print(f"候选成功 [green]{len(runs)}[/green]")
+    console.print(f"失败 [red]{len(failures)}[/red]")
+    console.print(f"候选文件：[cyan]{candidate_output}[/cyan]")
+    console.print("[yellow]候选结果未写入正式抽取表，需验收后 finalize。[/yellow]")
+    for error in failures:
+        console.print(
+            f"  [red]- JD {error['job_id']} / {error['source_file']}: "
+            f"{error['message']}[/red]"
+        )
+    if failures:
         raise typer.Exit(code=1)
 
 
@@ -194,8 +262,15 @@ def consolidate_requirements_cmd(
         "--extractor-version",
         help="选择覆盖全部目标JD的抽取器版本；存在多个共同版本时必须指定",
     ),
+    candidate_output: Path | None = typer.Option(
+        None,
+        "--candidate-output",
+        help="私有候选 JSON 输出路径；执行付费调用时必需",
+    ),
+    database_url: str | None = typer.Option(None, "--database-url"),
+    use_project_database: bool = typer.Option(False, "--use-project-database"),
 ) -> None:
-    """对选定JD范围内的要求实例执行跨JD原子要求归并并幂等保存。
+    """对选定 JD 范围生成一次归并候选，不写正式归并表。
 
     单次 LLM 聚类输出 canonical requirements（含来源分区）；无法与其他
     实例安全合并时，模型在单次聚类中为该实例创建 singleton canonical
@@ -209,7 +284,7 @@ def consolidate_requirements_cmd(
     settings = load_llm_settings()
 
     # 只读计划：装配语料池并展示，不初始化LLM客户端、不发起调用。
-    engine, session_factory = database_resources()
+    engine, session_factory = database_resources(database_url, use_project_database)
     try:
         try:
             with session_factory() as session:
@@ -236,47 +311,46 @@ def consolidate_requirements_cmd(
         console.print("[yellow]未执行：付费模型调用需要显式 --execute 确认。[/yellow]")
         raise typer.Exit(code=2)
 
+    if candidate_output is None:
+        console.print("[red]执行候选归并必须显式指定 --candidate-output。[/red]")
+        raise typer.Exit(code=2)
+
     missing = settings.missing_fields()
     if missing:
         console.print(f"[red]缺少LLM配置：{', '.join(missing)}[/red]")
         console.print("请复制 .env.example 为 .env，并填写真实配置。")
         raise typer.Exit(code=1)
 
-    engine, session_factory = database_resources()
+    client = OpenAICompatibleConsolidationClient(settings)
+    metadata = ConsolidatorMetadata(model_name=settings.model)
     try:
-        # 客户端和版本元数据在批次开始时固定，保证整批结果可以复现和比较。
-        client = OpenAICompatibleConsolidationClient(settings)
-        metadata = ConsolidatorMetadata(model_name=settings.model)
-        summary = consolidate_requirements(
-            session_factory,
+        payload = write_consolidation_candidate(
+            selection,
             client,
             metadata,
+            candidate_output,
             max_attempts=max_attempts,
-            job_ids=set(job_ids) if job_ids else None,
-            extractor_version=extractor_version,
         )
-    finally:
-        engine.dispose()
+    except (FileExistsError, ValueError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
 
-    console.print(f"语料池 [bold]{summary.discovered}[/bold] 条要求实例")
-    console.print(f"归并成功 [green]{summary.consolidated}[/green] 条")
-    console.print(f"标准要求项 [bold]{summary.canonical_count}[/bold] 个")
-    console.print(f"同版本跳过 [yellow]{summary.skipped}[/yellow]")
-    console.print(f"失败 [red]{summary.failed}[/red]")
-    if summary.consolidation_id is not None:
-        console.print(f"归并批次ID [bold]{summary.consolidation_id}[/bold]")
-    if summary.input_fingerprint is not None:
-        console.print(f"输入指纹 [cyan]{summary.input_fingerprint[:12]}[/cyan]")
-    for error in summary.errors:
-        console.print(f"  [red]- {error.scope}: {error.message}[/red]")
-    if summary.failed:
-        raise typer.Exit(code=1)
+    result = payload["result"]
+    console.print(f"语料池 [bold]{instance_count}[/bold] 条要求实例")
+    console.print(
+        f"候选标准要求项 [bold]{len(result['canonical_requirements'])}[/bold] 个"
+    )
+    console.print(f"候选文件：[cyan]{candidate_output}[/cyan]")
+    console.print("[yellow]候选结果未写入正式归并表，需审核后 finalize。[/yellow]")
 
 
 @cli.command("list-consolidations")
-def show_consolidations() -> None:
-    """以表格形式列出已持久化的归并批次摘要而不输出完整映射。"""
-    engine, session_factory = database_resources()
+def show_consolidations(
+    database_url: str | None = typer.Option(None, "--database-url"),
+    use_project_database: bool = typer.Option(False, "--use-project-database"),
+) -> None:
+    """以表格形式列出已持久化的正式归并批次摘要。"""
+    engine, session_factory = database_resources(database_url, use_project_database)
     try:
         consolidations = list_consolidations(session_factory)
     finally:
@@ -318,14 +392,11 @@ def validate_consolidation_cmd(
         min=1,
         help="显式指定要验证的持久化归并批次ID",
     ),
+    database_url: str | None = typer.Option(None, "--database-url"),
+    use_project_database: bool = typer.Option(False, "--use-project-database"),
 ) -> None:
-    """离线验证一个已持久化归并批次：合同与真实输入集合一致性。
-
-    不调用LLM、不隐式选择最新批次；coverage 以批次真实输入集合
-    （由 extraction_ids 回查 job_requirements）为分母计算，而不是用
-    已有 mappings 自证。任何一致性失败都会返回非零。
-    """
-    engine, session_factory = database_resources()
+    """离线验证一个已持久化归并批次：合同与真实输入集合一致性。"""
+    engine, session_factory = database_resources(database_url, use_project_database)
     try:
         persisted = load_persisted_consolidation_result(
             session_factory, consolidation_id
@@ -386,6 +457,8 @@ def generate_report_cmd(
         "--output",
         help="Markdown 报告输出路径；默认 reports/P0-5/market-report-<id>.md",
     ),
+    database_url: str | None = typer.Option(None, "--database-url"),
+    use_project_database: bool = typer.Option(False, "--use-project-database"),
 ) -> None:
     """从显式归并批次离线生成 Markdown 市场分析报告。
 
@@ -395,7 +468,7 @@ def generate_report_cmd(
     都拒绝生成并返回非零。报告为可再生派生产物，覆盖已有文件时会
     明确提示。
     """
-    engine, session_factory = database_resources()
+    engine, session_factory = database_resources(database_url, use_project_database)
     try:
         failures = validate_report_inputs(session_factory, consolidation_id)
         if failures:
@@ -434,9 +507,12 @@ def generate_report_cmd(
 
 
 @cli.command("list-extractions")
-def show_extractions() -> None:
+def show_extractions(
+    database_url: str | None = typer.Option(None, "--database-url"),
+    use_project_database: bool = typer.Option(False, "--use-project-database"),
+) -> None:
     """列出已持久化的结构化抽取版本及职责和要求数量。"""
-    engine, session_factory = database_resources()
+    engine, session_factory = database_resources(database_url, use_project_database)
     try:
         extractions = list_extractions(session_factory)
     finally:
@@ -465,6 +541,128 @@ def show_extractions() -> None:
             extraction.model_name,
         )
     console.print(table)
+
+
+@cli.command("audit-extraction-sources")
+def audit_extraction_sources_cmd(
+    database_url: str | None = typer.Option(None, "--database-url"),
+    use_project_database: bool = typer.Option(False, "--use-project-database"),
+) -> None:
+    """离线分类正式抽取的来源绑定状态，不修改数据库。"""
+    engine, session_factory = database_resources(database_url, use_project_database)
+    try:
+        items = audit_extraction_sources(session_factory)
+    finally:
+        engine.dispose()
+
+    if not items:
+        console.print("数据库中还没有正式抽取记录。")
+        return
+    table = Table(title=f"正式抽取来源审计（{len(items)}）")
+    table.add_column("Extraction", justify="right")
+    table.add_column("JD", justify="right")
+    table.add_column("状态")
+    table.add_column("缺失字段")
+    for item in items:
+        table.add_row(
+            str(item.extraction_id),
+            str(item.job_id),
+            item.status,
+            ", ".join(item.missing_fields) or "-",
+        )
+    console.print(table)
+
+
+@cli.command("audit-consolidation")
+def audit_consolidation_cmd(
+    consolidation_id: int = typer.Option(..., "--consolidation-id", min=1),
+    database_url: str | None = typer.Option(None, "--database-url"),
+    use_project_database: bool = typer.Option(False, "--use-project-database"),
+) -> None:
+    """只读显示一个正式归并批次的脱敏身份与可报告状态。"""
+    engine, session_factory = database_resources(database_url, use_project_database)
+    try:
+        try:
+            identity = audit_consolidation_identity(
+                session_factory, consolidation_id
+            )
+        except ValueError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=1) from exc
+    finally:
+        engine.dispose()
+    for key in (
+        "consolidation_id",
+        "scope_key",
+        "selected_job_ids",
+        "extraction_ids",
+        "extractor_version",
+        "consolidator_version",
+        "input_fingerprint",
+        "result_fingerprint",
+        "review_decisions_fingerprint",
+        "source_run_identifier",
+        "occurrence_count",
+        "canonical_count",
+        "mapping_count",
+        "reportable",
+    ):
+        value = identity[key]
+        if key.endswith("fingerprint") and isinstance(value, str):
+            value = value[:16] + "…"
+        console.print(f"{key}: {value}")
+    for failure in identity["failures"]:
+        console.print(f"  [red]- {failure}[/red]")
+    if not identity["reportable"]:
+        raise typer.Exit(code=1)
+
+
+@cli.command("finalize-extraction")
+def finalize_extraction_cmd(
+    report: Path = typer.Option(..., "--report"),
+    raw_output: Path = typer.Option(..., "--raw-output"),
+    job_id: int = typer.Option(..., "--job-id", min=1),
+    run_index: int = typer.Option(0, "--run-index", min=0),
+    database_url: str | None = typer.Option(None, "--database-url"),
+    use_project_database: bool = typer.Option(False, "--use-project-database"),
+) -> None:
+    """从已审核验收产物离线定稿正式抽取，不调用模型。"""
+    engine, _ = database_resources(database_url, use_project_database)
+    target = str(engine.url)
+    engine.dispose()
+    if finalize_extraction(
+        report_path=report,
+        raw_output_path=raw_output,
+        job_id=job_id,
+        run_index=run_index,
+        database_url=target,
+    ):
+        raise typer.Exit(code=1)
+
+
+@cli.command("finalize-consolidation")
+def finalize_consolidation_cmd(
+    report: Path = typer.Option(..., "--report"),
+    raw_output: Path = typer.Option(..., "--raw-output"),
+    run_index: int = typer.Option(0, "--run-index", min=0),
+    final_result: Path | None = typer.Option(None, "--final-result"),
+    review_decisions: Path | None = typer.Option(None, "--review-decisions"),
+    database_url: str | None = typer.Option(None, "--database-url"),
+    use_project_database: bool = typer.Option(False, "--use-project-database"),
+) -> None:
+    """从已审核验收产物离线定稿正式归并，不调用模型。"""
+    engine, _ = database_resources(database_url, use_project_database)
+    target = str(engine.url)
+    engine.dispose()
+    if finalize_consolidation(
+        report_path=report,
+        raw_output_path=raw_output,
+        run_index=run_index,
+        final_result_path=final_result,
+        review_decisions_path=review_decisions,
+        database_url=target,
+    ):
+        raise typer.Exit(code=1)
 
 
 def main() -> None:

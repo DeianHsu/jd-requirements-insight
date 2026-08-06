@@ -182,6 +182,12 @@ def main() -> int:
         default=Path("data/private/experiments/P0-4/precheck-result.json"),
         help="完整归并结果（含证据）输出路径",
     )
+    parser.add_argument(
+        "--database-url",
+        type=str,
+        required=True,
+        help="显式选择的数据库 URL",
+    )
     args = parser.parse_args()
 
     if not args.execute:
@@ -194,7 +200,7 @@ def main() -> int:
         print(f"缺少LLM配置：{', '.join(missing)}")
         return 1
 
-    engine = create_database_engine()  # 尊重 DATABASE_URL 环境变量
+    engine = create_database_engine(args.database_url)
     try:
         try:
             # 只读入口：查询前验证数据库属于当前结构，旧库明确拒绝。

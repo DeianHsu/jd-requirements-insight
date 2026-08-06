@@ -199,7 +199,12 @@ def _seed_market_db(database_path: Path) -> None:
                 session,
                 selection,
                 result,
-                {"model_response": {"canonical_requirements": []}},
+                {
+                    "model_response": {"canonical_requirements": []},
+                    "normalized_result": result.model_dump(mode="json"),
+                    "review_decisions_fingerprint": "synthetic-review",
+                    "source_run_identifier": "run-0",
+                },
                 metadata,
                 scope_key_for(job_ids or None),
             )
@@ -427,8 +432,9 @@ def test_cli_generate_report_offline(tmp_path, monkeypatch) -> None:
             "1",
             "--output",
             str(report_path),
+            "--database-url",
+            f"sqlite:///{db_path.as_posix()}",
         ],
-        env={"DATABASE_URL": f"sqlite:///{db_path.as_posix()}"},
     )
     assert result.exit_code == 0, result.output
     assert report_path.exists()
@@ -447,11 +453,36 @@ def test_cli_rejects_missing_batch(tmp_path) -> None:
     runner = CliRunner()
     result = runner.invoke(
         cli_module.cli,
-        ["generate-report", "--consolidation-id", "999"],
-        env={"DATABASE_URL": f"sqlite:///{db_path.as_posix()}"},
+        [
+            "generate-report",
+            "--consolidation-id",
+            "999",
+            "--database-url",
+            f"sqlite:///{db_path.as_posix()}",
+        ],
     )
     assert result.exit_code == 1
     assert "不存在" in result.output
+
+
+def test_report_rejects_unfinalized_consolidation(tmp_path) -> None:
+    """结构合法但缺少审核绑定的候选批次不得生成正式报告。"""
+    db_path = tmp_path / "market.db"
+    _seed_market_db(db_path)
+    engine = create_database_engine(f"sqlite:///{db_path.as_posix()}")
+    try:
+        session_factory = create_session_factory(engine)
+        with session_factory() as session:
+            batch = session.query(JobConsolidation).one()
+            raw_response = dict(batch.raw_response)
+            raw_response.pop("review_decisions_fingerprint")
+            batch.raw_response = raw_response
+            session.commit()
+        failures = validate_report_inputs(session_factory, 1)
+    finally:
+        engine.dispose()
+
+    assert any("缺少定稿元数据" in failure for failure in failures)
 
 
 def test_sample_limitation_is_dynamic(tmp_path) -> None:
@@ -706,8 +737,15 @@ def test_gate_failure_does_not_overwrite_output(tmp_path) -> None:
     runner = CliRunner()
     first = runner.invoke(
         cli_module.cli,
-        ["generate-report", "--consolidation-id", "1", "--output", str(report_path)],
-        env={"DATABASE_URL": f"sqlite:///{db_path.as_posix()}"},
+        [
+            "generate-report",
+            "--consolidation-id",
+            "1",
+            "--output",
+            str(report_path),
+            "--database-url",
+            f"sqlite:///{db_path.as_posix()}",
+        ],
     )
     assert first.exit_code == 0
     original = report_path.read_text(encoding="utf-8")
@@ -725,8 +763,15 @@ def test_gate_failure_does_not_overwrite_output(tmp_path) -> None:
 
     second = runner.invoke(
         cli_module.cli,
-        ["generate-report", "--consolidation-id", "1", "--output", str(report_path)],
-        env={"DATABASE_URL": f"sqlite:///{db_path.as_posix()}"},
+        [
+            "generate-report",
+            "--consolidation-id",
+            "1",
+            "--output",
+            str(report_path),
+            "--database-url",
+            f"sqlite:///{db_path.as_posix()}",
+        ],
     )
     assert second.exit_code == 1
     assert report_path.read_text(encoding="utf-8") == original

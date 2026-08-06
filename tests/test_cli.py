@@ -10,6 +10,10 @@ from app.cli import cli
 runner = CliRunner()
 
 
+def _database_args(path: Path) -> list[str]:
+    return ["--database-url", f"sqlite:///{path.as_posix()}"]
+
+
 def test_cli_import_and_list(tmp_path: Path, monkeypatch) -> None:
     """验证CLI能把一份Markdown JD导入临时数据库并在列表中显示。"""
     # 动态创建测试JD，使测试不依赖项目中的真实招聘数据。
@@ -35,8 +39,10 @@ salary: 15-25K
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{database_path.as_posix()}")
 
     # 使用Typer测试运行器模拟用户连续执行导入和列表命令。
-    imported = runner.invoke(cli, ["import-jds", str(jd_directory)])
-    listed = runner.invoke(cli, ["list-jds"])
+    imported = runner.invoke(
+        cli, ["import-jds", str(jd_directory), *_database_args(database_path)]
+    )
+    listed = runner.invoke(cli, ["list-jds", *_database_args(database_path)])
 
     assert imported.exit_code == 0
     assert "成功导入 1" in imported.stdout
@@ -74,6 +80,44 @@ def test_cli_consolidate_requires_explicit_scope() -> None:
     assert "必须且只能选择--all或--job-id之一" in result.stdout
 
 
+def test_cli_database_target_must_be_explicit(tmp_path: Path) -> None:
+    """数据库命令必须且只能显式选择一个目标。"""
+    missing = runner.invoke(cli, ["list-jds"])
+    both = runner.invoke(
+        cli,
+        [
+            "list-jds",
+            "--database-url",
+            f"sqlite:///{(tmp_path / 'x.db').as_posix()}",
+            "--use-project-database",
+        ],
+    )
+
+    assert missing.exit_code == 2
+    assert both.exit_code == 2
+    assert "必须且只能选择" in missing.stdout
+    assert "必须且只能选择" in both.stdout
+
+
+def test_read_command_does_not_create_missing_database(tmp_path: Path) -> None:
+    """只读入口指向不存在的 SQLite 时拒绝且不创建文件。"""
+    database_path = tmp_path / "missing.db"
+    result = runner.invoke(cli, ["list-jds", *_database_args(database_path)])
+
+    assert result.exit_code == 1
+    assert not database_path.exists()
+
+
+def test_read_command_does_not_initialize_empty_database(tmp_path: Path) -> None:
+    """只读入口面对已有空文件时拒绝创建业务表。"""
+    database_path = tmp_path / "empty.db"
+    database_path.touch()
+    result = runner.invoke(cli, ["list-jds", *_database_args(database_path)])
+
+    assert result.exit_code == 1
+    assert "不会创建业务表" in result.stdout
+
+
 def test_cli_consolidate_reports_empty_pool_error(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -82,12 +126,20 @@ def test_cli_consolidate_reports_empty_pool_error(
 
     database_path = tmp_path / "cli_consolidate.db"
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{database_path.as_posix()}")
+    from app.database import create_database_engine, initialize_database
+
+    engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
+    initialize_database(engine)
+    engine.dispose()
     monkeypatch.setattr(
         "app.cli.load_llm_settings",
         lambda: LLMSettings(api_key="test-key", model="test-model"),
     )
 
-    result = runner.invoke(cli, ["consolidate-requirements", "--all"])
+    result = runner.invoke(
+        cli,
+        ["consolidate-requirements", "--all", *_database_args(database_path)],
+    )
 
     assert result.exit_code == 1
     assert "选定范围内没有JD" in result.stdout
@@ -117,7 +169,7 @@ def test_cli_list_consolidations_empty_and_with_records(
     initialize_database(engine)
     session_factory = create_session_factory(engine)
 
-    empty = runner.invoke(cli, ["list-consolidations"])
+    empty = runner.invoke(cli, ["list-consolidations", *_database_args(database_path)])
     assert empty.exit_code == 0
     assert "还没有归并批次" in empty.stdout
 
@@ -198,7 +250,7 @@ def test_cli_list_consolidations_empty_and_with_records(
         session.commit()
         engine.dispose()
 
-    listed = runner.invoke(cli, ["list-consolidations"])
+    listed = runner.invoke(cli, ["list-consolidations", *_database_args(database_path)])
     assert listed.exit_code == 0
     assert "已持久化归并批次" in listed.stdout
     assert "all" in listed.stdout
@@ -210,6 +262,7 @@ def test_cli_list_consolidations_empty_and_with_records(
             "validate-consolidation",
             "--consolidation-id",
             "1",
+            *_database_args(database_path),
         ],
     )
     missing = runner.invoke(
@@ -218,6 +271,7 @@ def test_cli_list_consolidations_empty_and_with_records(
             "validate-consolidation",
             "--consolidation-id",
             "999",
+            *_database_args(database_path),
         ],
     )
 
@@ -414,7 +468,10 @@ def test_validate_consolidation_full_batch_passes(
     """完整批次验证通过（coverage 以真实输入为分母）。"""
     _seed_validate_batch(tmp_path, monkeypatch)
 
-    result = runner.invoke(cli, ["validate-consolidation", "--consolidation-id", "1"])
+    result = runner.invoke(
+        cli,
+        ["validate-consolidation", "--consolidation-id", "1", *_database_args(tmp_path / "validate.db")],
+    )
 
     assert result.exit_code == 0
     assert "真实输入实例数 2" in result.stdout
@@ -428,7 +485,10 @@ def test_validate_consolidation_missing_mapping_fails(
     _seed_validate_batch(tmp_path, monkeypatch)
     _mutate_validate_batch(tmp_path, "drop_mapping")
 
-    result = runner.invoke(cli, ["validate-consolidation", "--consolidation-id", "1"])
+    result = runner.invoke(
+        cli,
+        ["validate-consolidation", "--consolidation-id", "1", *_database_args(tmp_path / "validate.db")],
+    )
 
     assert result.exit_code == 1
     assert "coverage=50.00%" in result.stdout
@@ -442,7 +502,10 @@ def test_validate_consolidation_wrong_occurrence_count_fails(
     _seed_validate_batch(tmp_path, monkeypatch)
     _mutate_validate_batch(tmp_path, "wrong_occurrence_count")
 
-    result = runner.invoke(cli, ["validate-consolidation", "--consolidation-id", "1"])
+    result = runner.invoke(
+        cli,
+        ["validate-consolidation", "--consolidation-id", "1", *_database_args(tmp_path / "validate.db")],
+    )
 
     assert result.exit_code == 1
     assert "occurrence_count 与真实输入不一致" in result.stdout
@@ -455,7 +518,10 @@ def test_validate_consolidation_source_gap_fails(
     _seed_validate_batch(tmp_path, monkeypatch)
     _mutate_validate_batch(tmp_path, "source_gap")
 
-    result = runner.invoke(cli, ["validate-consolidation", "--consolidation-id", "1"])
+    result = runner.invoke(
+        cli,
+        ["validate-consolidation", "--consolidation-id", "1", *_database_args(tmp_path / "validate.db")],
+    )
 
     assert result.exit_code == 1
     assert "来源分区遗漏 requirement_id：[2]" in result.stdout
@@ -468,7 +534,10 @@ def test_validate_consolidation_mapping_conflict_fails(
     _seed_validate_batch(tmp_path, monkeypatch)
     _mutate_validate_batch(tmp_path, "mapping_conflict")
 
-    result = runner.invoke(cli, ["validate-consolidation", "--consolidation-id", "1"])
+    result = runner.invoke(
+        cli,
+        ["validate-consolidation", "--consolidation-id", "1", *_database_args(tmp_path / "validate.db")],
+    )
 
     assert result.exit_code == 1
     assert "mapping 与来源分区归属冲突" in result.stdout

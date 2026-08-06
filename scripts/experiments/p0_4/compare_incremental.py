@@ -96,8 +96,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--database-url",
         type=str,
-        default="sqlite:///data/jd_skill_insight.db",
-        help="数据库URL",
+        required=True,
+        help="显式选择的数据库 URL",
     )
     return parser.parse_args()
 

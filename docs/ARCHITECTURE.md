@@ -6,9 +6,11 @@
 
 ```text
 JD 导入
-→ v0.10 + Schema V3 结构化抽取（两段式：发现段 + 判断段）
+→ v0.10 + Schema V3 抽取候选（私有 JSON，不入正式表）
 → 抽取质量验证（P0-3A 规则场景 / P0-3B 真实 JD）
-→ requirement instance 归并为 canonical requirement（唯一映射）
+→ finalize-extraction 定稿正式 requirement instance
+→ canonical requirement 归并候选（私有 JSON）
+→ 稳定性分析、人工裁决与 finalize-consolidation 定稿
 → 独立 JD 统计（app/market_analysis.py）
 → 原文证据追溯
 → Markdown 市场分析报告
@@ -21,11 +23,16 @@ JD 导入
 | `app/ingestion.py` | Markdown JD 导入与去重 |
 | `app/extraction.py` / `app/extraction_two_stage.py` | v0.10 两段式抽取（发现段全局扫描、判断段局部判断）、证据校验、有限重试 |
 | `app/extraction_validation.py` | 抽取合同检查、锚点化变形比较、规则场景属性检查 |
+| `app/candidates.py` | 抽取/归并模型候选 JSON 生成；不得写正式业务表 |
+| `app/extraction_finalization.py` | 抽取验收身份、审核绑定、指纹和原子定稿合同 |
 | `app/requirement_consolidation.py` | 归并输入/输出合同与确定性一致性校验 |
-| `app/consolidation.py` | 单次 LLM 聚类归并（canonical + 来源分区）、确定性 mappings、幂等持久化 |
+| `app/consolidation.py` | 单次 LLM 聚类、确定性 mappings 与正式定稿所需的底层持久化能力 |
 | `app/consolidation_validation.py` | 归并合同校验、positive-pair Jaccard、canonical/singleton 漂移、验收报告 |
+| `app/consolidation_finalization.py` | 归并审核绑定、裁决指纹、精确覆盖和原子定稿合同 |
+| `app/finalization.py` | 正式结果共同门禁、批次身份审计与抽取来源状态分类 |
 | `app/market_analysis.py` | 市场统计：实例数、独立 JD 数、importance 双口径（实例级/JD 级）、来源 JD 集合、原始 requirement/evidence、稳定排序（独立 JD 数优先） |
-| `app/cli.py` | 本地 CLI（import-jds / extract-jds / consolidate-requirements / list-* / validate-consolidation） |
+| `app/market_report.py` | 只消费完成定稿的归并批次并确定性生成 Markdown 报告 |
+| `app/cli.py` | 显式数据库目标的候选、定稿、审计、验证与报告入口 |
 | `app/models.py` / `app/database.py` | ORM 模型与数据库初始化 |
 
 ## 架构理由
@@ -67,6 +74,21 @@ cluster，确定性代码负责把 cluster 展开为 mappings。归并持久化�
 （validate-consolidation）按批次记录的 extraction_ids 回查原始输入集合
 作为 coverage 分母，不用已有 mappings 自证。唯一映射使统计口径确定：
 每个实例计数一次，每份 JD 对一个 canonical 只计一次独立 JD 数。
+
+### 为什么候选使用私有文件、正式结果使用数据库
+
+抽取与归并模型运行具有随机性，单次结构合法不等于已经通过稳定性和人工
+审核。模型入口只写显式私有 JSON；`finalize-extraction` 与
+`finalize-consolidation` 核对输入、运行、审核和结果指纹后，才允许原子写入
+正式业务表。这样无需候选状态机，正式表仍保持“可统计、可报告”的单一语义。
+报告门禁要求归并批次具有审核决定指纹和来源运行标识，结构合法但未定稿的
+候选不能成为市场结论。
+
+### 为什么数据库目标必须显式选择
+
+所有 CLI 数据库操作必须选择 `--database-url` 或
+`--use-project-database`，二者不能同时使用。只读入口不会创建不存在的
+SQLite 文件；实验与正式数据库因此不会因环境变量或默认路径被静默混用。
 
 ### 市场频率口径
 
