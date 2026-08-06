@@ -597,6 +597,88 @@ def test_backfill_rejects_invalid_reviewed_at(monkeypatch, tmp_path) -> None:
     assert _read_batch(db_path).get("reviewed_by") is None
 
 
+def test_backfill_rejects_raw_run_fingerprint_content_mismatch(
+    monkeypatch, tmp_path
+) -> None:
+    """批准运行记录指纹与其 result 内容不一致时拒绝。"""
+    db_path = tmp_path / "backfill.db"
+    ctx = _seed_batch(db_path, decisions_fp=_real_decisions_fp())
+    report_path, raw_path, decisions_path, final_path = _write_inputs(
+        tmp_path, ctx
+    )
+    raw = json.loads(raw_path.read_text(encoding="utf-8"))
+    raw["runs"][0]["result_fingerprint"] = "content-mismatch"
+    raw_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+
+    assert (
+        _run_backfill(
+            monkeypatch,
+            tmp_path,
+            report_path,
+            raw_path,
+            decisions_path,
+            final_path,
+            db_path,
+        )
+        == 1
+    )
+    assert _read_batch(db_path).get("reviewed_by") is None
+
+
+def test_backfill_rejects_raw_identity_mismatch(monkeypatch, tmp_path) -> None:
+    """raw 整轮身份与批次不一致时拒绝（防止传错批次的 raw 文件）。"""
+    db_path = tmp_path / "backfill.db"
+    ctx = _seed_batch(db_path, decisions_fp=_real_decisions_fp())
+    report_path, raw_path, decisions_path, final_path = _write_inputs(
+        tmp_path, ctx
+    )
+    raw = json.loads(raw_path.read_text(encoding="utf-8"))
+    raw["selected_job_ids"] = [999]
+    raw_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+
+    assert (
+        _run_backfill(
+            monkeypatch,
+            tmp_path,
+            report_path,
+            raw_path,
+            decisions_path,
+            final_path,
+            db_path,
+        )
+        == 1
+    )
+    assert _read_batch(db_path).get("reviewed_by") is None
+
+
+def test_backfill_rejects_approved_run_identifier_mismatch(
+    monkeypatch, tmp_path
+) -> None:
+    """批准运行标识与 run-N 不一致时拒绝。"""
+    db_path = tmp_path / "backfill.db"
+    ctx = _seed_batch(db_path, decisions_fp=_real_decisions_fp())
+    report_path, raw_path, decisions_path, final_path = _write_inputs(
+        tmp_path, ctx
+    )
+    raw = json.loads(raw_path.read_text(encoding="utf-8"))
+    raw["runs"][0]["run_identifier"] = "run-9"
+    raw_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+
+    assert (
+        _run_backfill(
+            monkeypatch,
+            tmp_path,
+            report_path,
+            raw_path,
+            decisions_path,
+            final_path,
+            db_path,
+        )
+        == 1
+    )
+    assert _read_batch(db_path).get("reviewed_by") is None
+
+
 def test_backfill_rejects_replay_mismatch(monkeypatch, tmp_path) -> None:
     """重放（批准运行 + 审核决定）结果与当前持久化结果不一致时拒绝。"""
     db_path = tmp_path / "backfill.db"

@@ -24,7 +24,15 @@ approved_run_index / approved_result_fingerprint / final_result_fingerprint，
    **其 result 内容指纹与其声明 result_fingerprint 一致**；
 5. 历史最终结果指纹等于当前数据库持久化结果指纹（复算），且
    **重放（批准运行 + 审核决定）结果指纹也等于当前持久化结果**；
-6. 批次已有任一目标字段与待补值不同 → 拒绝，不覆盖。
+6. raw 的整轮身份（存在字段）与批次一致（缺失字段由验收报告身份兜底）；
+   批准运行的记录指纹（存在时）与其 result 内容一致；
+7. 批次已有任一目标字段与待补值不同 → 拒绝，不覆盖。
+
+**证明强度说明**：本脚本对"当前结果可由来源运行 + 审核决定确定性重建"
+给出机器可验证证明（重放）；对审核人/审核时间（reviewed_by /
+reviewed_at 等）只能给出验收报告文件的声明记录——旧批次未保存报告
+文件指纹锚点，人工审核行为本身无法被机器复核，这是人工审核体系的
+固有边界，不代表审核未发生。
 
 已有字段一致则幂等跳过。输出补齐记录
 `reports/P0-4/consolidation-backfill-<id>.json`。
@@ -193,6 +201,28 @@ def main() -> int:
             # 3. 历史最终结果与验收报告/批次证据链一致。
             approved_index = review.get("approved_run_index")
             runs = raw.get("runs") or []
+            # raw 整轮身份必须与批次一致（防止传错批次的 raw 文件）。
+            # 旧格式 raw（如 acceptance-final.json）顶层缺少
+            # prompt_version/schema_version 等字段：存在的字段必须与
+            # 批次一致，缺失字段由验收报告身份（已校验 == 批次）兜底。
+            raw_identity = {
+                field: raw.get(field)
+                for field in (
+                    "input_fingerprint",
+                    "extractor_version",
+                    "selected_job_ids",
+                    "model",
+                    "prompt_version",
+                    "schema_version",
+                )
+            }
+            for field, expected in batch_identity.items():
+                raw_value = raw_identity.get(field)
+                if raw_value is not None and raw_value != expected:
+                    findings.append(
+                        f"raw 整轮 {field}（{raw_value}）与批次"
+                        f"（{expected}）不一致"
+                    )
             if (
                 not isinstance(approved_index, int)
                 or isinstance(approved_index, bool)
@@ -202,7 +232,31 @@ def main() -> int:
                     f"批准运行索引（{approved_index!r}）非法或超出 raw 运行范围"
                 )
             else:
-                approved_fp = _run_fingerprint(runs[approved_index])
+                # 批准运行的记录指纹必须与其 result 内容一致（存在时），
+                # 防止记录指纹与内容被分别篡改。
+                run = runs[approved_index]
+                try:
+                    run_content_fp = result_fingerprint(
+                        RequirementConsolidationResult.model_validate(run["result"])
+                    )
+                except (KeyError, ValueError) as exc:
+                    findings.append(f"批准运行 result 不合法：{exc}")
+                    run_content_fp = None
+                recorded_run_fp = run.get("result_fingerprint")
+                if run_content_fp is not None and recorded_run_fp not in (
+                    None,
+                    run_content_fp,
+                ):
+                    findings.append(
+                        "批准运行记录指纹与其 result 内容指纹不一致"
+                    )
+                run_identifier = run.get("run_identifier")
+                if run_identifier not in (None, f"run-{approved_index}"):
+                    findings.append(
+                        f"批准运行标识（{run_identifier}）与 run-"
+                        f"{approved_index} 不一致"
+                    )
+                approved_fp = _run_fingerprint(run)
                 if approved_fp != review.get("approved_result_fingerprint"):
                     findings.append(
                         "raw 批准运行指纹与验收报告 approved_result_fingerprint 不一致"
