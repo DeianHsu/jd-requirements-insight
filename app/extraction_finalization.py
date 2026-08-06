@@ -58,9 +58,32 @@ def _identity_failures(
             failures.append(f"整轮身份字段缺失：{field}")
         elif report_identity[field] != raw_identity[field]:
             failures.append(f"report 与 raw 的整轮身份不一致（{field}）")
-    job_ids = raw_identity.get("job_ids")
-    if not isinstance(job_ids, list) or job.id not in job_ids:
+    # 整轮 JD 集合一致性（新格式产物必查；旧产物缺字段时不强制）。
+    report_job_ids = report_identity.get("job_ids")
+    raw_job_ids = raw_identity.get("job_ids")
+    if raw_job_ids is not None and (
+        not isinstance(raw_job_ids, list) or job.id not in raw_job_ids
+    ):
         failures.append("raw 整轮 JD 集合不包含定稿 JD")
+    if report_job_ids is not None and report_job_ids != raw_job_ids:
+        failures.append("report 与 raw 的整轮 JD 集合不一致")
+    report_entry_job_ids = sorted(
+        entry.get("job_id")
+        for entry in report.get("jobs") or []
+        if isinstance(entry, dict) and entry.get("job_id") is not None
+    )
+    if raw_job_ids is not None and report_entry_job_ids != sorted(raw_job_ids):
+        failures.append("report jobs 的 JD 集合与 raw 整轮 JD 集合不一致")
+    for field in ("runs", "max_attempts"):
+        report_value = report_identity.get(field)
+        raw_value = raw_identity.get(field)
+        if report_value is not None and raw_value is not None and report_value != raw_value:
+            failures.append(f"report 与 raw 的 {field} 不一致")
+    for field in ("jd_set_fingerprint",):
+        report_value = report_identity.get(field)
+        raw_value = raw_identity.get(field)
+        if report_value is not None and raw_value is not None and report_value != raw_value:
+            failures.append(f"report 与 raw 的 {field} 不一致")
     if entry.get("input_fingerprint") != compute_input_fingerprint(job.raw_text):
         failures.append("报告条目输入指纹与 JD 原文不一致")
     return failures

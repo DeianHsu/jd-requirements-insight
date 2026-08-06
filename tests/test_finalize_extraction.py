@@ -566,6 +566,44 @@ def test_finalize_batch_acceptance_finalizes_each_job(
         engine.dispose()
 
 
+def test_finalize_rejects_report_raw_job_set_mismatch(
+    monkeypatch, tmp_path
+) -> None:
+    """report 与 raw 的整轮 JD 集合不一致时拒绝（身份合同统一）。"""
+    db_path = tmp_path / "finalize.db"
+    job_1 = _seed_job(db_path)
+    job_2 = _seed_job(
+        db_path,
+        hash_seed="d",
+        title="大模型应用开发工程师",
+        source_file="jd-005.md",
+    )
+    report_path, raw_path = _write_acceptance(
+        tmp_path, db_path, job_1, job_ids=[job_1, job_2]
+    )
+    raw = json.loads(raw_path.read_text(encoding="utf-8"))
+    raw["identity"]["job_ids"] = [job_1, 999]  # report 仍为 [job_1, job_2]
+    raw_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+
+    assert _run_finalize(
+        monkeypatch, tmp_path, report_path, raw_path, db_path, job_id=job_1
+    ) == 1
+
+
+def test_finalize_rejects_run_count_mismatch(monkeypatch, tmp_path) -> None:
+    """report 与 raw 的 runs 不一致时拒绝。"""
+    db_path = tmp_path / "finalize.db"
+    job_id = _seed_job(db_path)
+    report_path, raw_path = _write_acceptance(tmp_path, db_path, job_id)
+    raw = json.loads(raw_path.read_text(encoding="utf-8"))
+    raw["identity"]["runs"] = "2"
+    raw_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+
+    assert _run_finalize(
+        monkeypatch, tmp_path, report_path, raw_path, db_path, job_id=job_id
+    ) == 1
+
+
 def test_finalize_rejects_foreign_acceptance_run(monkeypatch, tmp_path) -> None:
     """report 与另一轮验收（相同结果但 run_identifier 不同）的 raw 混用拒绝。"""
     db_path = tmp_path / "finalize.db"

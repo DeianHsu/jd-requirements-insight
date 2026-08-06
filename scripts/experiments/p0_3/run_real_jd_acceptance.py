@@ -227,14 +227,18 @@ def main() -> int:
     hard_gate_failures: list[str] = []
     warnings: list[str] = []
     diagnostics: list[str] = []
-    # 整轮验收身份：report 与 raw 共享 run_identifier，定稿时核对
-    # 防止不同实验的产物混用（局部运行名 job4_run0 跨实验相同）。
+    # 整轮验收身份：report 与 raw 共用同一对象（含 job_ids 与 JD 集合
+    # 指纹），定稿时逐字段核对，防止不同实验的产物混用（局部运行名
+    # job4_run0 跨实验相同）或 report/raw 指向不同 JD 集合。
     acceptance_identity = {
         "run_identifier": run_identifier,
         "model": metadata.model_name,
         "prompt_version": metadata.prompt_version,
         "schema_version": metadata.schema_version,
         "job_ids": [job.id for job in jobs],
+        "jd_set_fingerprint": compute_input_fingerprint(
+            "\n".join(job.raw_text for job in jobs)
+        ),
         "runs": str(args.runs),
         "max_attempts": str(args.max_attempts),
     }
@@ -395,25 +399,13 @@ def main() -> int:
     diagnostics.append(f"candidate_requirement_total={candidate_total}")
     diagnostics.append("p0_4_input_instances: 以 v0.10 抽取结果重新验收为准（只读统计，未执行归并）")
 
-    identity = {
-        "model": metadata.model_name,
-        "prompt_version": metadata.prompt_version,
-        "schema_version": metadata.schema_version,
-        "jd_set_fingerprint": compute_input_fingerprint(
-            "\n".join(job.raw_text for job in jobs)
-        ),
-        "job_count": str(len(jobs)),
-        "runs": str(args.runs),
-        "max_attempts": str(args.max_attempts),
-        "run_identifier": run_identifier,
-        "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-    }
     hard_gate_failures = sorted(set(hard_gate_failures))
     warnings = sorted(set(warnings))
     diagnostics = sorted(set(diagnostics))
     payload = {
-        "identity": identity,
+        "identity": dict(acceptance_identity),
         "track": "B",
+        "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "jobs": job_reports,
         "audit_samples": audit_samples,
         "hard_gate_failures": hard_gate_failures,
