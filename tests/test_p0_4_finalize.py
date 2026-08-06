@@ -535,6 +535,181 @@ def test_apply_review_decisions_must_link_explicit_name(
     assert merged["canonical_name"] == "数据分析经验与学历"
 
 
+def test_apply_unresolved_preserve_source_keeps_partition(
+    monkeypatch, tmp_path
+) -> None:
+    """unresolved preserve_source=true：保留来源运行当前分区，不拆全部。"""
+    db_path = tmp_path / "finalize.db"
+    _seed_database(db_path)
+    _, raw_path = _write_inputs(tmp_path, db_path)
+    raw = json.loads(raw_path.read_text(encoding="utf-8"))
+    # 来源运行把 2、3 并入同一 canonical。
+    result = raw["runs"][0]["result"]
+    result["canonical_requirements"] = [
+        result["canonical_requirements"][0],
+        {
+            "canonical_requirement_id": "cr-2",
+            "canonical_name": "数据分析经验与学历",
+            "source_requirement_ids": [2, 3],
+            "rationale": "测试",
+            "confidence": 0.9,
+        },
+    ]
+    result["mappings"][2]["canonical_requirement_id"] = "cr-2"
+    raw_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+
+    decisions_path = tmp_path / "decisions.json"
+    decisions_path.write_text(
+        json.dumps(
+            {
+                "input_fingerprint": raw["input_fingerprint"],
+                "extractor_version": raw["extractor_version"],
+                "selected_job_ids": [1],
+                "model": "test-model",
+                "prompt_version": CONSOLIDATION_PROMPT_VERSION,
+                "schema_version": CONSOLIDATION_SCHEMA_VERSION,
+                "reviewed_by": "tester",
+                "reviewed_at": "2026-08-04T00:00:00+00:00",
+                "decisions": [
+                    {
+                        "decision": "unresolved",
+                        "requirement_ids": [2, 3],
+                        "preserve_source": True,
+                        "rationale": "测试保留",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        _run_apply_review_decisions(
+            monkeypatch, tmp_path, raw_path, decisions_path, db_path
+        )
+        == 0
+    )
+    final = json.loads((tmp_path / "final.json").read_text(encoding="utf-8"))
+    result = final["result"]
+    member_to_cid = {
+        rid: c["canonical_requirement_id"]
+        for c in result["canonical_requirements"]
+        for rid in c["source_requirement_ids"]
+    }
+    assert member_to_cid[2] == member_to_cid[3]  # 保留来源合并态
+
+
+def test_apply_unresolved_groups_splits_between_groups(
+    monkeypatch, tmp_path
+) -> None:
+    """unresolved 显式分组 [2,3] 与 [1]：组内合并、组间拆开。"""
+    db_path = tmp_path / "finalize.db"
+    _seed_database(db_path)
+    _, raw_path = _write_inputs(tmp_path, db_path)
+    raw = json.loads(raw_path.read_text(encoding="utf-8"))
+    # 来源运行 1/2/3 全在同一 canonical。
+    result = raw["runs"][0]["result"]
+    result["canonical_requirements"] = [
+        {
+            "canonical_requirement_id": "cr-0",
+            "canonical_name": "合并条件",
+            "source_requirement_ids": [1, 2, 3],
+            "rationale": "测试",
+            "confidence": 0.9,
+        }
+    ]
+    for mapping in result["mappings"]:
+        mapping["canonical_requirement_id"] = "cr-0"
+    raw_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+
+    decisions_path = tmp_path / "decisions.json"
+    decisions_path.write_text(
+        json.dumps(
+            {
+                "input_fingerprint": raw["input_fingerprint"],
+                "extractor_version": raw["extractor_version"],
+                "selected_job_ids": [1],
+                "model": "test-model",
+                "prompt_version": CONSOLIDATION_PROMPT_VERSION,
+                "schema_version": CONSOLIDATION_SCHEMA_VERSION,
+                "reviewed_by": "tester",
+                "reviewed_at": "2026-08-04T00:00:00+00:00",
+                "decisions": [
+                    {
+                        "decision": "unresolved",
+                        "requirement_ids": [1, 2, 3],
+                        "groups": [[2, 3], [1]],
+                        "rationale": "测试分组",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        _run_apply_review_decisions(
+            monkeypatch, tmp_path, raw_path, decisions_path, db_path
+        )
+        == 0
+    )
+    final = json.loads((tmp_path / "final.json").read_text(encoding="utf-8"))
+    result = final["result"]
+    member_to_cid = {
+        rid: c["canonical_requirement_id"]
+        for c in result["canonical_requirements"]
+        for rid in c["source_requirement_ids"]
+    }
+    assert member_to_cid[2] == member_to_cid[3]  # 组内合并
+    assert member_to_cid[1] != member_to_cid[2]  # 组间拆开
+    names = [c["canonical_name"] for c in result["canonical_requirements"]]
+    assert len(names) == len(set(names))  # 无重复名称
+    assert len(result["mappings"]) == 3  # 完整唯一覆盖
+
+
+def test_apply_unresolved_without_structure_rejected(
+    monkeypatch, tmp_path
+) -> None:
+    """unresolved 缺少 groups/preserve_source 时拒绝应用。"""
+    db_path = tmp_path / "finalize.db"
+    _seed_database(db_path)
+    _, raw_path = _write_inputs(tmp_path, db_path)
+    raw = json.loads(raw_path.read_text(encoding="utf-8"))
+    decisions_path = tmp_path / "decisions.json"
+    decisions_path.write_text(
+        json.dumps(
+            {
+                "input_fingerprint": raw["input_fingerprint"],
+                "extractor_version": raw["extractor_version"],
+                "selected_job_ids": [1],
+                "model": "test-model",
+                "prompt_version": CONSOLIDATION_PROMPT_VERSION,
+                "schema_version": CONSOLIDATION_SCHEMA_VERSION,
+                "reviewed_by": "tester",
+                "reviewed_at": "2026-08-04T00:00:00+00:00",
+                "decisions": [
+                    {
+                        "decision": "unresolved",
+                        "requirement_ids": [1, 2, 3],
+                        "rationale": "缺结构",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        _run_apply_review_decisions(
+            monkeypatch, tmp_path, raw_path, decisions_path, db_path
+        )
+        == 1
+    )
+
+
 def test_apply_review_decisions_rejects_identity_mismatch(
     monkeypatch, tmp_path
 ) -> None:

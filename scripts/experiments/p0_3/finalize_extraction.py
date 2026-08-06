@@ -37,10 +37,9 @@ from app.database import (
 )
 from app.extraction import (
     extraction_result_fingerprint,
-    persist_extraction,
     rebuild_extraction_result,
 )
-from app.models import JobDescription, JobExtraction
+from app.models import JobDescription, JobExtraction, JobRequirement
 from app.schemas import JobExtractionResult
 
 
@@ -80,22 +79,88 @@ def parse_args() -> argparse.Namespace:
 
 
 def _validate_identity(
-    report_entry: dict, raw: dict, job: JobDescription, run_count: int
+    report: dict,
+    report_entry: dict,
+    raw: dict,
+    job: JobDescription,
+    run_count: int,
 ) -> list[str]:
-    """报告与 raw 的身份核对（job_id、指纹、版本、运行数量）。"""
+    """报告顶层、JD 条目与 raw 的整轮身份核对。
+
+    覆盖：report 顶层通过、运行数严格一致、整轮 run identity 一致、
+    JD 集合/版本/输入指纹一致、身份字段缺失拒绝。
+    """
     failures: list[str] = []
+    if report.get("passed") is not True:
+        failures.append("报告顶层未通过（passed != true）")
+    if report.get("hard_gate_failures"):
+        failures.append(f"报告顶层存在 hard gate：{report['hard_gate_failures']}")
     if report_entry.get("job_id") != job.id:
         failures.append("报告条目 job_id 与 --job-id 不一致")
+
+    expected_runs = report_entry.get("expected_runs")
+    successful_runs = report_entry.get("successful_runs")
+    failed_runs = report_entry.get("failed_runs")
+    if expected_runs is None or successful_runs is None or failed_runs is None:
+        failures.append("报告条目缺少 expected/successful/failed_runs")
+    else:
+        if successful_runs != expected_runs:
+            failures.append(
+                f"运行不完整：expected={expected_runs} "
+                f"successful={successful_runs}"
+            )
+        if failed_runs != 0:
+            failures.append(f"存在失败运行：failed_runs={failed_runs}")
+        if run_count != expected_runs:
+            failures.append(
+                f"raw 成功运行数（{run_count}）与 expected_runs "
+                f"（{expected_runs}）不一致"
+            )
+    raw_run_keys = [
+        key
+        for key in raw
+        if key.startswith(f"job{job.id}_run")
+    ]
+    if len(raw_run_keys) != (expected_runs or 0):
+        failures.append(
+            f"raw 中该 JD 的运行记录数（{len(raw_run_keys)}）"
+            f"与 expected_runs（{expected_runs}）不一致"
+        )
+
+    # 整轮验收身份：report 与 raw 必须共享同一个 acceptance run。
+    report_identity = report.get("identity") or {}
+    raw_identity = raw.get("identity") or {}
+    if not raw_identity:
+        failures.append("raw 顶层缺少整轮验收身份（identity）")
+    else:
+        for field in (
+            "run_identifier",
+            "model",
+            "prompt_version",
+            "schema_version",
+        ):
+            if not report_identity.get(field) or not raw_identity.get(field):
+                failures.append(f"整轮身份字段缺失：{field}")
+            elif report_identity.get(field) != raw_identity.get(field):
+                failures.append(
+                    f"report 与 raw 的整轮身份不一致（{field}）"
+                )
+        raw_job_ids = raw_identity.get("job_ids")
+        if raw_job_ids != [job.id]:
+            failures.append(
+                f"raw 整轮 JD 集合（{raw_job_ids}）与定稿 JD 不一致"
+            )
+
+    # 输入指纹与 JD 原文一致（身份字段缺失拒绝，不填充默认值）。
     from app.extraction_validation import compute_input_fingerprint
 
     expected_fingerprint = compute_input_fingerprint(job.raw_text)
     if report_entry.get("input_fingerprint") != expected_fingerprint:
         failures.append("报告条目输入指纹与 JD 原文不一致")
-    if report_entry.get("successful_runs", 0) != run_count:
-        failures.append(
-            f"报告成功运行数（{report_entry.get('successful_runs')}）"
-            f"与 raw 运行数（{run_count}）不一致"
-        )
+    if not report_identity.get("model") or not report_identity.get(
+        "prompt_version"
+    ) or not report_identity.get("schema_version"):
+        failures.append("报告顶层缺少 model/prompt/schema 身份字段")
     return failures
 
 
@@ -184,7 +249,7 @@ def main() -> int:
                 and "result" in payload
             )
             identity_failures = _validate_identity(
-                entry, raw, job, run_count
+                report, entry, raw, job, run_count
             )
             if identity_failures:
                 for failure in identity_failures:
@@ -195,13 +260,23 @@ def main() -> int:
 
             report_identity = report.get("identity") or {}
             metadata = ExtractorMetadata(
-                model_name=report_identity.get("model") or "deepseek-v4-flash",
-                prompt_version=report_identity.get("prompt_version") or "0.10",
-                schema_version=report_identity.get("schema_version") or "3.0",
+                model_name=report_identity["model"],
+                prompt_version=report_identity["prompt_version"],
+                schema_version=report_identity["schema_version"],
             )
 
-            # 幂等安全门：已有正式抽取只有在结果与审核元数据完全一致
-            # 时才允许复用；不一致明确拒绝且不修改已有记录。
+            # 来源文件指纹：正式抽取记录与验收产物完整绑定。
+            import hashlib
+
+            report_fingerprint = hashlib.sha256(
+                args.report.read_bytes()
+            ).hexdigest()
+            raw_fingerprint = hashlib.sha256(
+                args.raw_output.read_bytes()
+            ).hexdigest()
+
+            # 幂等安全门：已有正式抽取只有在结果、批准运行、来源实验、
+            # 审核身份与文件指纹全部一致时才允许复用；否则明确拒绝。
             existing = session.scalar(
                 select(JobExtraction).where(
                     JobExtraction.job_id == job.id,
@@ -225,6 +300,22 @@ def main() -> int:
                             "已有正式抽取的结果指纹与本次不同"
                             "（同一 JD 同一版本已存在不同结果）"
                         )
+                    if existing_raw.get("source_run_identifier") != run_key:
+                        problems.append(
+                            "已有正式抽取的来源运行标识与本次不同"
+                        )
+                    if existing_raw.get(
+                        "acceptance_run_identifier"
+                    ) != report_identity.get("run_identifier"):
+                        problems.append(
+                            "已有正式抽取的来源验收实验与本次不同"
+                        )
+                    if existing_raw.get("report_fingerprint") != (
+                        report_fingerprint
+                    ):
+                        problems.append("已有正式抽取的报告指纹与本次不同")
+                    if existing_raw.get("raw_fingerprint") != raw_fingerprint:
+                        problems.append("已有正式抽取的 raw 指纹与本次不同")
                 if extraction_result_fingerprint(
                     rebuild_extraction_result(existing)
                 ) != run_fingerprint:
@@ -237,7 +328,29 @@ def main() -> int:
                     for problem in problems:
                         print(f"  - {problem}")
                     return 1
+                # 完全一致：幂等复用已有正式抽取。
+                print(
+                    f"已有正式抽取（ID {existing.id}）与本次完全一致，"
+                    "幂等跳过写入。"
+                )
+                session.commit()
+                extraction = existing
+                created = False
+                result_requirements = len(result.requirements)
+                engine.dispose()
+                print(f"正式抽取记录 ID：{extraction.id}（{'新建' if created else '已存在，幂等跳过'}）")
+                print(f"JD {job.id}｜{job.source_file}")
+                print(f"抽取器版本：{metadata.extractor_version}")
+                print(f"来源运行：{run_key}（{review.get('reviewed_by')} 审核）")
+                print(
+                    f"要求数 {result_requirements}；回读对比一致；"
+                    f"结果指纹 {run_fingerprint[:16]}…"
+                )
+                return 0
 
+            # 事务原子性：写入并 flush → 回读重建 → 比较完整结果指纹 →
+            # 校验审核元数据 → commit；任何失败 rollback（session 退出
+            # 时未 commit 自动回滚，数据库保持定稿前状态）。
             raw_response = dict(run_payload.get("raw_response") or {})
             raw_response.update(
                 {
@@ -248,18 +361,52 @@ def main() -> int:
                     "reviewed_by": review.get("reviewed_by"),
                     "reviewed_at": reviewed_at,
                     "source_run_identifier": run_key,
+                    "acceptance_run_identifier": report_identity.get(
+                        "run_identifier"
+                    ),
                     "result_fingerprint": run_fingerprint,
+                    "report_fingerprint": report_fingerprint,
+                    "raw_fingerprint": raw_fingerprint,
                 }
             )
-            extraction, created = persist_extraction(
-                session, job, result, raw_response, metadata
+            extraction = JobExtraction(
+                job_id=job.id,
+                extractor_version=metadata.extractor_version,
+                model_name=metadata.model_name,
+                prompt_version=metadata.prompt_version,
+                schema_version=metadata.schema_version,
+                role_family=result.role_family.value,
+                seniority=result.seniority.value,
+                raw_response=raw_response,
             )
-            # 回读正式结果并逐项对比。
+            session.add(extraction)
+            session.flush()
+            extraction.requirements.extend(
+                JobRequirement(
+                    raw_name=item.raw_name,
+                    category=item.category.value,
+                    importance=item.importance.value,
+                    proficiency=item.proficiency.value,
+                    group_id=item.group_id,
+                    group_logic=item.group_logic.value,
+                    min_years=item.min_years,
+                    max_years=item.max_years,
+                    years_text=item.years_text,
+                    evidence=item.evidence,
+                    confidence=item.confidence,
+                )
+                for item in result.requirements
+            )
+            session.flush()
+            # 回读重建并比较完整结果指纹；不一致则回滚（不 commit）。
             rebuilt = rebuild_extraction_result(extraction)
             rebuilt_fingerprint = extraction_result_fingerprint(rebuilt)
             if rebuilt_fingerprint != run_fingerprint:
-                print("回读正式结果与批准结果不一致，拒绝定稿。")
+                session.rollback()
+                print("回读正式结果与批准结果不一致，已回滚，拒绝定稿。")
                 return 1
+            session.commit()
+            created = True
     finally:
         engine.dispose()
 

@@ -227,7 +227,18 @@ def main() -> int:
     hard_gate_failures: list[str] = []
     warnings: list[str] = []
     diagnostics: list[str] = []
-    raw_payload: dict[str, Any] = {}
+    # 整轮验收身份：report 与 raw 共享 run_identifier，定稿时核对
+    # 防止不同实验的产物混用（局部运行名 job4_run0 跨实验相同）。
+    acceptance_identity = {
+        "run_identifier": run_identifier,
+        "model": metadata.model_name,
+        "prompt_version": metadata.prompt_version,
+        "schema_version": metadata.schema_version,
+        "job_ids": [job.id for job in jobs],
+        "runs": str(args.runs),
+        "max_attempts": str(args.max_attempts),
+    }
+    raw_payload: dict[str, Any] = {"identity": acceptance_identity}
     audit_samples: list[dict[str, Any]] = []
 
     for job in jobs:

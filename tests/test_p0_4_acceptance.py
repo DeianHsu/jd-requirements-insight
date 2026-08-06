@@ -1,6 +1,6 @@
 """P0-4 验收脚本端到端与门槛测试。
 
-覆盖：默认使用 v0.9 + Schema V3 并拒绝旧输入；门槛只含合同违规与
+覆盖：默认使用 v0.10 + Schema V3 并拒绝旧输入；门槛只含合同违规与
 positive-pair Jaccard（warning）；一次完整的 P0-4 验收（假归并客户端）
 能生成报告且含人工 cluster 复核清单。
 """
@@ -130,7 +130,7 @@ def test_gates_contract_violations_are_hard_gate() -> None:
 
 
 def _seed_current_extraction(database_path: Path) -> None:
-    """向临时数据库写入一份 v0.9 + Schema V3 抽取结果（3 条要求实例）。"""
+    """向临时数据库写入一份 v0.10 + Schema V3 抽取结果（3 条要求实例）。"""
     engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
     try:
         initialize_database(engine)
@@ -318,7 +318,7 @@ def test_default_extractor_version_auto_selects_unique_common(
     assert acceptance_script.main() == 0
 
     report = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
-    # 自动选中库中唯一 v0.9 抽取版本，而不是用归并模型名拼接。
+    # 自动选中库中唯一 v0.10 抽取版本，而不是用归并模型名拼接。
     assert report["input_identity"]["extractor_version"] == (
         "test-model|prompt:0.10|schema:3.0"
     )
@@ -409,7 +409,7 @@ def test_multiple_common_current_versions_require_explicit_selection(
     initialize_database(engine)
     session_factory = create_session_factory(engine)
     with session_factory() as session:
-        # 第二条独立抽取记录：同一 JD、不同模型名、同为 v0.9 + Schema V3。
+        # 第二条独立抽取记录：同一 JD、不同模型名、同为 v0.10 + Schema V3。
         second = JobExtraction(
             job_id=1,
             extractor_version="extractor-b|prompt:0.10|schema:3.0",

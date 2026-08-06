@@ -118,7 +118,11 @@ def _write_acceptance(
         engine.dispose()
 
     fingerprint = compute_input_fingerprint(job.raw_text)
-    results = [_make_result(), _make_result(evidence_prefix="1) ")]
+    results = [
+        _make_result(),
+        _make_result(evidence_prefix="1) "),
+        _make_result(evidence_prefix="2. "),
+    ]
     raw = {}
     for index, result in enumerate(results):
         raw[f"job{job_id}_run{index}"] = {
@@ -129,13 +133,22 @@ def _write_acceptance(
             "result_fingerprint": extraction_result_fingerprint(result),
             "raw_response": {"attempt_count": 1},
         }
+    raw["identity"] = {
+        "run_identifier": "test-acceptance",
+        "model": "test-model",
+        "prompt_version": "0.10",
+        "schema_version": "3.0",
+        "job_ids": [job_id],
+        "runs": "3",
+        "max_attempts": "2",
+    }
     report = {
         "identity": {
             "model": "test-model",
             "prompt_version": "0.10",
             "schema_version": "3.0",
             "job_count": str(len(job_ids)),
-            "runs": "2",
+            "runs": "3",
             "run_identifier": "test-acceptance",
         },
         "jobs": [
@@ -143,8 +156,8 @@ def _write_acceptance(
                 "job_id": job_id,
                 "source_file": job.source_file,
                 "input_fingerprint": fingerprint,
-                "expected_runs": 2,
-                "successful_runs": 2,
+                "expected_runs": 3,
+                "successful_runs": 3,
                 "failed_runs": 0,
                 "hard_gate_failures": [],
                 "requirement_count": 2,
@@ -162,6 +175,8 @@ def _write_acceptance(
         "hard_gate_failures": [],
         "passed": True,
     }
+    if not report.get("identity"):  # 保险：确保 identity 存在
+        raise AssertionError("fixture 缺少 identity")
     report_path = tmp_path / "report.json"
     report_path.write_text(
         json.dumps(report, ensure_ascii=False), encoding="utf-8"
@@ -375,6 +390,129 @@ def test_finalize_rejects_existing_without_review_metadata(
             )
     finally:
         engine.dispose()
+
+    assert _run_finalize(monkeypatch, tmp_path, report_path, raw_path, db_path) == 1
+
+
+def test_finalize_rejects_incomplete_runs(monkeypatch, tmp_path) -> None:
+    """expected=3、successful=2、failed=1 时拒绝定稿。"""
+    db_path = tmp_path / "finalize.db"
+    job_id = _seed_job(db_path)
+    report_path, raw_path = _write_acceptance(tmp_path, db_path, job_id)
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["jobs"][0]["successful_runs"] = 2
+    report["jobs"][0]["failed_runs"] = 1
+    report_path.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
+
+    assert _run_finalize(monkeypatch, tmp_path, report_path, raw_path, db_path) == 1
+
+
+def test_finalize_rejects_report_top_level_not_passed(monkeypatch, tmp_path) -> None:
+    """report 顶层 passed=false 或存在 hard gate 时拒绝。"""
+    db_path = tmp_path / "finalize.db"
+    job_id = _seed_job(db_path)
+    report_path, raw_path = _write_acceptance(tmp_path, db_path, job_id)
+
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["passed"] = False
+    report_path.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
+    assert _run_finalize(monkeypatch, tmp_path, report_path, raw_path, db_path) == 1
+
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["passed"] = True
+    report["hard_gate_failures"] = ["some-hard-gate"]
+    report_path.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
+    assert _run_finalize(monkeypatch, tmp_path, report_path, raw_path, db_path) == 1
+
+
+def test_finalize_rejects_foreign_acceptance_run(monkeypatch, tmp_path) -> None:
+    """report 与另一轮验收（相同结果但 run_identifier 不同）的 raw 混用拒绝。"""
+    db_path = tmp_path / "finalize.db"
+    job_id = _seed_job(db_path)
+    report_path, raw_path = _write_acceptance(tmp_path, db_path, job_id)
+    raw = json.loads(raw_path.read_text(encoding="utf-8"))
+    raw["identity"]["run_identifier"] = "another-acceptance"
+    raw_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+
+    assert _run_finalize(monkeypatch, tmp_path, report_path, raw_path, db_path) == 1
+
+
+def test_finalize_rejects_missing_identity_fields(monkeypatch, tmp_path) -> None:
+    """model/prompt/schema 身份字段缺失时拒绝，不使用默认值。"""
+    db_path = tmp_path / "finalize.db"
+    job_id = _seed_job(db_path)
+    report_path, raw_path = _write_acceptance(tmp_path, db_path, job_id)
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["identity"]["model"] = None
+    report_path.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
+
+    assert _run_finalize(monkeypatch, tmp_path, report_path, raw_path, db_path) == 1
+
+
+def test_finalize_rolls_back_on_readback_mismatch(monkeypatch, tmp_path) -> None:
+    """回读比较失败时数据库 rollback（保持定稿前状态）。"""
+    db_path = tmp_path / "finalize.db"
+    job_id = _seed_job(db_path)
+    report_path, raw_path = _write_acceptance(tmp_path, db_path, job_id)
+
+    import scripts.experiments.p0_3.finalize_extraction as finalize
+
+    def wrong_rebuild(extraction):
+        # 模拟回读结果与批准结果不一致（requirements 为空）。
+        from app.schemas import (
+            JobExtractionResult,
+            RoleFamily,
+            Seniority,
+        )
+
+        return JobExtractionResult(
+            role_family=RoleFamily.OTHER,
+            seniority=Seniority.UNKNOWN,
+            requirements=[],
+        )
+
+    monkeypatch.setattr(finalize, "rebuild_extraction_result", wrong_rebuild)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "finalize_extraction",
+            "--report",
+            str(report_path),
+            "--raw-output",
+            str(raw_path),
+            "--job-id",
+            str(job_id),
+            "--database-url",
+            f"sqlite:///{db_path.as_posix()}",
+        ],
+    )
+    assert finalize.main() == 1
+
+    engine = create_database_engine(f"sqlite:///{db_path.as_posix()}")
+    try:
+        session_factory = create_session_factory(engine)
+        with session_factory() as session:
+            assert session.query(JobExtraction).count() == 0
+    finally:
+        engine.dispose()
+
+
+def test_finalize_rejects_existing_different_acceptance_run(
+    monkeypatch, tmp_path
+) -> None:
+    """已有正式抽取来源实验不同时拒绝。"""
+    db_path = tmp_path / "finalize.db"
+    job_id = _seed_job(db_path)
+    report_path, raw_path = _write_acceptance(tmp_path, db_path, job_id)
+    assert _run_finalize(monkeypatch, tmp_path, report_path, raw_path, db_path) == 0
+
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["identity"]["run_identifier"] = "new-acceptance"
+    report_path.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
+    raw = json.loads(raw_path.read_text(encoding="utf-8"))
+    raw["identity"]["run_identifier"] = "new-acceptance"
+    raw_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
 
     assert _run_finalize(monkeypatch, tmp_path, report_path, raw_path, db_path) == 1
 

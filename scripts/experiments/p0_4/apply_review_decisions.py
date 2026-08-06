@@ -99,8 +99,10 @@ def _apply_decisions(
       否则保留主 canonical 名称；
     - cannot-link 拆分出的 singleton：使用对应 requirement 的
       raw_name（缺失时拒绝应用，不生成内部占位名）；
-    - unresolved：证据不足保持分开（与 cannot-link 相同拆分操作，
-      但语义为暂不合并，不改变已分开的关系）。
+    - unresolved：证据不足暂不确认全部等价。必须显式提供目标结构：
+      `groups=[[...], ...]`（组内合并、组间分开）或
+      `preserve_source=true`（保留来源运行当前分区，不做多余变化）；
+      两者皆缺时拒绝应用，不默认拆成全部 singleton。
     """
     canonicals: dict[str, CanonicalRequirement] = {
         item.canonical_requirement_id: item
@@ -150,7 +152,103 @@ def _apply_decisions(
                 primary_item.rationale += (
                     f"（审核修正：名称定为“{explicit_name}”）"
                 )
-        elif decision["decision"] in ("cannot_link", "unresolved"):
+        elif decision["decision"] == "unresolved":
+            groups = decision.get("groups")
+            preserve_source = decision.get("preserve_source", False)
+            if not groups and not preserve_source:
+                raise ValueError(
+                    "unresolved 决定必须提供 groups 或 preserve_source，"
+                    "不得默认拆成全部 singleton"
+                )
+            if preserve_source:
+                continue  # 保留来源运行当前分区，不做多余变化
+            if not isinstance(groups, list) or not groups:
+                raise ValueError("unresolved groups 结构不完整")
+            # 组内合并：与 must-link 相同的确定性合并逻辑。
+            for group in groups:
+                group_ids = list(dict.fromkeys(group))
+                if len(group_ids) < 2:
+                    continue
+                owners = {
+                    member_to_canonical[requirement_id]
+                    for requirement_id in group_ids
+                }
+                if len(owners) <= 1:
+                    continue
+                owner_items = [
+                    (len(canonicals[owner].source_requirement_ids), owner)
+                    for owner in owners
+                ]
+                primary = min(
+                    owner_items, key=lambda pair: (-pair[0], pair[1])
+                )[1]
+                for owner in sorted(owners - {primary}):
+                    primary_item = canonicals[primary]
+                    moved = [
+                        requirement_id
+                        for requirement_id in canonicals[owner].source_requirement_ids
+                        if requirement_id not in primary_item.source_requirement_ids
+                    ]
+                    primary_item.source_requirement_ids.extend(moved)
+                    primary_item.rationale += (
+                        f"（审核修正：unresolved 组内并入 {owner}）"
+                    )
+                    merged_ids.add(owner)
+                    for requirement_id in moved:
+                        member_to_canonical[requirement_id] = primary
+            # 组间分开：不同组的成员不得处于同一 canonical（确定性拆出）。
+            for owner, item in sorted(canonicals.items()):
+                if owner in merged_ids:
+                    continue
+                owners_of_members = {
+                    group_index
+                    for requirement_id in item.source_requirement_ids
+                    for group_index, group in enumerate(groups)
+                    if requirement_id in group
+                }
+                if len(owners_of_members) <= 1:
+                    continue
+                # 保留成员最多的组（平局取组索引小者），其余组员拆出。
+                kept_group = max(
+                    owners_of_members,
+                    key=lambda g: (
+                        sum(1 for rid in item.source_requirement_ids if rid in groups[g]),
+                        -g,
+                    ),
+                )
+                for requirement_id in list(item.source_requirement_ids):
+                    group_of = next(
+                        (
+                            g
+                            for g, group in enumerate(groups)
+                            if requirement_id in group
+                        ),
+                        None,
+                    )
+                    if group_of is None or group_of == kept_group:
+                        continue
+                    raw_name = raw_name_by_id.get(requirement_id)
+                    if not raw_name or not raw_name.strip():
+                        raise ValueError(
+                            f"unresolved 拆分实例 {requirement_id} 缺少可用的"
+                            "原始名称，拒绝应用审核决定"
+                        )
+                    new_id = f"cr-{requirement_id}-split"
+                    item.source_requirement_ids.remove(requirement_id)
+                    member_to_canonical[requirement_id] = new_id
+                    canonicals[new_id] = CanonicalRequirement(
+                        canonical_requirement_id=new_id,
+                        canonical_name=raw_name.strip(),
+                        source_requirement_ids=[requirement_id],
+                        rationale=(
+                            "审核修正：unresolved 组间拆分（见 review-decisions）"
+                        ),
+                        confidence=item.confidence,
+                    )
+                    item.rationale += (
+                        f"（审核修正：unresolved 拆出实例{requirement_id}）"
+                    )
+        elif decision["decision"] == "cannot_link":
             if len(ids) < 2:
                 continue
             for requirement_id in ids:
@@ -303,9 +401,13 @@ def main() -> int:
             print(f"  - {failure}")
         return 1
 
-    final_result = _apply_decisions(
-        result, decisions_payload["decisions"], raw_name_by_id
-    )
+    try:
+        final_result = _apply_decisions(
+            result, decisions_payload["decisions"], raw_name_by_id
+        )
+    except ValueError as exc:
+        print(f"审核决定应用失败，拒绝输出：{exc}")
+        return 1
     placeholder_names = [
         item.canonical_name
         for item in final_result.canonical_requirements

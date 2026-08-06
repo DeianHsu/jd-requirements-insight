@@ -176,7 +176,7 @@ def test_acceptance_complete_run_reports_incompleteness(
 
 
 def test_acceptance_script_uses_single_current_config(monkeypatch, tmp_path) -> None:
-    """验收脚本使用当前唯一配置（v0.9 + Schema V3），无双 Profile。"""
+    """验收脚本使用当前唯一配置（v0.10 + Schema V3），无双 Profile。"""
     from app.extraction import PROMPT_VERSION, SCHEMA_VERSION
     from app.extraction_two_stage import TWO_STAGE_PROMPT_VERSION
 
