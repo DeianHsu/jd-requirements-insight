@@ -144,6 +144,7 @@ def _write_acceptance(
         "prompt_version": "0.10",
         "schema_version": "3.0",
         "job_ids": [job_id],
+        "jd_set_fingerprint": "test-jd-set-fingerprint",
         "runs": "3",
         "max_attempts": "2",
     }
@@ -152,8 +153,10 @@ def _write_acceptance(
             "model": "test-model",
             "prompt_version": "0.10",
             "schema_version": "3.0",
-            "job_count": str(len(job_ids)),
+            "job_ids": [job_id],
+            "jd_set_fingerprint": "test-jd-set-fingerprint",
             "runs": "3",
+            "max_attempts": "2",
             "run_identifier": "test-acceptance",
         },
         "jobs": [
@@ -476,6 +479,7 @@ def _write_batch_acceptance(
         "prompt_version": "0.10",
         "schema_version": "3.0",
         "job_ids": job_ids,
+        "jd_set_fingerprint": "test-batch-jd-set-fingerprint",
         "runs": "3",
         "max_attempts": "2",
     }
@@ -484,8 +488,10 @@ def _write_batch_acceptance(
             "model": "test-model",
             "prompt_version": "0.10",
             "schema_version": "3.0",
-            "job_count": str(len(job_ids)),
+            "job_ids": job_ids,
+            "jd_set_fingerprint": "test-batch-jd-set-fingerprint",
             "runs": "3",
+            "max_attempts": "2",
             "run_identifier": "batch-acceptance",
         },
         "jobs": [
@@ -564,6 +570,44 @@ def test_finalize_batch_acceptance_finalizes_each_job(
                 )
     finally:
         engine.dispose()
+
+
+def test_finalize_rejects_missing_job_ids_everywhere(
+    monkeypatch, tmp_path
+) -> None:
+    """report 与 raw 双方都缺少 job_ids 时拒绝（完整身份合同硬要求）。"""
+    db_path = tmp_path / "finalize.db"
+    job_id = _seed_job(db_path)
+    report_path, raw_path = _write_acceptance(tmp_path, db_path, job_id)
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    raw = json.loads(raw_path.read_text(encoding="utf-8"))
+    del report["identity"]["job_ids"]
+    del raw["identity"]["job_ids"]
+    report_path.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
+    raw_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+
+    assert _run_finalize(
+        monkeypatch, tmp_path, report_path, raw_path, db_path, job_id=job_id
+    ) == 1
+
+
+def test_finalize_rejects_missing_jd_set_fingerprint(
+    monkeypatch, tmp_path
+) -> None:
+    """report 与 raw 双方都缺少 jd_set_fingerprint 时拒绝。"""
+    db_path = tmp_path / "finalize.db"
+    job_id = _seed_job(db_path)
+    report_path, raw_path = _write_acceptance(tmp_path, db_path, job_id)
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    raw = json.loads(raw_path.read_text(encoding="utf-8"))
+    del report["identity"]["jd_set_fingerprint"]
+    del raw["identity"]["jd_set_fingerprint"]
+    report_path.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
+    raw_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+
+    assert _run_finalize(
+        monkeypatch, tmp_path, report_path, raw_path, db_path, job_id=job_id
+    ) == 1
 
 
 def test_finalize_rejects_report_raw_job_set_mismatch(
