@@ -91,9 +91,15 @@ updated_at: 2026-08-05
 - **报告生成**：`app/market_report.py` 纯函数渲染（无模型、无时间戳、
   确定性输出，重复生成内容一致）；章节为样本限制声明 / 报告身份 /
   总览 / 跨 JD 共同要求 / 单 JD 长尾要求 / 证据追溯 / 方法与限制。
+  样本限制声明由当前统计动态生成（不写死批次数字）；证据追溯中每个
+  来源实例形成独立 Markdown 块（主条目独占一行 + detail 缩进层级 +
+  多行 evidence 引用块），特殊字符与多行内容不破坏文档结构；
 - **完整性门禁**：生成前复用归并持久化验证（精确 ID 覆盖、mapping
-  与来源分区一致、occurrence_count），并检查占位 canonical 名称与
-  requirement → extraction → JD 回查；任何失败拒绝生成。
+  与来源分区一致、occurrence_count、无重复 mapping、无空 canonical、
+  无未知引用——结构合同异常干净拒绝），并检查占位 canonical 名称、
+  requirement → extraction → JD 回查、canonical 记录数与有效统计项
+  一致、批次 selected_job_ids 全部存在、来源 JD 均在批次范围内；
+  任何失败拒绝生成且不覆盖已有报告文件；
 - **CLI**：`generate-report --consolidation-id <id> [--output <path>]`，
   完全离线（不读 LLM 配置、无 --execute），默认输出
   `reports/P0-5/market-report-<id>.md`；覆盖已有文件时明确提示。

@@ -22,17 +22,15 @@ from app.consolidation_validation import (
     validate_persisted_consistency,
 )
 from app.market_analysis import MarketStatistics
-from app.models import JobConsolidation, JobExtraction, JobRequirement
+from app.models import (
+    JobConsolidation,
+    JobDescription,
+    JobExtraction,
+    JobRequirement,
+)
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
-# 报告顶部样本限制声明：三份 JD 只演示流程，不代表市场结论。
-SAMPLE_LIMITATION = (
-    "> **样本限制**：本报告基于当前已定稿归并批次（3 份 JD、83 条 "
-    "requirement instances、72 个 canonical requirements）生成，是"
-    "**流程与证据追溯能力演示**，不代表完整岗位市场结论。所有频率"
-    "与排名仅在当前样本范围内有效，不得称为行业排名。"
-)
 
 # Markdown 正文转义：防止证据文本破坏列表/引用结构。
 _MARKDOWN_ESCAPES = {
@@ -44,6 +42,17 @@ _MARKDOWN_ESCAPES = {
     "#": "\\#",
     "`": "\\`",
 }
+
+
+def _sample_limitation(stats: MarketStatistics) -> str:
+    """由当前统计动态生成的样本限制声明（不写死具体批次数字）。"""
+    return (
+        f"> **样本限制**：本报告基于当前已定稿归并批次（{stats.total_job_count} "
+        f"份 JD、{stats.occurrence_count} 条 requirement instances、"
+        f"{stats.canonical_count} 个 canonical requirements）生成，是"
+        "**流程与证据追溯能力演示**，不代表完整岗位市场结论。所有频率"
+        "与排名仅在当前样本范围内有效，不得称为行业排名。"
+    )
 
 
 def escape_markdown(text: str) -> str:
@@ -74,34 +83,52 @@ def _importance_label(counts: dict[str, int]) -> str:
     return " / ".join(parts) if parts else "-"
 
 
-def _evidence_lines(source_requirements: tuple[dict[str, Any], ...]) -> list[str]:
-    """证据追溯条目（确定性：requirement_id 升序）。"""
-    lines: list[str] = []
+def _evidence_block(source_requirements: tuple[dict[str, Any], ...]) -> str:
+    """证据追溯块：每个来源实例形成独立、可读、稳定的 Markdown 块。
+
+    结构（实例间空行分隔，evidence 用引用块保留多行）：
+
+        - JD 1｜实例 23：**跨团队协作能力**
+          - importance=must / category=soft_skill / proficiency=unknown
+          - 证据：
+            > 第一行
+            > 第二行（多行 evidence 仍属同一块）
+    """
+    blocks: list[str] = []
     for requirement in source_requirements:
         job_id = requirement.get("job_id")
         job_label = f"JD {job_id}" if job_id is not None else "JD 未知"
-        lines.append(
+        lines = [
             f"- {job_label}｜实例 {requirement['requirement_id']}："
             f"**{escape_markdown(str(requirement['raw_name']))}**"
-        )
+        ]
         detail_parts = [
             f"importance={requirement.get('importance', '-')}",
             f"category={requirement.get('category', '-')}",
             f"proficiency={requirement.get('proficiency', '-')}",
         ]
-        lines.append(f"  - {escape_markdown(' / '.join(detail_parts))}")
+        lines.append(
+            f"  - {escape_markdown(' / '.join(detail_parts))}"
+        )
+        lines.append("  - 证据：")
         evidence = str(requirement.get("evidence", "")).strip()
-        lines.append(f"  - 证据：{escape_markdown(evidence)}")
-    return lines
+        for evidence_line in evidence.splitlines():
+            if evidence_line.strip():
+                lines.append(f"    > {escape_markdown(evidence_line)}")
+            else:
+                lines.append("    >")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
+
 
 
 def build_market_report(stats: MarketStatistics) -> str:
     """把市场统计渲染为可读 Markdown（纯函数，确定性输出）。"""
     sections: list[str] = []
 
-    # 1. 标题与样本限制声明（醒目，置于最前）。
+    # 1. 标题与样本限制声明（醒目，置于最前，由统计数据动态生成）。
     sections.append("# 岗位要求市场分析报告（流程演示）\n")
-    sections.append(SAMPLE_LIMITATION + "\n")
+    sections.append(_sample_limitation(stats) + "\n")
 
     # 2. 报告身份。
     sections.append("## 报告身份\n")
@@ -202,8 +229,7 @@ def build_market_report(stats: MarketStatistics) -> str:
             f"{item.instance_count} 个实例；JD 级 importance："
             f"{escape_markdown(_importance_label(item.importance_job_counts))}\n"
         )
-        sections.extend(_evidence_lines(item.source_requirements))
-        sections.append("\n")
+        sections.append(_evidence_block(item.source_requirements) + "\n")
 
     # 7. 方法与限制。
     sections.append("## 方法与限制\n")
@@ -217,7 +243,8 @@ def build_market_report(stats: MarketStatistics) -> str:
         "原文 evidence。\n"
         "- 本报告为归并批次的**可再生派生产物**：重新生成会覆盖旧文件，"
         "内容由同一批次确定性决定。\n"
-        "- **样本限制**：当前仅 3 份 JD，统计结论不得外推为市场结论。\n"
+        f"- **样本限制**：当前样本为 {stats.total_job_count} 份 JD，统计"
+        "结论不得外推为市场结论。\n"
     )
     return "".join(sections)
 
@@ -229,10 +256,14 @@ def validate_report_inputs(
     """报告生成前的完整数据一致性门禁，返回违规列表（空 = 通过）。
 
     复用生产归并验证（精确 requirement ID 覆盖、mapping 与 canonical
-    来源分区一致、occurrence_count 一致），并追加：
+    来源分区一致、occurrence_count 一致、mapping 无重复、canonical
+    无空分区、无未知引用），并追加：
 
     - canonical name 不含审核占位标记；
-    - 全部 mapping requirement 都能回查到 requirement → extraction → JD。
+    - 全部 mapping requirement 都能回查到 requirement → extraction → JD；
+    - canonical 记录数与有效统计项数一致（无孤儿 canonical）；
+    - 批次 selected_job_ids 全部真实存在；
+    - requirement 回查到的来源 JD 全部属于批次范围。
     """
     failures: list[str] = []
     with session_factory() as session:
@@ -242,9 +273,15 @@ def validate_report_inputs(
         if record is None:
             return [f"归并批次不存在：{consolidation_id}"]
 
-        persisted = load_persisted_consolidation_result(
-            session_factory, consolidation_id
-        )
+        try:
+            persisted = load_persisted_consolidation_result(
+                session_factory, consolidation_id
+            )
+        except ValueError as exc:
+            # 覆盖空 canonical、重复 mapping、未知 canonical 引用等
+            # 结构合同违规（数据库损坏时干净拒绝，不输出 traceback）。
+            return [f"归并结构合同校验失败：{exc}"]
+
         failures.extend(validate_persisted_consistency(persisted))
 
         for item in persisted.result.canonical_requirements:
@@ -253,7 +290,39 @@ def validate_report_inputs(
                     f"canonical 名称包含审核占位标记：{item.canonical_name}"
                 )
 
-        # requirement → extraction → JD 回查完整性。
+        # canonical 记录数与有效统计项数一致（统计按 mapping 聚合，
+        # 无 mapping 的孤儿/空 canonical 会被统计阶段静默忽略）。
+        mapped_canonical_ids = {
+            mapping.canonical_requirement_id
+            for mapping in persisted.result.mappings
+        }
+        if len(persisted.result.canonical_requirements) != len(
+            mapped_canonical_ids
+        ):
+            failures.append(
+                f"canonical 记录数（{len(persisted.result.canonical_requirements)}）"
+                f"与有效统计项数（{len(mapped_canonical_ids)}）不一致，"
+                "存在无 mapping 的 canonical"
+            )
+
+        # 批次选定 JD 必须全部真实存在（覆盖率分母可信）。
+        selected_job_ids = sorted(record.selected_job_ids)
+        if selected_job_ids:
+            job_rows = session.scalars(
+                select(JobDescription.id).where(
+                    JobDescription.id.in_(selected_job_ids)
+                )
+            ).all()
+            missing_jobs = sorted(set(selected_job_ids) - set(job_rows))
+            if missing_jobs:
+                failures.append(
+                    f"批次选定 JD 不存在：{missing_jobs}"
+                )
+        else:
+            failures.append("批次 selected_job_ids 为空，覆盖率分母不可信")
+
+        # requirement → extraction → JD 回查完整性，且来源 JD 必须
+        # 属于批次范围。
         requirement_ids = [
             mapping.requirement_id for mapping in persisted.result.mappings
         ]
@@ -283,5 +352,17 @@ def validate_report_inputs(
             if missing_job:
                 failures.append(
                     f"requirement 无法回查到 JD（extraction 缺失）：{missing_job}"
+                )
+            out_of_scope = sorted(
+                {
+                    extraction_job[row.extraction_id]
+                    for row in requirements
+                    if row.extraction_id in extraction_job
+                }
+                - set(selected_job_ids)
+            )
+            if out_of_scope:
+                failures.append(
+                    f"requirement 来源 JD 超出批次范围：{out_of_scope}"
                 )
     return failures

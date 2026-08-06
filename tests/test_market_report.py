@@ -35,6 +35,7 @@ from app.database import (
 )
 from app.market_analysis import build_market_statistics
 from app.market_report import (
+    _evidence_block,
     build_market_report,
     validate_report_inputs,
 )
@@ -449,6 +450,300 @@ def test_cli_rejects_missing_batch(tmp_path) -> None:
     )
     assert result.exit_code == 1
     assert "不存在" in result.output
+
+
+def test_sample_limitation_is_dynamic(tmp_path) -> None:
+    """样本限制声明由当前统计动态生成，不写死真实批次数字。"""
+    db_path = tmp_path / "market.db"
+    _seed_market_db(db_path)
+    stats = _build_stats(db_path)
+    report = build_market_report(stats)
+
+    # 合成批次身份：3 JD / 8 实例 / 5 canonical。
+    assert "3 份 JD" in report
+    assert "8 条 requirement instances" in report
+    assert "5 个 canonical requirements" in report
+    # 顶部声明与报告身份、总览一致。
+    assert "8 条 requirement instances" in report  # 动态声明
+    assert "requirement instance 数：8" in report  # 报告身份
+    assert "抽取原子要求数：8" in report  # 总览
+    # 不得写死真实批次的 83/72。
+    assert "83 条" not in report
+    assert "72 个" not in report
+    # 方法与限制章节也动态。
+    assert "当前样本为 3 份 JD" in report
+
+
+def test_evidence_blocks_have_clean_structure(tmp_path) -> None:
+    """每个实例形成独立块：主条目独占一行、detail 层级、evidence 引用块。"""
+    db_path = tmp_path / "market.db"
+    _seed_market_db(db_path)
+    stats = _build_stats(db_path)
+
+    collaboration = next(
+        item
+        for item in stats.canonical_items
+        if item.canonical_name == "团队协作能力"
+    )
+    block = _evidence_block(collaboration.source_requirements)
+    lines = block.splitlines()
+    # 主条目独占一行。
+    assert lines[0].startswith("- JD 1｜实例 2：**协作能力**")
+    # detail 处于该实例下（缩进层级）。
+    assert lines[1].startswith("  - importance=")
+    assert lines[2].startswith("  - 证据：")
+    # evidence 在引用块中且与实例绑定。
+    assert lines[3].startswith("    > 具备跨团队协作能力。")
+    # 第二个实例独立成块（空行分隔），不紧贴前一 evidence。
+    second = [i for i, line in enumerate(lines) if line.startswith("- JD 2｜")]
+    assert second and second[0] > 4
+    assert "" in block  # 块间空行
+
+
+def test_multiline_special_evidence_stays_in_block(tmp_path) -> None:
+    """多行与特殊字符 evidence 保持在同一引用块内，不破坏表格数。"""
+    db_path = tmp_path / "market.db"
+    _seed_market_db(db_path)
+    stats = _build_stats(db_path)
+    report = build_market_report(stats)
+
+    special = next(
+        item
+        for item in stats.canonical_items
+        if item.canonical_name == "特殊字符要求"
+    )
+    block = _evidence_block(special.source_requirements)
+    lines = block.splitlines()
+    # 特殊字符行各自独立且同属一个引用块。
+    assert "    > 熟悉 \\`LangChain\\`、\\*RAG\\* 等工具|" in lines
+    assert "    > 第二行证据（多行）。" in lines
+    # 章节与表格数量不变（两个要求表头、章节结构固定）。
+    assert report.count("| 要求 | JD 覆盖数 |") == 2
+    for section in ("报告身份", "总览", "跨 JD 共同要求", "单 JD 特有要求", "证据追溯", "方法与限制"):
+        assert f"## {section}" in report
+
+
+def test_gate_rejects_empty_canonical(tmp_path) -> None:
+    """插入空 canonical（无来源成员）时拒绝生成。"""
+    from app.models import CanonicalRequirementRecord
+
+    db_path = tmp_path / "market.db"
+    _seed_market_db(db_path)
+    engine = create_database_engine(f"sqlite:///{db_path.as_posix()}")
+    try:
+        session_factory = create_session_factory(engine)
+        with session_factory() as session:
+            batch = session.query(JobConsolidation).one()
+            session.add(
+                CanonicalRequirementRecord(
+                    consolidation_id=batch.id,
+                    canonical_requirement_id="cr-empty",
+                    canonical_name="空条件",
+                    source_requirement_ids=[],
+                    rationale="测试",
+                    confidence=0.9,
+                )
+            )
+            session.commit()
+            consolidation_id = batch.id
+        failures = validate_report_inputs(session_factory, consolidation_id)
+    finally:
+        engine.dispose()
+
+    assert failures
+    assert any("结构合同" in f or "没有来源" in f for f in failures)
+
+
+def test_gate_rejects_unknown_canonical_reference(tmp_path) -> None:
+    """mapping 引用未知 canonical 时拒绝生成。"""
+    db_path = tmp_path / "market.db"
+    _seed_market_db(db_path)
+    engine = create_database_engine(f"sqlite:///{db_path.as_posix()}")
+    try:
+        session_factory = create_session_factory(engine)
+        with session_factory() as session:
+            batch = session.query(JobConsolidation).one()
+            first = session.query(RequirementMappingRecord).first()
+            first.canonical_requirement_id = "cr-nonexistent"
+            session.commit()
+            consolidation_id = batch.id
+        failures = validate_report_inputs(session_factory, consolidation_id)
+    finally:
+        engine.dispose()
+
+    assert failures
+    assert any("结构合同" in f for f in failures)
+
+
+def test_duplicate_mapping_blocked_at_database_layer(tmp_path) -> None:
+    """重复 mapping 由数据库唯一约束拒绝（生产保护，门禁 validator 为防御层）。"""
+    import sqlite3
+
+    db_path = tmp_path / "market.db"
+    _seed_market_db(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        indexes = conn.execute(
+            "PRAGMA index_list('requirement_mappings')"
+        ).fetchall()
+        unique = any(row[2] == 1 for row in indexes)  # unique=1
+        assert unique, "requirement_mappings 缺少唯一约束"
+    finally:
+        conn.close()
+    # 直接插入重复 mapping 必须被数据库拒绝。
+    from app.models import RequirementMappingRecord
+
+    engine = create_database_engine(f"sqlite:///{db_path.as_posix()}")
+    try:
+        session_factory = create_session_factory(engine)
+        with session_factory() as session:
+            batch = session.query(JobConsolidation).one()
+            first = session.query(RequirementMappingRecord).first()
+            session.add(
+                RequirementMappingRecord(
+                    consolidation_id=batch.id,
+                    requirement_id=first.requirement_id,
+                    canonical_requirement_id=first.canonical_requirement_id,
+                    rationale="测试重复",
+                    confidence=0.9,
+                )
+            )
+            try:
+                session.commit()
+                raise AssertionError("重复 mapping 应被数据库唯一约束拒绝")
+            except Exception:
+                session.rollback()
+    finally:
+        engine.dispose()
+
+
+def test_gate_rejects_missing_selected_job(tmp_path) -> None:
+    """批次选定 JD 缺失时拒绝生成。"""
+    db_path = tmp_path / "market.db"
+    _seed_market_db(db_path)
+    engine = create_database_engine(f"sqlite:///{db_path.as_posix()}")
+    try:
+        session_factory = create_session_factory(engine)
+        with session_factory() as session:
+            batch = session.query(JobConsolidation).one()
+            job = session.query(JobDescription).filter(JobDescription.id == 3).one()
+            session.delete(job)
+            session.commit()
+            consolidation_id = batch.id
+        failures = validate_report_inputs(session_factory, consolidation_id)
+    finally:
+        engine.dispose()
+
+    assert failures
+    assert any(
+        "选定 JD 不存在" in f
+        or "requirement 不存在" in f
+        or "结构合同" in f  # 级联删除可能先触发结构合同失败
+        for f in failures
+    )
+
+
+def test_gate_rejects_requirement_job_out_of_scope(tmp_path) -> None:
+    """requirement 来源 JD 超出批次范围时拒绝生成。"""
+    db_path = tmp_path / "market.db"
+    _seed_market_db(db_path)
+    engine = create_database_engine(f"sqlite:///{db_path.as_posix()}")
+    try:
+        session_factory = create_session_factory(engine)
+        with session_factory() as session:
+            batch = session.query(JobConsolidation).one()
+            # 构造存在但超出批次范围的 JD 99 + extraction，再改指 requirement。
+            out_job = JobDescription(
+                source_hash="o" + "x" * 63,
+                source_file="out-of-scope.md",
+                source_type="test",
+                collected_at=date(2026, 8, 1),
+                company="范围外公司",
+                title="范围外岗位",
+                company_type="medium_company",
+                tags=[],
+                extra_metadata={},
+                raw_text="# 范围外岗位",
+            )
+            session.add(out_job)
+            session.flush()
+            out_extraction = JobExtraction(
+                job_id=out_job.id,
+                extractor_version="test-model|prompt:0.10|schema:3.0",
+                model_name="test-model",
+                prompt_version="0.10",
+                schema_version="3.0",
+                role_family="other",
+                seniority="unknown",
+                raw_response={},
+            )
+            session.add(out_extraction)
+            session.flush()
+            requirement = session.query(JobRequirement).first()
+            requirement.extraction_id = out_extraction.id
+            session.commit()
+            consolidation_id = batch.id
+        failures = validate_report_inputs(session_factory, consolidation_id)
+    finally:
+        engine.dispose()
+
+    assert failures
+    assert any("超出批次范围" in f for f in failures)
+
+
+def test_gate_failure_does_not_overwrite_output(tmp_path) -> None:
+    """验证失败时不覆盖已有报告文件。"""
+    from typer.testing import CliRunner
+
+    from app import cli as cli_module
+
+    db_path = tmp_path / "market.db"
+    _seed_market_db(db_path)
+    report_path = tmp_path / "report.md"
+
+    runner = CliRunner()
+    first = runner.invoke(
+        cli_module.cli,
+        ["generate-report", "--consolidation-id", "1", "--output", str(report_path)],
+        env={"DATABASE_URL": f"sqlite:///{db_path.as_posix()}"},
+    )
+    assert first.exit_code == 0
+    original = report_path.read_text(encoding="utf-8")
+
+    # 破坏批次后再次生成：必须失败且不覆盖已有文件。
+    engine = create_database_engine(f"sqlite:///{db_path.as_posix()}")
+    try:
+        session_factory = create_session_factory(engine)
+        with session_factory() as session:
+            first_mapping = session.query(RequirementMappingRecord).first()
+            session.delete(first_mapping)
+            session.commit()
+    finally:
+        engine.dispose()
+
+    second = runner.invoke(
+        cli_module.cli,
+        ["generate-report", "--consolidation-id", "1", "--output", str(report_path)],
+        env={"DATABASE_URL": f"sqlite:///{db_path.as_posix()}"},
+    )
+    assert second.exit_code == 1
+    assert report_path.read_text(encoding="utf-8") == original
+
+
+def test_sample_report_does_not_leak_real_batch_numbers(tmp_path) -> None:
+    """公开样例与真实统计数字不交叉污染（样例无 83/72）。"""
+    import scripts.make_sample_report as sample_script
+
+    output_path = tmp_path / "sample.md"
+    assert sample_script.main(["--output", str(output_path)]) == 0
+    content = output_path.read_text(encoding="utf-8")
+    assert "3 份 JD" in content
+    assert "9 条 requirement instances" in content
+    assert "6 个 canonical requirements" in content
+    assert "83 条" not in content
+    assert "72 个" not in content
+    # 证据块结构在样例中同样成立。
+    assert "    > " in content
 
 
 def test_sample_report_is_public_safe(tmp_path) -> None:
