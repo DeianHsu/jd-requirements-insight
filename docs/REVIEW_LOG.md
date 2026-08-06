@@ -4,52 +4,48 @@
 完成时覆盖更新，只保留最新一轮；历史由 Git 保存。项目状态以
 `docs/CURRENT_STATE.md` / `docs/PROJECT_PLAN.md` 为准。
 
-## 最近一轮：8 JD 扩样第一批次——导入 + JD 6/7/8 抽取验收（2026-08-07）
+## 最近一轮：JD 6/7/8 人工审核 + finalize-extraction 正式定稿（2026-08-07）
 
-### 任务内容（按用户单一路线执行，未改代码、未扩展范围）
+### 任务内容（按用户审核结论执行，未改业务代码）
 
-1. **JD 导入**：新增 jd_006（思必驰科技/AI应用开发工程师/苏州）、
-   jd_007（浩鲸科技/大模型应用开发工程师/南京）、jd_008（苏州凰凤
-   飞行器技术/AI算法工程师/苏州，无人机 CV 方向，用户提供的截图整理，
-   经两次核对修正公司名"鹰→凰"）；导入 3 新增 + 5 幂等跳过，旧 JD 1~5
-   未修改、未重复导入；
-2. **免费预检**：`run_real_jd_acceptance --dry-run --job-ids 6 7 8`
-   通过；确认冻结基线一致（deepseek-v4-flash / prompt 0.10 / schema 3.0）；
-3. **第一次付费验收失败**（用户授权后执行）：仅 jd_006 run0 成功
-   （14 条），其余 8 次 `Connection error`，hard_gate=11。排查：LLM
-   配置完整、`GET https://api.deepseek.com/models` 返回 200 且
-   deepseek-v4-flash 在列表，判定为时段性网络/服务端故障，非代码缺陷；
-4. **第二次付费验收成功**（用户授权重跑，同命令同参数）：
-   - 9/9 次运行全部完成：jd_006 = 12/11/11 条、jd_007 = 43/45/43 条、
-     jd_008 = 20/18/20 条；
-   - **hard_gate_failures = 0**（passed=True）；
-   - warnings = 6（全部为运行间稳定性漂移 unmatched_item_count 3~6，
-     与 JD 1~5 验收已知类型一致，非阻塞）；diagnostics = 2；
-   - 产物：report（脱敏）`reports/P0-3/real-jd-acceptance-20260806-214825-report.json`、
-     raw（私有）`data/private/experiments/p0_3/real_jd/real-jd-acceptance-20260806-214825-raw.json`；
-   - 整轮身份 8 字段齐全：run_identifier=real-jd-acceptance-20260806-214825、
-     model=deepseek-v4-flash、prompt=0.10、schema=3.0、job_ids=[6,7,8]、
-     jd_set_fingerprint=67706727…、runs=3、max_attempts=2，满足
-     finalize-extraction 定稿合同；
-   - 实际模型调用：9 运行 × 2 段 ≈ 18 次（无重试）。
+1. **人工审核结论落地**：将用户审核结果写入验收 report
+   （`reports/P0-3/real-jd-acceptance-20260806-214825-report.json`）
+   各 JD 的 `manual_review`（reviewed_by=project-owner、
+   reviewed_at=2026-08-06T22:53:38+00:00）：
+   - JD 6：批准 run 0，指纹 `0412bcc8…`，审核通过（无幻觉/泄漏/补出，
+     "能独立写出可跑通的代码"未拆项=轻微粒度差异，非阻塞）；
+   - JD 7：批准 run 2，指纹 `c2a11dcc…`，审核通过（Web/RAG 原子化
+     粒度偏保守、Embedding category 轻微偏差=非阻塞备注）；
+   - JD 8：批准 run 0，指纹 `a8167761…`，审核通过（role_family=
+     ai_algorithm 与原文一致，保持模型分类不改写）。
+2. **指纹核对**：批准指纹与 raw 中对应 run 的 result_fingerprint
+   逐一比对，3/3 完全一致后才执行定稿；
+3. **finalize-extraction**（`--run-index` 0/2/0 与批准一致，离线无付费）：
+   - 正式抽取记录 ID 6（job6_run0，fp 0412bcc8…）；
+   - 正式抽取记录 ID 7（job7_run2，fp c2a11dcc…）；
+   - 正式抽取记录 ID 8（job8_run0，fp a8167761…）；
+   - 均绑定 8 字段整轮身份 + report/raw 文件指纹 + 审核元数据，
+     提取器版本 `deepseek-v4-flash|prompt:0.10|schema:3.0`；
+4. **来源绑定审计**：JD 6/7/8 = `fully_bound`（与 JD 4/5 一致）；
+   JD 1/2/3 保持 `unverified`（历史豁免记录
+   `reports/P0-7/legacy-extraction-waiver.json` 覆盖，报告风险标注保留）。
 
-### 说明与风险
+### 验证结果
 
-- P0-3B 验收协议为 3 次独立运行，不含顺序变形（顺序变形属于 P0-4
-  归并验收 `run_acceptance`）；
-- jd_008 为无人机 CV 方向，与 MVP 分析目标（LLM/Agent 应用工程）有
-  差异，归并后可能产生长尾 singleton，已向用户提示，保留待裁决；
-- 第一次失败产物（real-jd-acceptance-20260806-213527-*）保留未清理，
-  非正式数据。
+- 正式抽取总数：**8 条**（JD 1~8），新增 3 条全部 `fully_bound`；
+- 结果指纹与批准值一致（数据库回读核对）；
+- 定稿门禁全部通过（hard gate 空、manual_review 完整、身份一致、
+  幂等安全门）。
 
 ### 执行提交
 
-- 本轮无代码改动、无新 commit（JD 文档在 `data/raw_jds/`，属私有
-  输入不入库）；仅本评审日志覆盖更新，随下一提交一并推送。
+- 本轮无代码改动；验收 report 属脱敏产物但位于 `reports/`（gitignore，
+  仅 P0-7 豁免记录放开），JD 文档与 raw 属私有不入库；工作区干净；
+  本评审日志覆盖更新，随下一提交一并推送。
 
 ### 当前状态
 
-- 8 JD 全部在库（ID 1~8）；JD 6/7/8 抽取验收通过，等待**人工审核**
-  → 审核通过后 `finalize-extraction` 定稿 → 8 JD 全量归并（P0-4
-  验收 + 稳定性 + 人工裁决）→ 报告；
-- 后续步骤均需用户指令/授权（人工审核、归并付费调用）。
+- 8 JD 正式抽取齐备（1~5 旧批次 + 6/7/8 fully_bound）；
+- **下一步（等待指令）**：8 JD 全量归并（P0-4 `run_acceptance`
+  验收 + 稳定性分析 + 人工裁决 → `finalize-consolidation`），
+  付费调用前先汇报模型/范围/目的/命令等待授权。
