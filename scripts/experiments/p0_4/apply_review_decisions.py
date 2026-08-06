@@ -98,7 +98,9 @@ def _apply_decisions(
     - must-link 合并后：决策显式提供 canonical_name 时使用之，
       否则保留主 canonical 名称；
     - cannot-link 拆分出的 singleton：使用对应 requirement 的
-      raw_name（缺失时拒绝应用，不生成内部占位名）。
+      raw_name（缺失时拒绝应用，不生成内部占位名）；
+    - unresolved：证据不足保持分开（与 cannot-link 相同拆分操作，
+      但语义为暂不合并，不改变已分开的关系）。
     """
     canonicals: dict[str, CanonicalRequirement] = {
         item.canonical_requirement_id: item
@@ -148,7 +150,7 @@ def _apply_decisions(
                 primary_item.rationale += (
                     f"（审核修正：名称定为“{explicit_name}”）"
                 )
-        elif decision["decision"] == "cannot_link":
+        elif decision["decision"] in ("cannot_link", "unresolved"):
             if len(ids) < 2:
                 continue
             for requirement_id in ids:
@@ -172,7 +174,8 @@ def _apply_decisions(
                     canonical_name=raw_name.strip(),
                     source_requirement_ids=[requirement_id],
                     rationale=(
-                        "审核修正：cannot-link 拆分（见 review-decisions）"
+                        f"审核修正：{decision['decision']} 拆分"
+                        "（见 review-decisions）"
                     ),
                     confidence=item.confidence,
                 )
