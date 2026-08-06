@@ -6,11 +6,13 @@
 
 ```text
 JD 导入
-→ v0.10 + Schema V3 抽取候选（私有 JSON，不入正式表）
-→ 抽取质量验证（P0-3A 规则场景 / P0-3B 真实 JD）
+→ v0.10 + Schema V3 抽取候选（私有 JSON，单次预检产物，不入正式表）
+→ 抽取质量验证（P0-3A 规则场景 / P0-3B 真实 JD 完整验收：多次运行 +
+  合同检查 + 人工审核；验收产物才是 finalize 的输入）
 → finalize-extraction 定稿正式 requirement instance
-→ canonical requirement 归并候选（私有 JSON）
-→ 稳定性分析、人工裁决与 finalize-consolidation 定稿
+→ canonical requirement 归并候选（私有 JSON，单次预检产物）
+→ 归并验收（P0-4）、稳定性分析与人工裁决
+→ finalize-consolidation 定稿
 → 独立 JD 统计（app/market_analysis.py）
 → 原文证据追溯
 → Markdown 市场分析报告
@@ -78,9 +80,11 @@ cluster，确定性代码负责把 cluster 展开为 mappings。归并持久化�
 ### 为什么候选使用私有文件、正式结果使用数据库
 
 抽取与归并模型运行具有随机性，单次结构合法不等于已经通过稳定性和人工
-审核。模型入口只写显式私有 JSON；`finalize-extraction` 与
-`finalize-consolidation` 核对输入、运行、审核和结果指纹后，才允许原子写入
-正式业务表。这样无需候选状态机，正式表仍保持“可统计、可报告”的单一语义。
+审核。模型入口只写显式私有 JSON 候选（单次预检产物，仅供快速人工参考，
+不进入正式定稿链路）；`finalize-extraction` 与
+`finalize-consolidation` 核对**完整验收产物**（多次运行、合同检查、人工
+审核）的输入、运行、审核和结果指纹后，才允许原子写入正式业务表。这样
+无需候选状态机，正式表仍保持“可统计、可报告”的单一语义。
 报告门禁要求归并批次具有审核决定指纹和来源运行标识，结构合法但未定稿的
 候选不能成为市场结论。
 

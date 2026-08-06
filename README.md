@@ -9,12 +9,14 @@ requirement → 独立 JD 统计 → 原文证据追溯 → Markdown 市场分�
 - **JD 导入**：Markdown JD（frontmatter + 正文）批量导入与内容去重；
 - **v0.10 结构化抽取**（两段式：发现段全局分句归属 + 判断段局部语义判断）、
   三级熟练度、any_of 逻辑组、原文证据强制校验、有限重试；模型入口只输出
-  私有候选 JSON，审核通过后由 `finalize-extraction` 写入正式表；
+  私有候选 JSON（单次预检产物，不进入正式链路）；正式抽取经 P0-3B 完整
+  验收（多次运行 + 合同检查 + 人工审核）后由 `finalize-extraction` 定稿；
 - **抽取质量验证**：P0-3A 规则场景变形测试（领域中性场景 + 确定性变换）、
   P0-3B 真实 JD 验证（合同检查、漂移、异常项索引）；
 - **要求事实归并**：单次 LLM 聚类输出 canonical requirement 与来源
-  实例分区（不确定时创建 singleton）；候选不入正式表，审核和裁决通过后
-  由 `finalize-consolidation` 原子定稿；
+  实例分区（不确定时创建 singleton）；候选仅作单次预检产物；正式归并
+  经 P0-4 验收 + 稳定性分析与人工裁决后由 `finalize-consolidation`
+  原子定稿；
 - **归并验证**：coverage、结构违规、positive-pair Jaccard、canonical/
   singleton 漂移、顺序变形、人工 cluster 复核；
 - **市场统计**：每个 canonical requirement 的实例数、独立 JD 数（同一
@@ -51,16 +53,18 @@ uv run ruff check app scripts tests
 # 导入 JD（Markdown 目录）
 python -m app.cli import-jds data/raw_jds --use-project-database
 
-# 生成抽取候选（付费；不写正式抽取表）
+# 生成抽取候选（付费；单次预检产物，不进入正式链路、不写正式表）
 python -m app.cli extract-jds --all --candidate-output data/private/extraction-candidate.json --use-project-database --execute
 
-# 验收和人工审核后，离线定稿正式抽取
+# 正式抽取链路：P0-3B 完整验收（见下方“验证脚本”段）→ 验收产物经人工
+# 批准后离线定稿正式抽取（--report/--raw-output 是验收产物，不是候选）
 python -m app.cli finalize-extraction --report data/private/extraction-report.json --raw-output data/private/extraction-raw.json --job-id 1 --use-project-database
 
-# 生成归并候选（付费；不写正式归并表）
+# 生成归并候选（付费；单次预检产物，不进入正式链路、不写正式表）
 python -m app.cli consolidate-requirements --all --candidate-output data/private/consolidation-candidate.json --use-project-database --execute
 
-# 稳定性分析和人工裁决后，离线定稿正式归并
+# 正式归并链路：P0-4 验收 + 稳定性分析 + 人工裁决（见下方“验证脚本”段）
+# → 定稿正式归并（--report/--raw-output/--review-decisions 为验收与裁决产物）
 python -m app.cli finalize-consolidation --report data/private/consolidation-report.json --raw-output data/private/consolidation-raw.json --final-result data/private/consolidation-final.json --review-decisions data/private/review-decisions.json --use-project-database
 
 # 查看与验证

@@ -8,7 +8,7 @@ JD 导入 → v0.10 + Schema V3 结构化抽取 → 抽取质量验证 → 要�
 |---|---|
 | `cli.py` | 显式数据库目标的候选、定稿、审计、验证与报告 CLI |
 | `config.py` | 从环境变量或 `.env` 读取并校验 LLM 配置 |
-| `candidates.py` | 生成抽取/归并私有候选 JSON，不写正式业务表 |
+| `candidates.py` | 生成抽取/归并单次预检候选 JSON（不进入正式定稿链路，不写正式业务表） |
 | `ingestion.py` | 解析 Markdown + front matter，按内容哈希去重并逐文件事务导入 |
 | `schemas.py` | Pydantic 定义 JD 输入与抽取数据合同（Schema V3 三级熟练度） |
 | `extraction.py` | 结构化抽取、证据校验、有限重试、按抽取器版本幂等持久化 |
