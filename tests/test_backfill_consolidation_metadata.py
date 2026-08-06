@@ -34,7 +34,9 @@ from app.requirement_consolidation import (
 
 
 def _seed_batch(
-    database_path: Path, decisions_fp: str = "anchor-decisions-fp"
+    database_path: Path,
+    decisions_fp: str = "anchor-decisions-fp",
+    requirement_names: tuple[str, ...] = ("技术甲",),
 ) -> dict:
     """构造旧格式归并批次（仅两个锚点字段），返回各产物引用。"""
     engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
@@ -68,47 +70,42 @@ def _seed_batch(
             )
             session.add(extraction)
             session.flush()
-            req = JobRequirement(
-                extraction_id=extraction.id,
-                raw_name="技术甲",
-                category="programming_language",
-                importance="must",
-                proficiency="basic",
-                group_id=None,
-                group_logic="standalone",
-                min_years=None,
-                max_years=None,
-                years_text=None,
-                evidence="熟悉技术甲",
-                confidence=0.9,
-            )
-            session.add(req)
-            session.flush()
+            reqs = []
+            for index, name in enumerate(requirement_names):
+                req = JobRequirement(
+                    extraction_id=extraction.id,
+                    raw_name=name,
+                    category="programming_language",
+                    importance="must",
+                    proficiency="basic",
+                    group_id=None,
+                    group_logic="standalone",
+                    min_years=None,
+                    max_years=None,
+                    years_text=None,
+                    evidence=f"熟悉{name}",
+                    confidence=0.9,
+                )
+                session.add(req)
+                session.flush()
+                reqs.append(req)
             session.commit()
             job_ids = {job.id}
 
             selection = load_consolidation_selection(session, job_ids=job_ids)
+            canonical_items = [
+                CanonicalRequirement(
+                    canonical_requirement_id=f"cr-{index}",
+                    canonical_name=name,
+                    source_requirement_ids=[req.id],
+                    rationale="测试",
+                    confidence=0.9,
+                )
+                for index, (name, req) in enumerate(zip(requirement_names, reqs))
+            ]
             result = RequirementConsolidationResult(
-                canonical_requirements=[
-                    CanonicalRequirement(
-                        canonical_requirement_id="cr-tech",
-                        canonical_name="技术甲",
-                        source_requirement_ids=[req.id],
-                        rationale="测试",
-                        confidence=0.9,
-                    )
-                ],
-                mappings=build_mappings_from_canonical_partition(
-                    [
-                        CanonicalRequirement(
-                            canonical_requirement_id="cr-tech",
-                            canonical_name="技术甲",
-                            source_requirement_ids=[req.id],
-                            rationale="测试",
-                            confidence=0.9,
-                        )
-                    ]
-                ),
+                canonical_requirements=canonical_items,
+                mappings=build_mappings_from_canonical_partition(canonical_items),
             )
             metadata = ConsolidatorMetadata(
                 model_name="test-model",
@@ -476,6 +473,180 @@ def test_backfill_rejects_final_result_mismatch(monkeypatch, tmp_path) -> None:
     final = json.loads(final_path.read_text(encoding="utf-8"))
     final["source_result_fingerprint"] = "wrong"
     final_path.write_text(json.dumps(final, ensure_ascii=False), encoding="utf-8")
+
+    assert (
+        _run_backfill(
+            monkeypatch,
+            tmp_path,
+            report_path,
+            raw_path,
+            decisions_path,
+            final_path,
+            db_path,
+        )
+        == 1
+    )
+    assert _read_batch(db_path).get("reviewed_by") is None
+
+
+def test_backfill_rejects_final_content_fingerprint_mismatch(
+    monkeypatch, tmp_path
+) -> None:
+    """历史最终结果 result 内容与声明指纹不一致时拒绝。"""
+    db_path = tmp_path / "backfill.db"
+    ctx = _seed_batch(db_path, decisions_fp=_real_decisions_fp())
+    report_path, raw_path, decisions_path, final_path = _write_inputs(
+        tmp_path, ctx
+    )
+    final = json.loads(final_path.read_text(encoding="utf-8"))
+    final["result_fingerprint"] = "wrong-declared-fp"
+    final_path.write_text(json.dumps(final, ensure_ascii=False), encoding="utf-8")
+
+    assert (
+        _run_backfill(
+            monkeypatch,
+            tmp_path,
+            report_path,
+            raw_path,
+            decisions_path,
+            final_path,
+            db_path,
+        )
+        == 1
+    )
+    assert _read_batch(db_path).get("reviewed_by") is None
+
+
+def test_backfill_rejects_final_identity_mismatch(monkeypatch, tmp_path) -> None:
+    """历史最终结果的批次身份与批次不一致时拒绝。"""
+    db_path = tmp_path / "backfill.db"
+    ctx = _seed_batch(db_path, decisions_fp=_real_decisions_fp())
+    report_path, raw_path, decisions_path, final_path = _write_inputs(
+        tmp_path, ctx
+    )
+    final = json.loads(final_path.read_text(encoding="utf-8"))
+    final["input_fingerprint"] = "wrong-identity"
+    final_path.write_text(json.dumps(final, ensure_ascii=False), encoding="utf-8")
+
+    assert (
+        _run_backfill(
+            monkeypatch,
+            tmp_path,
+            report_path,
+            raw_path,
+            decisions_path,
+            final_path,
+            db_path,
+        )
+        == 1
+    )
+    assert _read_batch(db_path).get("reviewed_by") is None
+
+
+def test_backfill_rejects_illegal_approved_run_index(
+    monkeypatch, tmp_path
+) -> None:
+    """approved_run_index 非 int 时干净拒绝且不写库。"""
+    db_path = tmp_path / "backfill.db"
+    ctx = _seed_batch(db_path, decisions_fp=_real_decisions_fp())
+    report_path, raw_path, decisions_path, final_path = _write_inputs(
+        tmp_path, ctx
+    )
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["manual_cluster_review"]["approved_run_index"] = "0"
+    report_path.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
+
+    assert (
+        _run_backfill(
+            monkeypatch,
+            tmp_path,
+            report_path,
+            raw_path,
+            decisions_path,
+            final_path,
+            db_path,
+        )
+        == 1
+    )
+    assert _read_batch(db_path).get("reviewed_by") is None
+
+
+def test_backfill_rejects_invalid_reviewed_at(monkeypatch, tmp_path) -> None:
+    """reviewed_at 格式非法时干净拒绝且不写库。"""
+    db_path = tmp_path / "backfill.db"
+    ctx = _seed_batch(db_path, decisions_fp=_real_decisions_fp())
+    report_path, raw_path, decisions_path, final_path = _write_inputs(
+        tmp_path, ctx
+    )
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["manual_cluster_review"]["reviewed_at"] = "not-a-date"
+    report_path.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
+
+    assert (
+        _run_backfill(
+            monkeypatch,
+            tmp_path,
+            report_path,
+            raw_path,
+            decisions_path,
+            final_path,
+            db_path,
+        )
+        == 1
+    )
+    assert _read_batch(db_path).get("reviewed_by") is None
+
+
+def test_backfill_rejects_replay_mismatch(monkeypatch, tmp_path) -> None:
+    """重放（批准运行 + 审核决定）结果与当前持久化结果不一致时拒绝。"""
+    db_path = tmp_path / "backfill.db"
+    ctx = _seed_batch(
+        db_path,
+        decisions_fp=_real_decisions_fp(),
+        requirement_names=("技术甲", "框架乙"),
+    )
+    report_path, raw_path, decisions_path, final_path = _write_inputs(
+        tmp_path, ctx
+    )
+    # 审核决定包含 must_link：重放会合并两个 singleton canonical，
+    # 与当前库结果（未合并）不一致 → 拒绝（走"重放成功但结果不同"分支）。
+    decisions_path.write_text(
+        json.dumps(
+            {
+                "decisions": [
+                    {
+                        "decision": "must_link",
+                        "requirement_ids": [
+                            mapping.requirement_id
+                            for mapping in ctx["result"].mappings
+                        ],
+                        "rationale": "测试合并",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    import hashlib
+
+    real_fp = hashlib.sha256(decisions_path.read_bytes()).hexdigest()
+    final = json.loads(final_path.read_text(encoding="utf-8"))
+    final["review_decisions_fingerprint"] = real_fp
+    final_path.write_text(json.dumps(final, ensure_ascii=False), encoding="utf-8")
+    # 批次锚点指纹同步为新的 decisions 指纹（否则锚点冲突先触发）。
+    engine = create_database_engine(f"sqlite:///{db_path.as_posix()}")
+    try:
+        session_factory = create_session_factory(engine)
+        with session_factory() as session:
+            record = session.query(JobConsolidation).one()
+            record.raw_response = {
+                **record.raw_response,
+                "review_decisions_fingerprint": real_fp,
+            }
+            session.commit()
+    finally:
+        engine.dispose()
 
     assert (
         _run_backfill(

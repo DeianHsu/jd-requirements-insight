@@ -5,22 +5,25 @@
 approved_run_index / approved_result_fingerprint / final_result_fingerprint，
 无法通过加强后的归并定稿门禁。
 
-本脚本以**重放式校验**补齐（不改变结果内容）：用历史验收报告
-（manual_cluster_review）、验收原始结果（raw）与历史最终结果
-（apply_review_decisions 输出）重建"批准运行 → 审核决定 → 最终结果"
-的完整证据链，并验证链条每一环与批次现有身份一致：
+本脚本以**重放式校验**补齐（不改变结果内容）：从验收原始结果中取出
+被批准运行的聚类结果，重新应用审核决定（与 apply_review_decisions
+相同的 `_apply_decisions` 逻辑）生成最终结果，并验证重放结果与当前
+持久化结果一致；同时核对历史最终结果（apply_review_decisions 输出）
+的声明字段链与批次身份。验证链条：
 
 1. 批次必须已具备两个核心锚点：review_decisions_fingerprint 与
    source_run_identifier（不允许凭空签发）；
-2. 验收报告 manual_cluster_review 完整，且 approved_run_index 与
-   批次 source_run_identifier（run-N）一致；
+2. 验收报告 manual_cluster_review 完整，approved_run_index 类型合法、
+   reviewed_at 可解析，且与批次 source_run_identifier（run-N）一致；
 3. raw 中批准运行的结果指纹（缺失时按结果重算）等于验收报告
    approved_result_fingerprint，等于历史最终结果的
    source_result_fingerprint；
-4. 历史最终结果的 review_decisions_fingerprint / source_run_identifier
-   / 批次身份（input_fingerprint/extractor_version/selected_job_ids/
-   model/prompt_version/schema_version）与批次一致；
-5. 历史最终结果指纹等于当前数据库持久化结果指纹（复算）；
+4. 历史最终结果的批次身份（input_fingerprint/extractor_version/
+   selected_job_ids/model/prompt_version/schema_version）与批次一致，
+   其 review_decisions_fingerprint / source_run_identifier 与批次一致，
+   **其 result 内容指纹与其声明 result_fingerprint 一致**；
+5. 历史最终结果指纹等于当前数据库持久化结果指纹（复算），且
+   **重放（批准运行 + 审核决定）结果指纹也等于当前持久化结果**；
 6. 批次已有任一目标字段与待补值不同 → 拒绝，不覆盖。
 
 已有字段一致则幂等跳过。输出补齐记录
@@ -34,6 +37,7 @@ import hashlib
 import json
 from pathlib import Path
 
+from app.consolidation import load_consolidation_selection
 from app.consolidation_validation import (
     load_persisted_consolidation_result,
     result_fingerprint,
@@ -45,6 +49,7 @@ from app.database import (
 )
 from app.models import JobConsolidation
 from app.requirement_consolidation import RequirementConsolidationResult
+from scripts.experiments.p0_4.apply_review_decisions import _apply_decisions
 
 
 def parse_args() -> argparse.Namespace:
@@ -122,6 +127,21 @@ def main() -> int:
     ):
         if review.get(field) in (None, ""):
             findings.append(f"验收报告 manual_cluster_review 缺少 {field}")
+    # 非法类型/格式必须干净拒绝（不崩溃、不写库）。
+    if not isinstance(review.get("approved_run_index"), int) or isinstance(
+        review.get("approved_run_index"), bool
+    ):
+        findings.append(
+            f"approved_run_index 类型非法：{review.get('approved_run_index')!r}"
+        )
+    reviewed_at = review.get("reviewed_at")
+    if reviewed_at:
+        try:
+            datetime.datetime.fromisoformat(
+                str(reviewed_at).replace("Z", "+00:00")
+            )
+        except ValueError:
+            findings.append(f"reviewed_at 格式无效：{reviewed_at}")
 
     engine = create_database_engine(args.database_url)
     try:
@@ -173,9 +193,13 @@ def main() -> int:
             # 3. 历史最终结果与验收报告/批次证据链一致。
             approved_index = review.get("approved_run_index")
             runs = raw.get("runs") or []
-            if not 0 <= approved_index < len(runs):
+            if (
+                not isinstance(approved_index, int)
+                or isinstance(approved_index, bool)
+                or not 0 <= approved_index < len(runs)
+            ):
                 findings.append(
-                    f"批准运行索引（{approved_index}）超出 raw 运行范围"
+                    f"批准运行索引（{approved_index!r}）非法或超出 raw 运行范围"
                 )
             else:
                 approved_fp = _run_fingerprint(runs[approved_index])
@@ -208,6 +232,28 @@ def main() -> int:
                 findings.append(
                     "历史最终结果审核决定指纹与 --review-decisions 文件不一致"
                 )
+            # 历史最终结果的批次身份必须与批次一致（docstring 声明补实现）。
+            for field, expected in batch_identity.items():
+                if final.get(field) != expected:
+                    findings.append(
+                        f"历史最终结果 {field}（{final.get(field)}）与批次"
+                        f"（{expected}）不一致"
+                    )
+            # 历史最终结果的 result 内容指纹必须与其声明指纹一致
+            # （防止 result 内容被改而声明指纹未同步）。
+            try:
+                final_content_fp = result_fingerprint(
+                    RequirementConsolidationResult.model_validate(final["result"])
+                )
+            except (KeyError, ValueError) as exc:
+                findings.append(f"历史最终结果 result 不合法：{exc}")
+                final_content_fp = None
+            if final_content_fp is not None and final_content_fp != final.get(
+                "result_fingerprint"
+            ):
+                findings.append(
+                    "历史最终结果内容指纹与其声明 result_fingerprint 不一致"
+                )
 
             # 4. 当前持久化结果 == 历史最终结果（复算）。
             try:
@@ -223,6 +269,46 @@ def main() -> int:
                     "历史最终结果指纹与当前持久化归并结果不一致"
                 )
             pending["final_result_fingerprint"] = current_fingerprint
+
+            # 4b. 真正重放：批准运行 + 审核决定 → 重算最终结果，必须与
+            # 当前持久化结果一致（证明当前结果确由批准运行与审核决定
+            # 确定性产生，而不只是声明字段自洽）。
+            if (
+                isinstance(approved_index, int)
+                and not isinstance(approved_index, bool)
+                and 0 <= approved_index < len(runs)
+                and current_fingerprint is not None
+            ):
+                try:
+                    decisions_payload = json.loads(
+                        args.review_decisions.read_text(encoding="utf-8")
+                    )
+                    source_result = RequirementConsolidationResult.model_validate(
+                        runs[approved_index]["result"]
+                    )
+                    selection = load_consolidation_selection(
+                        session,
+                        job_ids=set(record.selected_job_ids) or None,
+                        extractor_version=record.extractor_version,
+                    )
+                    raw_name_by_id = {
+                        occ.requirement_id: occ.requirement.raw_name
+                        for occ in selection.consolidation_input.occurrences
+                    }
+                    replayed = _apply_decisions(
+                        source_result,
+                        decisions_payload.get("decisions") or [],
+                        raw_name_by_id,
+                    )
+                    replayed_fp = result_fingerprint(replayed)
+                except (ValueError, KeyError) as exc:
+                    findings.append(f"重放（批准运行 + 审核决定）失败：{exc}")
+                    replayed_fp = None
+                if replayed_fp is not None and replayed_fp != current_fingerprint:
+                    findings.append(
+                        "重放结果与当前持久化归并结果不一致（当前结果非"
+                        "批准运行 + 审核决定的确定性产物）"
+                    )
 
             # 5. 已有字段冲突拒绝（不覆盖）。
             for field, value in pending.items():
