@@ -69,20 +69,27 @@ updated_at: 2026-08-07
 - 合成端到端测试覆盖：模型候选不进入正式表，审核定稿后正式抽取/归并
   才出现，并可进入市场统计和报告门禁；
 - **接口收口（2026-08-07）**：
-  - 验收产物合同统一：run_real_jd_acceptance 的 report/raw 共享整轮
-    identity（raw 顶层含 job_ids）；finalize-extraction 校验改为"定稿
-    JD ∈ 整轮 job_ids"，批量验收产物（如 job_ids=[4,5]）可逐 JD 定稿；
+  - 验收产物合同统一（两轮）：run_real_jd_acceptance 的 report/raw
+    共用单一 identity（run_identifier/model/prompt_version/schema_version/
+    job_ids/jd_set_fingerprint/runs/max_attempts）；finalize-extraction
+    校验定稿 JD ∈ 整轮 job_ids 且 report/raw 的 JD 集合、runs、
+    max_attempts、jd_set_fingerprint 一致，批量验收产物可逐 JD 定稿；
     verify_extraction_source 对新格式同合同（旧格式向后兼容）；
   - 候选产物定位明确为**单次预检产物**：extract-jds / consolidate-
     requirements 候选不进入正式链路，finalize 只消费完整验收产物；
     README/ARCHITECTURE 已同步；
+  - 归并定稿门禁加强：正式归并必须带完整 7 字段审核元数据（审核人/
+    时间/批准运行/批准结果指纹/审核决定指纹/最终结果指纹），
+    final_result_fingerprint 必须与当前持久化结果一致；旧批次 #1/#2
+    已用 backfill_consolidation_metadata.py 离线补齐（不改结果）；
   - 报告门禁增加上游 provenance 标注：generate-report 检查批次来源
     抽取绑定状态，存在 unverified/reviewed_unbound 时报告与方法节
     显式标注风险（不阻塞生成）；audit-consolidation 输出
     extraction_source_status；
   - E2E 真实化：test_pipeline_e2e 调用 run_real_jd_acceptance /
     run_acceptance / apply_review_decisions 真实链路（仅人工审核步骤
-    模拟），不再手工构造中间 JSON；候选命令断言为预检落盘。
+    模拟），终点为真实 generate-report 生成 Markdown 报告；不再手工
+    构造中间 JSON；候选命令断言为预检落盘。
 
 ## P0-4 要求归并定稿（2026-08-05，离线完成）
 
