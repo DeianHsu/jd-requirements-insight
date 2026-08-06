@@ -571,6 +571,28 @@ def test_full_pipeline_import_extract_consolidate_statistics(
     finally:
         engine.dispose()
 
+    # 7. 生产主线终点：真实 generate-report CLI 生成 Markdown 报告。
+    #    全链定稿（抽取 fully_bound + 归并完整审核元数据）→ 无来源绑定标注。
+    report_output = tmp_path / "market-report.md"
+    result = runner.invoke(
+        cli,
+        [
+            "generate-report",
+            "--consolidation-id",
+            str(consolidation_id),
+            "--output",
+            str(report_output),
+            *database_args,
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    report_text = report_output.read_text(encoding="utf-8")
+    assert "岗位要求市场分析报告" in report_text
+    assert "跨 JD 共同要求" in report_text
+    assert "证据追溯" in report_text
+    assert "技术甲" in report_text
+    assert "**上游来源绑定**：" not in report_text  # 全链 fully_bound
+
 
 def select_latest_consolidation():
     """返回最新归并批次的查询（按ID降序取第一条）。"""
