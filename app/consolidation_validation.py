@@ -251,6 +251,15 @@ def result_fingerprint(result: RequirementConsolidationResult) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def is_placeholder_canonical_name(name: str) -> bool:
+    """占位/内部标记名称检测：不得进入最终持久化结果。
+
+    覆盖 cannot-link 历史占位格式（“（拆分）实例71”）与任何
+    含内部审核痕迹的名称。
+    """
+    return "拆分" in name or "实例" in name
+
+
 def validate_persisted_consistency(
     persisted: PersistedConsolidationResult,
 ) -> list[str]:

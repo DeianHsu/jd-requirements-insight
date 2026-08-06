@@ -23,6 +23,7 @@ from pathlib import Path
 
 from app.consolidation import load_consolidation_selection
 from app.consolidation_validation import (
+    is_placeholder_canonical_name,
     result_fingerprint,
     validate_contract,
     validate_exact_identity,
@@ -88,8 +89,17 @@ def _file_fingerprint(content: bytes) -> str:
 def _apply_decisions(
     result: RequirementConsolidationResult,
     decisions: list[dict],
+    raw_name_by_id: dict[int, str],
 ) -> RequirementConsolidationResult:
-    """把 must-link / cannot-link 决定应用到 canonical 分区。"""
+    """把 must-link / cannot-link 决定应用到 canonical 分区。
+
+    名称策略（不调用模型）：
+
+    - must-link 合并后：决策显式提供 canonical_name 时使用之，
+      否则保留主 canonical 名称；
+    - cannot-link 拆分出的 singleton：使用对应 requirement 的
+      raw_name（缺失时拒绝应用，不生成内部占位名）。
+    """
     canonicals: dict[str, CanonicalRequirement] = {
         item.canonical_requirement_id: item
         for item in result.canonical_requirements
@@ -131,6 +141,13 @@ def _apply_decisions(
                 merged_ids.add(owner)
                 for requirement_id in moved:
                     member_to_canonical[requirement_id] = primary
+            # 合并后名称：决策显式指定优先，否则保留主名称。
+            explicit_name = decision.get("canonical_name")
+            if explicit_name:
+                primary_item.canonical_name = explicit_name
+                primary_item.rationale += (
+                    f"（审核修正：名称定为“{explicit_name}”）"
+                )
         elif decision["decision"] == "cannot_link":
             if len(ids) < 2:
                 continue
@@ -139,13 +156,20 @@ def _apply_decisions(
                 item = canonicals[owner]
                 if len(item.source_requirement_ids) == 1:
                     continue
-                # 拆出该实例为独立 singleton canonical。
+                raw_name = raw_name_by_id.get(requirement_id)
+                if not raw_name or not raw_name.strip():
+                    raise ValueError(
+                        f"cannot-link 拆分实例 {requirement_id} 缺少可用的"
+                        "原始名称，拒绝应用审核决定"
+                    )
+                # 拆出该实例为独立 singleton canonical，名称使用
+                # 对应 requirement 的原始名称（可直接进入报告）。
                 new_id = f"cr-{requirement_id}-split"
                 item.source_requirement_ids.remove(requirement_id)
                 member_to_canonical[requirement_id] = new_id
                 canonicals[new_id] = CanonicalRequirement(
                     canonical_requirement_id=new_id,
-                    canonical_name=f"（拆分）实例{requirement_id}",
+                    canonical_name=raw_name.strip(),
                     source_requirement_ids=[requirement_id],
                     rationale=(
                         "审核修正：cannot-link 拆分（见 review-decisions）"
@@ -252,6 +276,10 @@ def main() -> int:
                 occurrence.requirement_id
                 for occurrence in consolidation_input.occurrences
             }
+            raw_name_by_id = {
+                occurrence.requirement_id: occurrence.requirement.raw_name
+                for occurrence in consolidation_input.occurrences
+            }
     finally:
         engine.dispose()
 
@@ -272,8 +300,19 @@ def main() -> int:
             print(f"  - {failure}")
         return 1
 
-    final_result = _apply_decisions(result, decisions_payload["decisions"])
-    # 重新执行完整唯一分区与精确 ID 覆盖校验。
+    final_result = _apply_decisions(
+        result, decisions_payload["decisions"], raw_name_by_id
+    )
+    placeholder_names = [
+        item.canonical_name
+        for item in final_result.canonical_requirements
+        if is_placeholder_canonical_name(item.canonical_name)
+    ]
+    if placeholder_names:
+        print("审核应用后仍存在占位名称，拒绝输出：")
+        for name in placeholder_names:
+            print(f"  - {name}")
+        return 1
     try:
         validate_canonical_partition(consolidation_input, final_result.canonical_requirements)
         validate_exact_identity(final_result, expected_ids)

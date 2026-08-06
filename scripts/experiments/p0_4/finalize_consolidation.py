@@ -15,8 +15,11 @@
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 from pathlib import Path
+
+from sqlalchemy import select
 
 from app.consolidation import (
     ConsolidatorMetadata,
@@ -25,6 +28,8 @@ from app.consolidation import (
     scope_key_for,
 )
 from app.consolidation_validation import (
+    is_placeholder_canonical_name,
+    load_persisted_consolidation_result,
     validate_contract,
     validate_exact_identity,
     result_fingerprint,
@@ -34,6 +39,7 @@ from app.database import (
     create_database_engine,
     create_session_factory,
 )
+from app.models import JobConsolidation
 from app.requirement_consolidation import RequirementConsolidationResult
 
 
@@ -113,6 +119,15 @@ def main() -> int:
     review = report.get("manual_cluster_review") or {}
     if not review.get("reviewed_by"):
         print("人工 cluster 审核未完成（reviewed_by 为空），拒绝定稿。")
+        return 1
+    reviewed_at = review.get("reviewed_at")
+    if not reviewed_at:
+        print("人工审核未记录 reviewed_at，拒绝定稿。")
+        return 1
+    try:
+        datetime.datetime.fromisoformat(str(reviewed_at).replace("Z", "+00:00"))
+    except ValueError:
+        print(f"reviewed_at 格式无效：{reviewed_at}，拒绝定稿。")
         return 1
     if review.get("approved_run_index") is None:
         print("人工审核未指定 approved_run_index，拒绝定稿。")
@@ -306,6 +321,18 @@ def main() -> int:
                 print("规范化结果指纹与 raw 记录不一致，拒绝定稿。")
                 return 1
 
+            # 占位/内部标记名称不得进入最终持久化结果。
+            placeholder_names = [
+                item.canonical_name
+                for item in result.canonical_requirements
+                if is_placeholder_canonical_name(item.canonical_name)
+            ]
+            if placeholder_names:
+                print("最终结果包含占位名称，拒绝定稿：")
+                for name in placeholder_names:
+                    print(f"  - {name}")
+                return 1
+
             scope_key = scope_key_for(job_ids or None)
             raw_response = dict(selected_run.get("raw_response") or {})
             if final_payload is not None:
@@ -315,6 +342,63 @@ def main() -> int:
                 raw_response["source_run_identifier"] = (
                     final_payload["source_run_identifier"]
                 )
+
+            # 幂等安全门：已有批次只有在最终结果与本次完全一致时
+            # 才允许复用；任何不一致都明确拒绝，且不修改已有批次。
+            if final_payload is not None:
+                existing_batch = session.scalar(
+                    select(JobConsolidation).where(
+                        JobConsolidation.scope_key == scope_key,
+                        JobConsolidation.consolidator_version
+                        == metadata.consolidator_version,
+                        JobConsolidation.input_fingerprint
+                        == selection.input_fingerprint,
+                    )
+                )
+                if existing_batch is not None:
+                    problems: list[str] = []
+                    existing_review_fp = (
+                        existing_batch.raw_response or {}
+                    ).get("review_decisions_fingerprint")
+                    if not existing_review_fp:
+                        problems.append(
+                            "已有批次缺少审核决定指纹元数据，无法验证一致性"
+                        )
+                    elif existing_review_fp != final_payload.get(
+                        "review_decisions_fingerprint"
+                    ):
+                        problems.append(
+                            "已有批次审核决定指纹与本次不同"
+                            "（同一输入与版本下存在不同审核决定）"
+                        )
+                    existing_source = (
+                        existing_batch.raw_response or {}
+                    ).get("source_run_identifier")
+                    if not existing_source:
+                        problems.append(
+                            "已有批次缺少来源运行标识元数据，无法验证一致性"
+                        )
+                    elif existing_source != final_payload.get(
+                        "source_run_identifier"
+                    ):
+                        problems.append(
+                            "已有批次来源运行与本次不同"
+                        )
+                    persisted = load_persisted_consolidation_result(
+                        session_factory, existing_batch.id
+                    )
+                    if result_fingerprint(persisted.result) != final_payload.get(
+                        "result_fingerprint"
+                    ):
+                        problems.append(
+                            "已有批次最终结果与本次不同"
+                            "（同一输入与版本下已存在不同归并结果）"
+                        )
+                    if problems:
+                        print("拒绝定稿（已有批次未被修改）：")
+                        for problem in problems:
+                            print(f"  - {problem}")
+                        return 1
             batch, created = persist_consolidation(
                 session,
                 selection,

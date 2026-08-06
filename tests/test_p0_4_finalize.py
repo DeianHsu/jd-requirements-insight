@@ -468,6 +468,71 @@ def test_apply_review_decisions_cannot_link_splits_canonical(
     }
     assert member_to_cid[2] != member_to_cid[3]  # 已拆开
     assert len(result["mappings"]) == 3
+    # 拆出的实例 2 的 canonical 名称必须是原始名称，无内部占位痕迹。
+    split = next(
+        c for c in result["canonical_requirements"]
+        if c["canonical_requirement_id"] == member_to_cid[2]
+    )
+    assert split["canonical_name"] == "数据分析经验"
+    assert "拆分" not in split["canonical_name"]
+    assert "实例" not in split["canonical_name"]
+
+
+def test_apply_review_decisions_must_link_explicit_name(
+    monkeypatch, tmp_path
+) -> None:
+    """must-link 决策显式提供 canonical_name 时用于合并后名称。"""
+    db_path = tmp_path / "finalize.db"
+    _seed_database(db_path)
+    _, raw_path = _write_inputs(tmp_path, db_path)
+    decisions_path = tmp_path / "decisions.json"
+    decisions_path.write_text(
+        json.dumps(
+            {
+                "input_fingerprint": json.loads(
+                    raw_path.read_text(encoding="utf-8")
+                )["input_fingerprint"],
+                "extractor_version": "test-model|prompt:0.10|schema:3.0",
+                "selected_job_ids": [1],
+                "model": "test-model",
+                "prompt_version": CONSOLIDATION_PROMPT_VERSION,
+                "schema_version": CONSOLIDATION_SCHEMA_VERSION,
+                "reviewed_by": "tester",
+                "reviewed_at": "2026-08-04T00:00:00+00:00",
+                "decisions": [
+                    {
+                        "decision": "must_link",
+                        "requirement_ids": [2, 3],
+                        "canonical_name": "数据分析经验与学历",
+                        "rationale": "测试",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        _run_apply_review_decisions(
+            monkeypatch, tmp_path, raw_path, decisions_path, db_path
+        )
+        == 0
+    )
+    final = json.loads(
+        (tmp_path / "final.json").read_text(encoding="utf-8")
+    )
+    result = final["result"]
+    member_to_cid = {
+        rid: c["canonical_requirement_id"]
+        for c in result["canonical_requirements"]
+        for rid in c["source_requirement_ids"]
+    }
+    merged = next(
+        c for c in result["canonical_requirements"]
+        if c["canonical_requirement_id"] == member_to_cid[2]
+    )
+    assert merged["canonical_name"] == "数据分析经验与学历"
 
 
 def test_apply_review_decisions_rejects_identity_mismatch(
@@ -573,6 +638,303 @@ def test_finalize_rejects_unapproved_run_index(monkeypatch, tmp_path) -> None:
     raw_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
 
     assert _run_finalize(monkeypatch, tmp_path, report_path, raw_path, db_path) == 1
+
+
+def _write_final_result(
+    tmp_path: Path,
+    raw_path: Path,
+    decisions_path: Path,
+    mutate=None,
+) -> Path:
+    """从 raw 的 run-0 生成审核应用后的最终结果 JSON。
+
+    mutate 回调可修改 result dict（例如改变 canonical 分区或名称）。
+    """
+    import hashlib
+
+    from app.consolidation_validation import result_fingerprint
+    from app.requirement_consolidation import RequirementConsolidationResult
+
+    raw = json.loads(raw_path.read_text(encoding="utf-8"))
+    run = raw["runs"][0]
+    result_dict = json.loads(json.dumps(run["result"]))
+    if mutate is not None:
+        mutate(result_dict)
+    result = RequirementConsolidationResult.model_validate(result_dict)
+    final = {
+        "input_fingerprint": raw["input_fingerprint"],
+        "extractor_version": raw["extractor_version"],
+        "selected_job_ids": [1],
+        "model": raw["model"],
+        "prompt_version": raw["prompt_version"],
+        "schema_version": raw["schema_version"],
+        "source_run_identifier": "run-0",
+        "source_result_fingerprint": run["result_fingerprint"],
+        "review_decisions_fingerprint": hashlib.sha256(
+            decisions_path.read_bytes()
+        ).hexdigest(),
+        "reviewed_by": "tester",
+        "reviewed_at": "2026-08-04T00:00:00+00:00",
+        "result_fingerprint": result_fingerprint(result),
+        "result": result.model_dump(mode="json"),
+    }
+    final_path = tmp_path / "final.json"
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+    final_path.write_text(
+        json.dumps(final, ensure_ascii=False), encoding="utf-8"
+    )
+    return final_path
+
+
+def _run_finalize_with_review(
+    monkeypatch, tmp_path, report_path, raw_path, db_path, final_path,
+    decisions_path,
+) -> int:
+    import scripts.experiments.p0_4.finalize_consolidation as finalize
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "finalize_consolidation",
+            "--report",
+            str(report_path),
+            "--raw-output",
+            str(raw_path),
+            "--final-result",
+            str(final_path),
+            "--review-decisions",
+            str(decisions_path),
+            "--database-url",
+            f"sqlite:///{db_path.as_posix()}",
+        ],
+    )
+    return finalize.main()
+
+
+def _decisions_file(tmp_path: Path, fingerprint: str) -> Path:
+    decisions_path = tmp_path / "decisions.json"
+    decisions_path.write_text(
+        json.dumps(
+            {
+                "input_fingerprint": fingerprint,
+                "extractor_version": "test-model|prompt:0.10|schema:3.0",
+                "selected_job_ids": [1],
+                "model": "test-model",
+                "prompt_version": CONSOLIDATION_PROMPT_VERSION,
+                "schema_version": CONSOLIDATION_SCHEMA_VERSION,
+                "reviewed_by": "tester",
+                "reviewed_at": "2026-08-04T00:00:00+00:00",
+                "decisions": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    return decisions_path
+
+
+def test_finalize_idempotent_with_final_result(
+    monkeypatch, tmp_path
+) -> None:
+    """相同输入、版本和最终结果：重复定稿幂等返回已有批次。"""
+    db_path = tmp_path / "finalize.db"
+    _seed_database(db_path)
+    report_path, raw_path = _write_inputs(tmp_path, db_path)
+    raw = json.loads(raw_path.read_text(encoding="utf-8"))
+    decisions_path = _decisions_file(tmp_path, raw["input_fingerprint"])
+    final_path = _write_final_result(tmp_path, raw_path, decisions_path)
+
+    assert (
+        _run_finalize_with_review(
+            monkeypatch, tmp_path, report_path, raw_path, db_path,
+            final_path, decisions_path,
+        )
+        == 0
+    )
+    assert (
+        _run_finalize_with_review(
+            monkeypatch, tmp_path, report_path, raw_path, db_path,
+            final_path, decisions_path,
+        )
+        == 0
+    )
+
+    from app.database import create_database_engine, create_session_factory
+    from app.models import JobConsolidation
+
+    engine = create_database_engine(f"sqlite:///{db_path.as_posix()}")
+    try:
+        session_factory = create_session_factory(engine)
+        with session_factory() as session:
+            assert session.query(JobConsolidation).count() == 1
+    finally:
+        engine.dispose()
+
+
+def test_finalize_rejects_existing_batch_different_result(
+    monkeypatch, tmp_path
+) -> None:
+    """同一输入与版本下已存在不同归并结果：拒绝且不修改已有批次。"""
+    db_path = tmp_path / "finalize.db"
+    _seed_database(db_path)
+    report_path, raw_path = _write_inputs(tmp_path, db_path)
+    raw = json.loads(raw_path.read_text(encoding="utf-8"))
+    decisions_path = _decisions_file(tmp_path, raw["input_fingerprint"])
+    final_path = _write_final_result(tmp_path, raw_path, decisions_path)
+    assert (
+        _run_finalize_with_review(
+            monkeypatch, tmp_path, report_path, raw_path, db_path,
+            final_path, decisions_path,
+        )
+        == 0
+    )
+
+    # 构造不同分区（把实例 2、3 合并）的最终结果。
+    def mutate(result_dict):
+        for canonical in result_dict["canonical_requirements"]:
+            if canonical["canonical_requirement_id"] == "cr-2":
+                canonical["source_requirement_ids"] = [2, 3]
+                canonical["canonical_name"] = "数据分析经验与学历"
+            elif canonical["canonical_requirement_id"] == "cr-3":
+                canonical["source_requirement_ids"] = []
+        result_dict["canonical_requirements"] = [
+            c for c in result_dict["canonical_requirements"]
+            if c["source_requirement_ids"]
+        ]
+        for mapping in result_dict["mappings"]:
+            if mapping["requirement_id"] == 3:
+                mapping["canonical_requirement_id"] = "cr-2"
+
+    other_final = _write_final_result(
+        tmp_path / "other", raw_path, decisions_path, mutate=mutate
+    )
+    assert (
+        _run_finalize_with_review(
+            monkeypatch, tmp_path, report_path, raw_path, db_path,
+            other_final, decisions_path,
+        )
+        == 1
+    )
+
+    from app.database import create_database_engine, create_session_factory
+    from app.models import JobConsolidation
+
+    engine = create_database_engine(f"sqlite:///{db_path.as_posix()}")
+    try:
+        session_factory = create_session_factory(engine)
+        with session_factory() as session:
+            batch = session.query(JobConsolidation).one()
+            assert batch.occurrence_count == 3  # 批次未被修改
+    finally:
+        engine.dispose()
+
+
+def test_finalize_rejects_existing_batch_without_review_metadata(
+    monkeypatch, tmp_path
+) -> None:
+    """已有批次缺少审核元数据时不得无依据宣称一致。"""
+    from app.consolidation import (
+        ConsolidatorMetadata,
+        load_consolidation_selection,
+        persist_consolidation,
+        scope_key_for,
+    )
+
+    db_path = tmp_path / "finalize.db"
+    _seed_database(db_path)
+    report_path, raw_path = _write_inputs(tmp_path, db_path)
+    raw = json.loads(raw_path.read_text(encoding="utf-8"))
+    decisions_path = _decisions_file(tmp_path, raw["input_fingerprint"])
+    final_path = _write_final_result(tmp_path, raw_path, decisions_path)
+
+    # 直接以生产入口语义建一份无审核元数据的已有批次。
+    engine = create_database_engine(f"sqlite:///{db_path.as_posix()}")
+    try:
+        session_factory = create_session_factory(engine)
+        with session_factory() as session:
+            selection = load_consolidation_selection(session, job_ids={1})
+            metadata = ConsolidatorMetadata(
+                model_name="test-model",
+                prompt_version=CONSOLIDATION_PROMPT_VERSION,
+                schema_version=CONSOLIDATION_SCHEMA_VERSION,
+            )
+            persist_consolidation(
+                session,
+                selection,
+                _valid_result(),
+                {"model_response": {"canonical_requirements": []}},
+                metadata,
+                scope_key_for({1}),
+            )
+    finally:
+        engine.dispose()
+
+    assert (
+        _run_finalize_with_review(
+            monkeypatch, tmp_path, report_path, raw_path, db_path,
+            final_path, decisions_path,
+        )
+        == 1
+    )
+
+
+def test_finalize_rejects_placeholder_canonical_name(
+    monkeypatch, tmp_path
+) -> None:
+    """最终结果包含审核占位名称时拒绝定稿。"""
+    db_path = tmp_path / "finalize.db"
+    _seed_database(db_path)
+    report_path, raw_path = _write_inputs(tmp_path, db_path)
+    raw = json.loads(raw_path.read_text(encoding="utf-8"))
+    decisions_path = _decisions_file(tmp_path, raw["input_fingerprint"])
+
+    def mutate(result_dict):
+        result_dict["canonical_requirements"][0][
+            "canonical_name"
+        ] = "（拆分）实例71"
+
+    final_path = _write_final_result(
+        tmp_path, raw_path, decisions_path, mutate=mutate
+    )
+    assert (
+        _run_finalize_with_review(
+            monkeypatch, tmp_path, report_path, raw_path, db_path,
+            final_path, decisions_path,
+        )
+        == 1
+    )
+
+
+def test_finalize_rejects_invalid_reviewed_at(monkeypatch, tmp_path) -> None:
+    """reviewed_at 缺失或格式无效时拒绝定稿。"""
+    from app.database import create_database_engine, create_session_factory
+    from app.models import JobConsolidation
+
+    db_path = tmp_path / "finalize.db"
+    _seed_database(db_path)
+    report_path, raw_path = _write_inputs(tmp_path, db_path)
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["manual_cluster_review"]["reviewed_at"] = "not-a-date"
+    report_path.write_text(
+        json.dumps(report, ensure_ascii=False), encoding="utf-8"
+    )
+
+    assert _run_finalize(monkeypatch, tmp_path, report_path, raw_path, db_path) == 1
+
+    report["manual_cluster_review"]["reviewed_at"] = ""
+    report_path.write_text(
+        json.dumps(report, ensure_ascii=False), encoding="utf-8"
+    )
+    assert _run_finalize(monkeypatch, tmp_path, report_path, raw_path, db_path) == 1
+
+    engine = create_database_engine(f"sqlite:///{db_path.as_posix()}")
+    try:
+        session_factory = create_session_factory(engine)
+        with session_factory() as session:
+            assert session.query(JobConsolidation).count() == 0
+    finally:
+        engine.dispose()
 
 
 def test_finalize_is_idempotent(monkeypatch, tmp_path) -> None:

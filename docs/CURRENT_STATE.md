@@ -31,7 +31,9 @@ updated_at: 2026-08-04
 - **已持久化正式抽取结果：JD 1/2/3**（deepseek-v4-flash、
   `prompt:0.10|schema:3.0`，要求数 37/30/16，幂等已验证）；
 - **已持久化正式归并批次：1 份**（job_ids=1,2,3，83 条精确覆盖，
-  deepseek-v4-flash `prompt:4.3|schema:3.0`，来源 run-1 + 人工审核决定）；
+  deepseek-v4-flash `prompt:4.3|schema:3.0`，来源 run-1 + 人工审核决定，
+  审核指纹 `51cebada…`、结果指纹 `c5be704e…`）；旧候选批次已按
+  "不维护旧派生结果"原则删除重建，身份见 `reports/P0-4/previous-batch-note.json`；
 - 真实 JD 原文属于私有输入（Git 忽略；重新克隆仓库的环境不会包含
   这些私有文件）。
 
@@ -42,24 +44,42 @@ updated_at: 2026-08-04
   漏并、71/72 LangChain/AutoGen 错误合并），因此保留 4.3，不再继续
   调整 Prompt；
 - **验收**（3 次独立运行 + 顺序变形）：coverage=100%、结构违规=0；
-  稳定对 6 个（3/3 次同簇），不稳定对 6 个；
-- **业务影响稳定性分析**：`reports/P0-4/stability-report.json`（脱敏，
-  只含 ID 与统计）、`data/private/experiments/P0-4/stability-analysis.json`
-  （含名称/evidence）；
+- **业务影响稳定性分析**（`analyze_stability.py`，4 个观察 = 3 独立
+  + 成功顺序变形）：基于每个观察的完整 canonical 分区（含与核心
+  成员同簇的全部实例），稳定对 5 个（4/4 同簇）、不稳定对 9 个；
+  **市场影响 canonical 1 个**：团队协作族（23/81 核心）完整成员在
+  各观察为 [23,81]→2 JD、[23,53,81]→3、[23,27,81]→2、[23,27,53,81]→3，
+  distinct job count 2↔3 漂移（旧口径只统计核心成员会漏报）；
+  公共报告 `reports/P0-4/stability-report.json`（脱敏）、私有分析
+  `data/private/experiments/P0-4/stability-analysis.json`（含名称/
+  evidence）；
 - **人工裁决**：`data/private/experiments/P0-4/review-decisions.json`
-  （私有，与输入指纹绑定）——must-link 4 组（5-46、11-43、23-27-53-81、
-  17-45），cannot-link 1 组（71-72）；团队协作 canonical 的 JD 覆盖数
-  由裁决确定为 3，不再依赖随机运行；
+  （私有，与输入指纹绑定）——must-link 5 组（5-46、11-43、
+  23-27-53-81、17-45、**56-74**），cannot-link 1 组（71-72）；
+  覆盖全部 8 个 unstable 跨 JD 对（56-74 为新口径下确认的漏裁决：
+  4 观察中 3 次合并、仅顺序变形漏并，属模型漏归并）；团队协作
+  canonical 的 JD 覆盖数由裁决确定为 3，不再依赖随机运行；
 - **确定性应用**：`apply_review_decisions.py` 从验收运行 run-1 生成
   最终结果（canonical=72、mappings=83、coverage=1.0、结构违规=0），
-  记录来源运行指纹与审核决定文件指纹；
+  记录来源运行指纹与审核决定文件指纹；cannot-link 拆分使用对应
+  requirement 的原始名称，不生成"（拆分）实例N"占位名；
 - **定稿安全门**：`finalize_consolidation.py` 核对报告↔raw 全部身份
   （input_fingerprint/extractor/model/prompt/schema/selected_job_ids/
+  run_count）、审核绑定（approved_run_index + approved_result_fingerprint
+  + reviewed_at 格式）、精确 ID 覆盖（数量相同但 ID 被替换也拒绝）、
+  占位名称检测、**幂等安全门**（已有批次只有在最终结果指纹、审核
+  决定指纹、来源运行标识全部一致时才允许复用，否则明确拒绝且不修改
+  已有批次；缺审核元数据的旧格式批次拒绝无依据宣称一致）；
   run_count）、审核绑定（approved_run_index + approved_result_fingerprint）、
   精确 ID 覆盖（数量相同但 ID 被替换也拒绝）；批次 raw_response 记录
   review_decisions_fingerprint；
 - **离线归并验证**：持久化批次精确 ID 一致性检查通过（83 条全覆盖、
   无缺失/多余/重复归属/归属冲突）；重复定稿幂等（仅 1 份批次）；
+- **大模块 2（要求归并质量闭环）已关闭**：稳定性分析使用完整
+  canonical 成员、顺序变形纳入业务分析、稳定性判定按实际观察总数；
+  相同身份但不同最终结果会被明确拒绝、真正相同的最终结果保持幂等；
+  cannot-link 不产生占位名称；审核身份与结果链条完整可追溯；尚未
+  进入报告生成模块；
 - **范围声明**：当前只证明 3 份 JD（83 条实例）范围的归并质量；
   15～20 份 JD 扩展仍需分阶段验证（新增 JD 会引入新的边界对，需
   重新走稳定性分析 + 人工裁决流程）。
