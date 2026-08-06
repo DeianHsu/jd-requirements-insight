@@ -71,17 +71,70 @@ class RecordingClient:
 def build_precheck_input(
     selection, target_size: int = 75
 ) -> RequirementConsolidationInput:
-    """按requirement_id升序取前target_size条实例构成预检输入。"""
-    occurrences = sorted(
-        selection.consolidation_input.occurrences,
-        key=lambda occurrence: occurrence.requirement_id,
-    )
-    chosen = occurrences[:target_size]
-    if len(chosen) != target_size:
+    """按 JD 分层配额构造预检输入，保证全部选定 JD 进入预检。
+
+    旧实现按 requirement_id 升序取前 N 条，新增 JD（ID 更大）会被
+    截掉。分层配额：每份 JD 至少 1 条，其余按各 JD 实例数比例分配
+    （余数按 JD 升序补齐），JD 内按 requirement_id 升序——确定性、
+    可审计，且覆盖已有跨 JD 核心条件与新增 JD 的代表性要求。
+    """
+    occurrences = selection.consolidation_input.occurrences
+    total = len(occurrences)
+    if target_size > total:
         raise RuntimeError(
-            f"预检输入无法构造{target_size}条（可选{len(occurrences)}条）"
+            f"预检输入无法构造{target_size}条（可选{total}条）"
+        )
+    by_job: dict[int, list] = {}
+    for occurrence in occurrences:
+        by_job.setdefault(occurrence.job_id, []).append(occurrence)
+    job_ids = sorted(by_job)
+    if target_size < len(job_ids):
+        raise RuntimeError(
+            f"target_size={target_size} 小于 JD 数 {len(job_ids)}，"
+            "无法保证全部 JD 进入预检"
+        )
+    # 每 JD 配额 = max(1, floor(target * n_job / total))，余数按 JD
+    # 升序逐份补 1，直至补满。
+    quotas: dict[int, int] = {}
+    remaining = target_size
+    for job_id in job_ids:
+        quota = max(1, target_size * len(by_job[job_id]) // total)
+        quotas[job_id] = quota
+        remaining -= quota
+    for job_id in job_ids:
+        if remaining <= 0:
+            break
+        quotas[job_id] += 1
+        remaining -= 1
+    if remaining != 0:
+        raise RuntimeError(f"预检配额分配失败（余量 {remaining}）")
+
+    chosen: list = []
+    for job_id in job_ids:
+        chosen.extend(
+            sorted(by_job[job_id], key=lambda occurrence: occurrence.requirement_id)[
+                : quotas[job_id]
+            ]
         )
     return RequirementConsolidationInput(occurrences=chosen)
+
+
+def precheck_selection_summary(
+    selection, target_size: int = 75
+) -> dict[str, object]:
+    """预检选样摘要（可审计）：每 JD 配额与实际选中 ID 数。"""
+    chosen = build_precheck_input(selection, target_size)
+    by_job: dict[int, int] = {}
+    for occurrence in chosen.occurrences:
+        by_job[occurrence.job_id] = by_job.get(occurrence.job_id, 0) + 1
+    return {
+        "target_size": target_size,
+        "selected_total": len(chosen.occurrences),
+        "per_job_counts": dict(sorted(by_job.items())),
+        "requirement_id_counts": len(
+            {occurrence.requirement_id for occurrence in chosen.occurrences}
+        ),
+    }
 
 
 def main() -> int:

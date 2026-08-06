@@ -900,6 +900,46 @@ def test_precheck_input_error_has_no_rebuild_hint(
     assert "备份 data/raw_jds/" not in output
 
 
+def test_precheck_input_is_job_stratified(tmp_path) -> None:
+    """预检输入按 JD 分层配额：全部选定 JD 进入预检，确定性可审计。"""
+    from tests.test_market_report import _seed_market_db
+    from app.consolidation import load_consolidation_selection
+    from scripts.experiments.p0_4.run_small_scale_precheck import (
+        build_precheck_input,
+        precheck_selection_summary,
+    )
+
+    tmp = tmp_path / "precheck_stratified.db"
+    _seed_market_db(tmp)
+    engine = create_database_engine(f"sqlite:///{tmp.as_posix()}")
+    try:
+        session_factory = create_session_factory(engine)
+        with session_factory() as session:
+            selection = load_consolidation_selection(
+                session, job_ids={1, 2, 3}
+            )
+            total = len(selection.consolidation_input.occurrences)
+            # 旧实现（按 ID 升序前 N）会只选 JD1 实例；分层必须覆盖全部 JD。
+            chosen = build_precheck_input(selection, target_size=total)
+            assert len(chosen.occurrences) == total
+
+            target = 6
+            summary = precheck_selection_summary(selection, target_size=target)
+            assert summary["selected_total"] == target
+            assert set(summary["per_job_counts"]) == {1, 2, 3}  # 全部 JD 覆盖
+            assert all(count >= 1 for count in summary["per_job_counts"].values())
+            # 确定性：两次构造完全一致。
+            again = precheck_selection_summary(selection, target_size=target)
+            assert summary == again
+            # 重复 ID 校验：不重复。
+            chosen_ids = [
+                occurrence.requirement_id for occurrence in chosen.occurrences
+            ]
+            assert len(chosen_ids) == len(set(chosen_ids))
+    finally:
+        engine.dispose()
+
+
 def test_raw_response_structure_keeps_model_and_normalized_result() -> None:
     """raw_response 保存模型响应与规范化结果，attempt_count 正确。"""
     from app.consolidation import consolidate_with_correction

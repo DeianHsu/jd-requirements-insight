@@ -39,6 +39,7 @@ from app.extraction import (
     SCHEMA_VERSION,
     ExtractorMetadata,
     OpenAICompatibleExtractionClient,
+    extraction_result_fingerprint,
 )
 from app.extraction_two_stage import extract_job_two_stage_with_discovery
 from app.extraction_validation import (
@@ -246,10 +247,14 @@ def main() -> int:
                 snapshot = _run_extraction(client, job, args.max_attempts)
                 snapshots.append(snapshot)
                 successful_runs += 1
-                raw_payload[f"job{job_id}_run{index}"] = _snapshot_payload(snapshot)
+                snapshot_payload = _snapshot_payload(snapshot)
+                snapshot_payload["run_identifier"] = f"job{job_id}_run{index}"
+                snapshot_payload["result_fingerprint"] = (
+                    extraction_result_fingerprint(snapshot.result)
+                )
+                raw_payload[f"job{job_id}_run{index}"] = snapshot_payload
                 print(
                     f"  {job.source_file} run{index}: "
-
                     f"要求{len(snapshot.result.requirements)}项"
                 )
             except Exception as exc:  # 实验批处理保留单次错误并继续
@@ -349,6 +354,7 @@ def main() -> int:
             {
                 "job_id": job_id,
                 "source_file": job.source_file,
+                "input_fingerprint": compute_input_fingerprint(job.raw_text),
                 "expected_runs": expected_runs,
                 "successful_runs": successful_runs,
                 "failed_runs": failed_runs,
@@ -359,6 +365,15 @@ def main() -> int:
                 if snapshots
                 else 0,
                 "proficiency_counts": dict(proficiency_counts),
+                # 人工复核记录：抽取定稿时核对被批准运行，不得只凭
+                # reviewed_by 放行任意运行。
+                "manual_review": {
+                    "reviewed_by": None,
+                    "reviewed_at": None,
+                    "approved_run_index": None,
+                    "approved_result_fingerprint": None,
+                    "conclusion": "",
+                },
             }
         )
         hard_gate_failures.extend(job_hard)

@@ -229,6 +229,53 @@ def extract_job(
     return extract_job_two_stage(job, client, max_attempts)
 
 
+def extraction_result_fingerprint(result: JobExtractionResult) -> str:
+    """规范化抽取结果的确定性指纹（用于审核与定稿绑定）。"""
+    import hashlib
+
+    payload = json.dumps(
+        result.model_dump(mode="json"), ensure_ascii=False, sort_keys=True
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def rebuild_extraction_result(
+    extraction: JobExtraction,
+) -> JobExtractionResult:
+    """从正式数据库回读重建抽取结果（用于定稿后逐项对比）。"""
+    from app.schemas import (
+        ProficiencyLevel,
+        RequirementCategory,
+        RequirementGroupLogic,
+        RequirementImportance,
+        RequirementItem,
+        RoleFamily,
+        Seniority,
+    )
+
+    requirements = [
+        RequirementItem(
+            raw_name=item.raw_name,
+            category=RequirementCategory(item.category),
+            importance=RequirementImportance(item.importance),
+            proficiency=ProficiencyLevel(item.proficiency),
+            group_id=item.group_id,
+            group_logic=RequirementGroupLogic(item.group_logic),
+            min_years=item.min_years,
+            max_years=item.max_years,
+            years_text=item.years_text,
+            evidence=item.evidence,
+            confidence=item.confidence,
+        )
+        for item in sorted(extraction.requirements, key=lambda r: r.id)
+    ]
+    return JobExtractionResult(
+        role_family=RoleFamily(extraction.role_family),
+        seniority=Seniority(extraction.seniority),
+        requirements=requirements,
+    )
+
+
 def persist_extraction(
     session: Session,
     job: JobDescription,

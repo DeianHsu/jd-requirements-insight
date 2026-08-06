@@ -18,6 +18,8 @@
 from __future__ import annotations
 
 from datetime import date
+
+import pytest
 from pathlib import Path
 
 from app.consolidation import (
@@ -608,11 +610,11 @@ def test_duplicate_mapping_blocked_at_database_layer(tmp_path) -> None:
                     confidence=0.9,
                 )
             )
-            try:
+            from sqlalchemy.exc import IntegrityError
+
+            with pytest.raises(IntegrityError):
                 session.commit()
-                raise AssertionError("重复 mapping 应被数据库唯一约束拒绝")
-            except Exception:
-                session.rollback()
+            session.rollback()
     finally:
         engine.dispose()
 

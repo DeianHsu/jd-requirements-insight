@@ -114,6 +114,29 @@ updated_at: 2026-08-05
 - **大模块 3（市场统计、证据追溯与 Markdown 报告闭环）已关闭**；
   尚未进入样本扩展阶段。
 
+## 大模块 4：样本扩展（3 → 5）准备（2026-08-05，离线阶段）
+
+- **JD 4、5 资格检查通过**（详细判断见私有记录
+  `data/private/module4-eligibility-check.json`，公共仅脱敏结论）：
+  均属当前目标岗位范围（AI 应用工程 / LLM 应用开发 / Agent 工程），
+  数据完整、要求充分、与 JD 1～3 不重复、构成有效增量样本；扩展
+  范围为 JD 1～5；
+- **抽取定稿机制**（`scripts/experiments/p0_3/finalize_extraction.py`，
+  无模型）：验收脚本报告新增 `manual_review` 区块（approved_run_index /
+  approved_result_fingerprint / reviewed_by / reviewed_at），raw 每运行
+  记录 run_identifier 与结果指纹；定稿校验报告↔raw 身份（job_id /
+  输入指纹 / 版本 / 运行数）、批准运行绑定、幂等安全门（同 JD 同版本
+  已有不同结果拒绝、旧格式缺审核元数据拒绝宣称一致）、回读逐项对比；
+  8 项测试覆盖（无模型持久化、逐项一致、foreign raw 拒绝、未批准
+  拒绝、指纹不一致拒绝、幂等、不同结果拒绝、无 LLM 引用）；
+- **归并预检分层采样**（`run_small_scale_precheck`）：由按
+  requirement_id 升序取前 N 改为按 JD 分层配额（每 JD 至少 1 条、
+  其余按实例数比例分配），保证 JD 4、5 进入预检，输出可审计选样
+  摘要；
+- **待授权付费阶段**：JD 4/5 抽取验收（多次独立运行）→ 批准运行
+  无模型定稿 → 5 JD 归并预检与完整验收 → 增量稳定性比较与新增边界
+  人工裁决 → 新批次定稿 → 5 JD 报告与 3→5 对比摘要。
+
 ## P0-3A 规则场景验收（2026-08-04，已授权付费）
 
 - 环境：deepseek-v4-flash、**Prompt 0.10**、schema 3.0、max_attempts=2、
