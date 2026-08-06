@@ -37,7 +37,12 @@ from app.schemas import (
 )
 
 
-def _seed_job(database_path: Path) -> int:
+def _seed_job(
+    database_path: Path,
+    hash_seed: str = "e",
+    title: str = "AI 研发工程师",
+    source_file: str = "jd-004.md",
+) -> int:
     """写入一份无抽取的 JD，返回 job_id。"""
     engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
     try:
@@ -45,16 +50,16 @@ def _seed_job(database_path: Path) -> int:
         session_factory = create_session_factory(engine)
         with session_factory() as session:
             job = JobDescription(
-                source_hash="e" + "f" * 63,
-                source_file="jd-004.md",
+                source_hash=(hash_seed * 64)[:64],
+                source_file=source_file,
                 source_type="test",
                 collected_at=date(2026, 8, 1),
                 company="示例公司",
-                title="AI 研发工程师",
+                title=title,
                 company_type="medium_company",
                 tags=[],
                 extra_metadata={},
-                raw_text="# AI 研发工程师\n\n## 任职要求\n1. 熟悉 Python。\n2. 有 RAG 项目经验者优先。",
+                raw_text="# " + title + "\n\n## 任职要求\n1. 熟悉 Python。\n2. 有 RAG 项目经验者优先。",
             )
             session.add(job)
             session.flush()
@@ -186,7 +191,9 @@ def _write_acceptance(
     return report_path, raw_path
 
 
-def _run_finalize(monkeypatch, tmp_path, report_path, raw_path, db_path) -> int:
+def _run_finalize(
+    monkeypatch, tmp_path, report_path, raw_path, db_path, job_id="1"
+) -> int:
     import scripts.experiments.p0_3.finalize_extraction as finalize
 
     monkeypatch.setattr(
@@ -199,7 +206,7 @@ def _run_finalize(monkeypatch, tmp_path, report_path, raw_path, db_path) -> int:
             "--raw-output",
             str(raw_path),
             "--job-id",
-            "1",
+            str(job_id),
             "--database-url",
             f"sqlite:///{db_path.as_posix()}",
         ],
@@ -423,6 +430,140 @@ def test_finalize_rejects_report_top_level_not_passed(monkeypatch, tmp_path) -> 
     report["hard_gate_failures"] = ["some-hard-gate"]
     report_path.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
     assert _run_finalize(monkeypatch, tmp_path, report_path, raw_path, db_path) == 1
+
+
+def _write_batch_acceptance(
+    tmp_path: Path, database_path: Path, job_ids: list[int]
+) -> tuple[Path, Path]:
+    """写多 JD 批量验收产物（report jobs 数组 + raw 全部运行 + 整轮
+    identity job_ids），模拟 run_real_jd_acceptance 的真实输出。"""
+    from app.extraction import extraction_result_fingerprint
+
+    engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
+    try:
+        session_factory = create_session_factory(engine)
+        with session_factory() as session:
+            jobs = [
+                session.query(JobDescription)
+                .filter(JobDescription.id == jid)
+                .one()
+                for jid in job_ids
+            ]
+    finally:
+        engine.dispose()
+
+    results_by_job: dict[int, list] = {}
+    raw: dict = {}
+    for jid, job in zip(job_ids, jobs):
+        results = [
+            _make_result(),
+            _make_result(evidence_prefix="1) "),
+            _make_result(evidence_prefix="2. "),
+        ]
+        results_by_job[jid] = results
+        for index, result in enumerate(results):
+            raw[f"job{jid}_run{index}"] = {
+                "discovery": None,
+                "result": result.model_dump(mode="json"),
+                "raw_text": job.raw_text,
+                "run_identifier": f"job{jid}_run{index}",
+                "result_fingerprint": extraction_result_fingerprint(result),
+                "raw_response": {"attempt_count": 1},
+            }
+    raw["identity"] = {
+        "run_identifier": "batch-acceptance",
+        "model": "test-model",
+        "prompt_version": "0.10",
+        "schema_version": "3.0",
+        "job_ids": job_ids,
+        "runs": "3",
+        "max_attempts": "2",
+    }
+    report = {
+        "identity": {
+            "model": "test-model",
+            "prompt_version": "0.10",
+            "schema_version": "3.0",
+            "job_count": str(len(job_ids)),
+            "runs": "3",
+            "run_identifier": "batch-acceptance",
+        },
+        "jobs": [
+            {
+                "job_id": jid,
+                "source_file": job.source_file,
+                "input_fingerprint": compute_input_fingerprint(job.raw_text),
+                "expected_runs": 3,
+                "successful_runs": 3,
+                "failed_runs": 0,
+                "hard_gate_failures": [],
+                "requirement_count": 2,
+                "manual_review": {
+                    "reviewed_by": "tester",
+                    "reviewed_at": "2026-08-05T00:00:00+00:00",
+                    "approved_run_index": 0,
+                    "approved_result_fingerprint": extraction_result_fingerprint(
+                        results_by_job[jid][0]
+                    ),
+                    "conclusion": "ok",
+                },
+            }
+            for jid, job in zip(job_ids, jobs)
+        ],
+        "hard_gate_failures": [],
+        "passed": True,
+    }
+    report_path = tmp_path / "batch-report.json"
+    report_path.write_text(
+        json.dumps(report, ensure_ascii=False), encoding="utf-8"
+    )
+    raw_path = tmp_path / "batch-raw.json"
+    raw_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+    return report_path, raw_path
+
+
+def test_finalize_batch_acceptance_finalizes_each_job(
+    monkeypatch, tmp_path
+) -> None:
+    """批量验收产物（整轮 job_ids=[1,2]）可逐 JD 定稿，且幂等。"""
+    db_path = tmp_path / "finalize.db"
+    job_1 = _seed_job(db_path)
+    job_2 = _seed_job(
+        db_path,
+        hash_seed="d",
+        title="大模型应用开发工程师",
+        source_file="jd-005.md",
+    )
+    report_path, raw_path = _write_batch_acceptance(
+        tmp_path, db_path, [job_1, job_2]
+    )
+
+    assert _run_finalize(
+        monkeypatch, tmp_path, report_path, raw_path, db_path, job_id=job_1
+    ) == 0
+    assert _run_finalize(
+        monkeypatch, tmp_path, report_path, raw_path, db_path, job_id=job_2
+    ) == 0
+    # 重复定稿幂等
+    assert _run_finalize(
+        monkeypatch, tmp_path, report_path, raw_path, db_path, job_id=job_1
+    ) == 0
+    assert _run_finalize(
+        monkeypatch, tmp_path, report_path, raw_path, db_path, job_id=job_2
+    ) == 0
+
+    engine = create_database_engine(f"sqlite:///{db_path.as_posix()}")
+    try:
+        session_factory = create_session_factory(engine)
+        with session_factory() as session:
+            extractions = session.query(JobExtraction).all()
+            assert sorted(e.job_id for e in extractions) == [job_1, job_2]
+            for extraction in extractions:
+                assert extraction.raw_response["acceptance_run_identifier"] == (
+                    "batch-acceptance"
+                )
+    finally:
+        engine.dispose()
 
 
 def test_finalize_rejects_foreign_acceptance_run(monkeypatch, tmp_path) -> None:

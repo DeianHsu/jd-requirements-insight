@@ -122,6 +122,15 @@ def main() -> int:
     report_identity = report.get("identity") or {}
     if not report_identity.get("run_identifier"):
         findings.append("报告缺少整轮 run_identifier")
+    # 合同统一：新格式 raw 顶层带整轮 identity（job_ids）；批量验收产物
+    # job_ids=[4,5] 时复核 JD 4 必须包含在内。旧格式（无顶层 identity）
+    # 以报告身份为准，不强制。
+    raw_identity = raw.get("identity") or {}
+    raw_job_ids = raw_identity.get("job_ids")
+    if raw_job_ids is not None and args.job_id not in raw_job_ids:
+        findings.append(
+            f"raw 整轮 JD 集合（{raw_job_ids}）不包含复核 JD {args.job_id}"
+        )
 
     engine = create_database_engine(args.database_url)
     try:

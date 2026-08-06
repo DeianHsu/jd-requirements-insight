@@ -58,8 +58,9 @@ def _identity_failures(
             failures.append(f"整轮身份字段缺失：{field}")
         elif report_identity[field] != raw_identity[field]:
             failures.append(f"report 与 raw 的整轮身份不一致（{field}）")
-    if raw_identity.get("job_ids") != [job.id]:
-        failures.append("raw 整轮 JD 集合与定稿 JD 不一致")
+    job_ids = raw_identity.get("job_ids")
+    if not isinstance(job_ids, list) or job.id not in job_ids:
+        failures.append("raw 整轮 JD 集合不包含定稿 JD")
     if entry.get("input_fingerprint") != compute_input_fingerprint(job.raw_text):
         failures.append("报告条目输入指纹与 JD 原文不一致")
     return failures

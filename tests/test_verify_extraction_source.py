@@ -284,3 +284,43 @@ def test_verify_rejects_fingerprint_mismatch(monkeypatch, tmp_path) -> None:
     assert _run_verify(
         monkeypatch, tmp_path, db_path, report_path, raw_path, job_id
     ) == 1
+
+
+def test_verify_rejects_raw_identity_without_job(monkeypatch, tmp_path) -> None:
+    """raw 顶层整轮 identity 的 job_ids 不含复核 JD 时拒绝（批量合同统一）。"""
+    db_path = tmp_path / "verify.db"
+    job_id = _seed_job(db_path)
+    report_path, raw_path = _write_acceptance(tmp_path, job_id)
+    raw = json.loads(raw_path.read_text(encoding="utf-8"))
+    raw["identity"]["job_ids"] = [999]
+    raw_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+
+    engine = create_database_engine(f"sqlite:///{db_path.as_posix()}")
+    try:
+        session_factory = create_session_factory(engine)
+        with session_factory() as session:
+            job = session.get(JobDescription, job_id)
+            metadata = ExtractorMetadata(
+                model_name="test-model",
+                prompt_version="0.10",
+                schema_version="3.0",
+            )
+            persist_extraction(
+                session,
+                job,
+                _make_result(),
+                {
+                    "approved_run_index": 0,
+                    "approved_result_fingerprint": "x",
+                    "reviewed_by": "tester",
+                    "reviewed_at": "2026-08-04T00:00:00+00:00",
+                    "source_run_identifier": f"job{job_id}_run0",
+                },
+                metadata,
+            )
+    finally:
+        engine.dispose()
+
+    assert _run_verify(
+        monkeypatch, tmp_path, db_path, report_path, raw_path, job_id
+    ) == 1
