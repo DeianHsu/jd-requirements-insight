@@ -45,6 +45,10 @@ data/private/
 
 # 本地生成的分析报告不默认上传（正式对外报告如需入库另行单独放开）。
 reports/*
+# P0-7 项目级历史风险接受记录（豁免 JD 1/2/3）需入库，供文档引用与追溯。
+!reports/P0-7/
+reports/P0-7/*
+!reports/P0-7/legacy-extraction-waiver.json
 
 # Reasonix 本地会话、记忆与配置，不上传
 .reasonix/

@@ -4,52 +4,50 @@
 完成时覆盖更新，只保留最新一轮；历史由 Git 保存。项目状态以
 `docs/CURRENT_STATE.md` / `docs/PROJECT_PLAN.md` 为准。
 
-## 最近一轮：MVP 四阶段路线审查与唯一下一步（2026-08-07）
+## 最近一轮：P0-7 关闭——JD 1~3 历史豁免最小收口（2026-08-07）
 
-### 评审要求（要点）
+### 任务内容（按用户单一路线执行，未扩展范围）
 
-从当前仓库最新 HEAD（`b6fb328`）重新规整后续开发路线：关闭 P0-7
-（JD 1~3 优先结构化豁免）→ 5 份扩展到 15 份 JD → 生成最终报告 →
-作品集交付（v0.1.0-mvp）。先判断路线是否存在现实阻塞，输出执行计划
-与当前唯一下一步；不开始无关重构。
+采用"明确接受历史例外"方式关闭 P0-7：不重新验收、不回填旧记录、
+不建设通用豁免系统。只做四件事：
 
-### 核实结论
+1. 新增脱敏历史例外记录 `reports/P0-7/legacy-extraction-waiver.json`
+   （适用对象 JD 1/2/3；原因：记录产生于现行定稿绑定合同建立之前；
+   已有依据：原 P0-3B 验收 hard gate=0 + 人工语义审计通过；允许用途：
+   仅当前 MVP 归并/统计/报告；风险：无法机器证明完整来源绑定；
+   状态：保持 `unverified`，不写成 `fully_bound`；批准人
+   project-owner、批准时间 2026-08-07；限制：仅限明确列出的历史记录，
+   新增 JD 禁止使用）；
+2. `docs/PROJECT_PLAN.md`：P0-7 改为 `✅ 已关闭`，例外 1 处置状态改为
+   `✅ 已豁免`（引用豁免记录路径），「当前下一步」改为扩样计划
+   （8→12→15 JD，固定终点）；
+3. `docs/CURRENT_STATE.md`：「正式生产主线」段写入 P0-7 关闭声明与
+   豁免记录；「下一步」改为扩样阶段执行顺序；明确"例外不等于完整
+   来源绑定"、报告 provenance 风险提示保留、新增 JD 必须走现行正式主线；
+4. `docs/REVIEW_LOG.md` 覆盖更新（本文件）。
 
-- 路线无现实阻塞，可执行；唯一需新写代码的是第一阶段的豁免落点；
-- 豁免机制只有文字占位，无落点：`app/cli.py:504-506` provenance 标注
-  写死"无结构化豁免"，`app/finalization.py:141-143` 提及"或提供结构化
-  豁免"，但全仓库无豁免记录的存储/读取/校验实现；来源绑定分类
-  （`finalization.py:111-132`）确认 JD 4/5 = `fully_bound`、JD 1/2/3 =
-  `unverified`，与文档一致；
-- 新增 JD 主线无代码缺口：`run_real_jd_acceptance --job-ids` 支持子集
-  验收、`finalize-extraction` 可逐 JD 定稿、`consolidate-requirements
-  --all` / `run_acceptance --job-ids` 支持全量归并、`generate-report`
-  样本限制声明动态生成（不写死 JD 数）；
-- Git 无任何 tag（`v0.1.0-mvp` 需新建）；`examples/market-report-sample.md`
-  已存在（合成样例）；
-- 实施风险（非阻塞，需实测/用户配合）：15 JD 归并候选输入约 3 倍于
-  当前 136 条实例（约 380~420 条），单次 LLM 上下文是否够用需在批次
-  推进前用 `run_small_scale_precheck` 实测；新增 10 份真实 JD 需用户
-  提供（`data/raw_jds/`，私有）。
+### 未改动项（按任务禁令核对）
 
-### 执行（1 个提交）
-
-- `docs(agents): 评审日志覆盖更新——MVP 四阶段路线审查`：本任务无代码
-  改动（仅只读核查 + 基线验证），按评审日志规则补充本轮简短总结。
+- 未新增数据库表 / 未改 Schema / 未新增迁移；
+- 未新增豁免管理 CLI 或通用豁免模型/服务；无签名、撤销、版本、审批
+  工作流；
+- 未修改 `audit-extraction-sources` 分类算法与名称（JD 1~3 仍
+  `unverified`、JD 4~5 仍 `fully_bound`）；
+- 未回填虚构指纹、未重新调用模型验收 JD 1~3；
+- 未修改 `generate-report` 的 provenance 风险提示逻辑（`app/cli.py`
+  未动，unverified 上游仍显式标注风险）；
+- 未修改任何业务代码（本次为纯数据文件 + 文档变更）。
 
 ### 验证结果
 
-- `uv run python -m pytest --basetemp .pytest-tmp`：352 passed（系统
-  Temp 被锁定，必须加 `--basetemp .pytest-tmp`；`uv run pytest` 直跑
-  报 PermissionError 属已知环境问题）；
-- `uv run python -m ruff check app scripts tests`：全过。
+- `uv run python -m ruff check app scripts tests`：全过；
+- `uv run python -m pytest --basetemp .pytest-tmp`：352 passed
+  （系统 Temp 被锁定属已知环境问题，必须加 `--basetemp .pytest-tmp`）。
 
 ### 当前状态
 
-- 四阶段计划已定：① 结构化豁免最小落点 + 关闭 P0-7 → ② 5→15 JD
-  小批次走唯一正式主线 → ③ 最终 15 JD 报告 → ④ 作品集交付 +
-  `v0.1.0-mvp` tag；
-- 当前唯一下一步：实现结构化豁免最小落点（数据库 + CLI 审计/管理 +
-  generate-report 消费，含"新增数据禁止继续豁免"校验），按 JD 1/2/3
-  记录豁免后关闭 P0-7；
-- P0-7 仍为 `🔵 待收口`（阻塞点：例外 1 豁免落点未实现）。
+- P0-7 = `✅ 已关闭`；P0-1～P0-7 全部关闭；JD 1~3 为已批准历史豁免
+  （例外不等于完整来源绑定，报告风险标注保留）；
+- 下一阶段：扩样（用户提供新增真实 JD → 8 JD 批次 → 12 → 15，
+  固定终点，不扩展到 20）；每批只执行现有正式主线，付费调用前汇报
+  模型/JD 范围/目的/命令并等待授权。
