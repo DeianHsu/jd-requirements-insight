@@ -6,6 +6,7 @@
 """
 
 import json
+import sys
 from datetime import date
 from pathlib import Path
 
@@ -119,6 +120,19 @@ def _judge_payload(raw_text: str, job_id: int) -> dict:
                 "evidence": "熟悉技术甲和框架乙",
                 "confidence": 0.9,
             },
+            {
+                "raw_name": "能力丙",
+                "category": "other",
+                "importance": "mentioned",
+                "proficiency": "unknown",
+                "group_id": None,
+                "group_logic": "standalone",
+                "min_years": None,
+                "max_years": None,
+                "years_text": None,
+                "evidence": "具备能力丙使用经验",
+                "confidence": 0.8,
+            },
         ]
     elif "熟悉技术甲" in raw_text and "了解能力丁" in raw_text:
         requirements = [
@@ -159,7 +173,7 @@ def _consolidation_payload() -> dict:
             {
                 "canonical_requirement_id": "cr-tech",
                 "canonical_name": "技术甲",
-                "source_requirement_ids": [1, 3],
+                "source_requirement_ids": [1, 4],
                 "rationale": "多份JD要求技术甲",
                 "confidence": 0.95,
             },
@@ -171,9 +185,16 @@ def _consolidation_payload() -> dict:
                 "confidence": 0.9,
             },
             {
+                "canonical_requirement_id": "cr-skill-c",
+                "canonical_name": "能力丙",
+                "source_requirement_ids": [3],
+                "rationale": "独立条件",
+                "confidence": 0.85,
+            },
+            {
                 "canonical_requirement_id": "cr-skill-d",
                 "canonical_name": "能力丁",
-                "source_requirement_ids": [4],
+                "source_requirement_ids": [5],
                 "rationale": "独立条件",
                 "confidence": 0.85,
             },
@@ -193,12 +214,18 @@ def _consolidation_payload() -> dict:
             },
             {
                 "requirement_id": 3,
+                "canonical_requirement_id": "cr-skill-c",
+                "rationale": "独立",
+                "confidence": 0.85,
+            },
+            {
+                "requirement_id": 4,
                 "canonical_requirement_id": "cr-tech",
                 "rationale": "同条件",
                 "confidence": 0.95,
             },
             {
-                "requirement_id": 4,
+                "requirement_id": 5,
                 "canonical_requirement_id": "cr-skill-d",
                 "rationale": "独立",
                 "confidence": 0.85,
@@ -227,23 +254,21 @@ class FakeExtractionClient:
 
 
 class FakeConsolidationClient:
-    """返回单次 canonical 聚类响应。"""
+    """返回单次 canonical 聚类响应（mappings 由确定性代码生成）。"""
 
     def __init__(self, settings) -> None:
         """保存模型名。"""
         self.model_name = settings.model
 
     def complete(self, system_prompt: str, user_prompt: str) -> str:
-        """返回单次合法 canonical 聚类响应（mappings 由确定性代码生成）。"""
-        payload = json.loads(user_prompt)
-        task = payload.get("task", "")
-        if "只输出canonical_requirements" in task:
-            return json.dumps(
-                {"canonical_requirements": _consolidation_payload()["canonical_requirements"]},
-                ensure_ascii=False,
-            )
+        """返回单次合法 canonical 聚类响应（任务提示只请求标准要求项分区，
+        mappings 由确定性代码生成，模型不输出）。"""
         return json.dumps(
-            {"mappings": _consolidation_payload()["mappings"]},
+            {
+                "canonical_requirements": _consolidation_payload()[
+                    "canonical_requirements"
+                ]
+            },
             ensure_ascii=False,
         )
 
@@ -299,79 +324,80 @@ def test_full_pipeline_import_extract_consolidate_statistics(
         ],
     )
     assert result.exit_code == 0, result.output
-    candidate = json.loads(extraction_candidate.read_text(encoding="utf-8"))
+    assert extraction_candidate.exists()  # 候选落盘（预检产物，不消费）
     engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
     session_factory = create_session_factory(engine)
     with session_factory() as session:
         assert session.query(JobExtraction).count() == 0
     engine.dispose()
 
-    # 3. 为合成候选构造最小审核产物，并逐 JD 离线定稿。
-    for candidate_run in candidate["runs"]:
-        job_id = candidate_run["job_id"]
-        acceptance_id = f"synthetic-extraction-{job_id}"
-        report_path = tmp_path / f"extraction-report-{job_id}.json"
-        raw_path = tmp_path / f"extraction-raw-{job_id}.json"
-        report_path.write_text(
-            json.dumps(
-                {
-                    "identity": {
-                        "run_identifier": acceptance_id,
-                        "model": candidate["model"],
-                        "prompt_version": candidate["prompt_version"],
-                        "schema_version": candidate["schema_version"],
-                    },
-                    "jobs": [
-                        {
-                            "job_id": job_id,
-                            "input_fingerprint": candidate_run["input_fingerprint"],
-                            "expected_runs": 1,
-                            "successful_runs": 1,
-                            "failed_runs": 0,
-                            "hard_gate_failures": [],
-                            "manual_review": {
-                                "reviewed_by": "synthetic-reviewer",
-                                "reviewed_at": "2026-08-06T00:00:00+00:00",
-                                "approved_run_index": 0,
-                                "approved_result_fingerprint": candidate_run[
-                                    "result_fingerprint"
-                                ],
-                            },
-                        }
-                    ],
-                    "hard_gate_failures": [],
-                    "passed": True,
-                },
-                ensure_ascii=False,
-            ),
-            encoding="utf-8",
-        )
-        raw_run = dict(candidate_run)
-        raw_run["run_identifier"] = f"job{job_id}_run0"
-        raw_path.write_text(
-            json.dumps(
-                {
-                    f"job{job_id}_run0": raw_run,
-                    "identity": {
-                        "run_identifier": acceptance_id,
-                        "model": candidate["model"],
-                        "prompt_version": candidate["prompt_version"],
-                        "schema_version": candidate["schema_version"],
-                        "job_ids": [job_id],
-                    },
-                },
-                ensure_ascii=False,
-            ),
-            encoding="utf-8",
-        )
+    # 3. 真实验收：run_real_jd_acceptance（多次运行 + 合同检查 + 人工审核）
+    #    生成 report/raw；随后逐 JD 离线定稿（批量验收产物，整轮
+    #    identity job_ids 含全部 JD）。
+    import scripts.experiments.p0_3.run_real_jd_acceptance as acceptance
+
+    monkeypatch.setattr(acceptance, "load_llm_settings", lambda: FakeSettings())
+    monkeypatch.setattr(
+        acceptance, "OpenAICompatibleExtractionClient", FakeExtractionClient
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_real_jd_acceptance",
+            "--database-url",
+            f"sqlite:///{database_path.as_posix()}",
+            "--all",
+            "--runs",
+            "3",
+            "--report-dir",
+            str(tmp_path),
+            "--raw-output-dir",
+            str(tmp_path),
+            "--run-tag",
+            "e2e-acceptance",
+            "--execute",
+        ],
+    )
+    assert acceptance.main() == 0
+
+    acceptance_report = tmp_path / "e2e-acceptance-report.json"
+    acceptance_raw = tmp_path / "e2e-acceptance-raw.json"
+    assert acceptance_report.exists() and acceptance_raw.exists()
+
+    # 人工审核（模拟人工步骤，作用于真实验收产物）：批准每份 JD 的
+    # run0 并记录结果指纹；之后 finalize 核对审核身份。
+    report = json.loads(acceptance_report.read_text(encoding="utf-8"))
+    raw = json.loads(acceptance_raw.read_text(encoding="utf-8"))
+    for entry in report["jobs"]:
+        job_id = entry["job_id"]
+        entry["manual_review"] = {
+            "reviewed_by": "synthetic-reviewer",
+            "reviewed_at": "2026-08-06T00:00:00+00:00",
+            "approved_run_index": 0,
+            "approved_result_fingerprint": raw[
+                f"job{job_id}_run0"
+            ]["result_fingerprint"],
+            "conclusion": "合成验收人工批准 run0",
+        }
+    acceptance_report.write_text(
+        json.dumps(report, ensure_ascii=False), encoding="utf-8"
+    )
+
+    engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
+    session_factory = create_session_factory(engine)
+    with session_factory() as session:
+        job_ids = [job.id for job in session.query(JobDescription).all()]
+    engine.dispose()
+    for job_id in job_ids:
         result = runner.invoke(
             cli,
             [
                 "finalize-extraction",
                 "--report",
-                str(report_path),
+                str(acceptance_report),
                 "--raw-output",
-                str(raw_path),
+                str(acceptance_raw),
                 "--job-id",
                 str(job_id),
                 *database_args,
@@ -402,72 +428,111 @@ def test_full_pipeline_import_extract_consolidate_statistics(
         assert session.query(JobConsolidation).count() == 0
     engine.dispose()
 
-    # 5. 最小审核后定稿归并，正式批次才出现。
-    consolidation_report = tmp_path / "consolidation-report.json"
-    consolidation_raw = tmp_path / "consolidation-raw.json"
-    identity = {
-        key: consolidation[key]
-        for key in (
-            "model",
-            "prompt_version",
-            "schema_version",
-            "extractor_version",
-            "input_fingerprint",
-            "selected_job_ids",
-        )
+    # 5. 真实验收：run_acceptance（独立运行 + 顺序变形 + 合同门禁）→
+    #    人工审核决定（模拟人工）→ apply_review_decisions → 定稿。
+    import scripts.experiments.p0_4.run_acceptance as run_acceptance
+
+    monkeypatch.setattr(
+        run_acceptance, "load_llm_settings", lambda: FakeSettings()
+    )
+    monkeypatch.setattr(
+        run_acceptance,
+        "OpenAICompatibleConsolidationClient",
+        FakeConsolidationClient,
+    )
+    acceptance_report = tmp_path / "acceptance-report.json"
+    acceptance_raw = tmp_path / "acceptance-raw.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_acceptance",
+            "--database-url",
+            f"sqlite:///{database_path.as_posix()}",
+            "--runs",
+            "2",
+            "--report",
+            str(acceptance_report),
+            "--raw-output",
+            str(acceptance_raw),
+            "--execute",
+        ],
+    )
+    assert run_acceptance.main() == 0
+
+    # 人工审核决定（模拟人工步骤：批准来源运行，不附加合并/拆分裁决）。
+    raw = json.loads(acceptance_raw.read_text(encoding="utf-8"))
+    decisions_path = tmp_path / "review-decisions.json"
+    decisions_path.write_text(
+        json.dumps(
+            {
+                "input_fingerprint": raw["input_fingerprint"],
+                "extractor_version": raw["extractor_version"],
+                "selected_job_ids": raw["selected_job_ids"],
+                "model": raw["model"],
+                "prompt_version": raw["prompt_version"],
+                "schema_version": raw["schema_version"],
+                "reviewed_by": "synthetic-reviewer",
+                "reviewed_at": "2026-08-06T00:00:00+00:00",
+                "decisions": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    import scripts.experiments.p0_4.apply_review_decisions as apply_decisions
+
+    final_result = tmp_path / "final-consolidation.json"
+    apply_report = tmp_path / "apply-report.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "apply_review_decisions",
+            "--raw-output",
+            str(acceptance_raw),
+            "--review-decisions",
+            str(decisions_path),
+            "--output",
+            str(final_result),
+            "--report",
+            str(apply_report),
+            "--database-url",
+            f"sqlite:///{database_path.as_posix()}",
+        ],
+    )
+    assert apply_decisions.main() == 0
+
+    # 人工 cluster 审核（模拟人工步骤，作用于真实验收报告）：批准
+    # run-0 并记录结果指纹；之后 finalize 核对审核身份。
+    acceptance_report = tmp_path / "acceptance-report.json"
+    report = json.loads(acceptance_report.read_text(encoding="utf-8"))
+    report["manual_cluster_review"] = {
+        "clusters": report["manual_cluster_review"]["clusters"],
+        "reviewed_by": "synthetic-reviewer",
+        "reviewed_at": "2026-08-06T00:00:00+00:00",
+        "approved_run_index": 0,
+        "approved_result_fingerprint": raw["runs"][0]["result_fingerprint"],
+        "conclusion": "合成验收人工批准 run-0",
+        "notes": "",
     }
-    consolidation_report.write_text(
-        json.dumps(
-            {
-                "input_identity": identity,
-                "p0_4_stability": {"run_count": 1},
-                "hard_gate_failures": [],
-                "manual_cluster_review": {
-                    "reviewed_by": "synthetic-reviewer",
-                    "reviewed_at": "2026-08-06T00:00:00+00:00",
-                    "approved_run_index": 0,
-                    "approved_result_fingerprint": consolidation[
-                        "result_fingerprint"
-                    ],
-                },
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
+    acceptance_report.write_text(
+        json.dumps(report, ensure_ascii=False), encoding="utf-8"
     )
-    consolidation_raw.write_text(
-        json.dumps(
-            {
-                **identity,
-                "run_count": 1,
-                "runs": [
-                    {
-                        "run_identifier": "run-0",
-                        "result_fingerprint": consolidation[
-                            "result_fingerprint"
-                        ],
-                        "result": consolidation["result"],
-                        "raw_response": consolidation["raw_response"],
-                        "metadata": {
-                            "model": consolidation["model"],
-                            "prompt_version": consolidation["prompt_version"],
-                            "schema_version": consolidation["schema_version"],
-                        },
-                    }
-                ],
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
+
     result = runner.invoke(
         cli,
         [
             "finalize-consolidation",
             "--report",
-            str(consolidation_report),
+            str(acceptance_report),
             "--raw-output",
-            str(consolidation_raw),
+            str(acceptance_raw),
+            "--final-result",
+            str(final_result),
+            "--review-decisions",
+            str(decisions_path),
             *database_args,
         ],
     )
