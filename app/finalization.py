@@ -117,6 +117,25 @@ def audit_extraction_sources(
     return items
 
 
+def classify_batch_extraction_sources(
+    session_factory: sessionmaker,
+    extraction_ids: list[int],
+) -> dict[int, str]:
+    """按批次 extraction_ids 返回正式抽取的来源绑定状态（job_id -> status）。
+
+    供报告门禁与审计复用：status 为 `unverified` / `reviewed_unbound`
+    的上游表示该批次缺少可机器验证的来源绑定，消费方必须显式报告风险
+    或提供结构化豁免，不能默认视为已绑定。
+    """
+    items = audit_extraction_sources(session_factory)
+    by_id = {item.extraction_id: item for item in items}
+    return {
+        item.job_id: item.status
+        for extraction_id in extraction_ids
+        if (item := by_id.get(extraction_id)) is not None
+    }
+
+
 def audit_consolidation_identity(
     session_factory: sessionmaker,
     consolidation_id: int,
@@ -156,6 +175,9 @@ def audit_consolidation_identity(
             "occurrence_count": record.occurrence_count,
             "canonical_count": len(persisted.result.canonical_requirements),
             "mapping_count": len(persisted.result.mappings),
+            "extraction_source_status": classify_batch_extraction_sources(
+                session_factory, list(record.extraction_ids)
+            ),
             "reportable": not finalization_failures
             and not consistency_failures,
             "failures": finalization_failures + consistency_failures,

@@ -41,10 +41,11 @@ from app.extraction_finalization import finalize_extraction
 from app.finalization import (
     audit_consolidation_identity,
     audit_extraction_sources,
+    classify_batch_extraction_sources,
 )
 from app.market_analysis import build_market_statistics
 from app.market_report import build_market_report, validate_report_inputs
-from app.models import JobDescription
+from app.models import JobConsolidation, JobDescription
 from sqlalchemy import inspect, select
 from sqlalchemy.engine import make_url
 from app.ingestion import import_directory, list_jobs
@@ -469,6 +470,7 @@ def generate_report_cmd(
     明确提示。
     """
     engine, session_factory = database_resources(database_url, use_project_database)
+    provenance_note: str | None = None
     try:
         failures = validate_report_inputs(session_factory, consolidation_id)
         if failures:
@@ -476,6 +478,37 @@ def generate_report_cmd(
             for failure in failures:
                 console.print(f"  [red]- {failure}[/red]")
             raise typer.Exit(code=1)
+
+        # 上游 provenance 检查（只读）：批次来源抽取未 fully_bound 时，
+        # 报告必须显式标注风险（不拒绝——批次本身已定稿，缺的是上游
+        # 机器可验证的来源绑定；结构化豁免或补齐后标注消失）。
+        with session_factory() as session:
+            record = session.scalar(
+                select(JobConsolidation).where(
+                    JobConsolidation.id == consolidation_id
+                )
+            )
+            extraction_ids = list(record.extraction_ids)
+        source_status = classify_batch_extraction_sources(
+            session_factory, extraction_ids
+        )
+        unbound = {
+            job_id: status
+            for job_id, status in source_status.items()
+            if status != "fully_bound"
+        }
+        if unbound:
+            detail = "、".join(
+                f"JD {job_id}:{status}" for job_id, status in sorted(unbound.items())
+            )
+            provenance_note = (
+                f"批次来源 JD {sorted(unbound)} 的正式抽取未 fully_bound"
+                f"（{detail}），无结构化豁免；报告结论的可追溯性受此限制。"
+            )
+            console.print(
+                "[yellow]上游来源绑定警告（不阻塞生成，已写入报告）："
+                f"{provenance_note}[/yellow]"
+            )
 
         stats = build_market_statistics(session_factory, consolidation_id)
     finally:
@@ -490,7 +523,8 @@ def generate_report_cmd(
             f"[yellow]报告为可再生派生产物，将覆盖：{report_path}[/yellow]"
         )
     report_path.write_text(
-        build_market_report(stats), encoding="utf-8"
+        build_market_report(stats, provenance_note=provenance_note),
+        encoding="utf-8",
     )
 
     console.print(f"[green]报告已生成：{report_path}[/green]")

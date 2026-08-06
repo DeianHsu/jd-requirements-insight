@@ -243,6 +243,91 @@ def test_report_generated_for_explicit_batch(tmp_path) -> None:
     assert "团队协作能力" in report
 
 
+def test_build_market_report_renders_provenance_note(tmp_path) -> None:
+    """provenance_note 非 None 时渲染为"上游来源绑定"行；默认无该行。"""
+    db_path = tmp_path / "market.db"
+    _seed_market_db(db_path)
+    stats = _build_stats(db_path)
+
+    plain = build_market_report(stats)
+    assert "上游来源绑定" not in plain
+
+    noted = build_market_report(stats, provenance_note="JD 1:unverified（无豁免）")
+    assert "**上游来源绑定**：JD 1:unverified（无豁免）" in noted
+
+
+def test_cli_generate_report_marks_unbound_upstream(tmp_path) -> None:
+    """上游抽取未 fully_bound 时报告显式标注风险（不阻塞生成）。"""
+    from typer.testing import CliRunner
+
+    from app.cli import cli
+
+    db_path = tmp_path / "market.db"
+    _seed_market_db(db_path)  # 夹具 extraction raw_response={}（unverified）
+
+    output = tmp_path / "report.md"
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "generate-report",
+            "--consolidation-id",
+            "1",
+            "--output",
+            str(output),
+            "--database-url",
+            f"sqlite:///{db_path.as_posix()}",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "上游来源绑定警告" in result.output
+    report = output.read_text(encoding="utf-8")
+    assert "**上游来源绑定**：" in report
+    assert "unverified" in report
+
+
+def test_cli_generate_report_clean_upstream_no_note(tmp_path) -> None:
+    """上游抽取全部 fully_bound 时报告不含来源绑定警告。"""
+    from app.finalization import EXTRACTION_FINALIZATION_FIELDS
+    from typer.testing import CliRunner
+
+    from app.cli import cli
+
+    db_path = tmp_path / "market.db"
+    _seed_market_db(db_path)
+    engine = create_database_engine(f"sqlite:///{db_path.as_posix()}")
+    try:
+        session_factory = create_session_factory(engine)
+        with session_factory() as session:
+            for extraction in session.query(JobExtraction).all():
+                extraction.raw_response = {
+                    field: f"test-{field}"
+                    for field in EXTRACTION_FINALIZATION_FIELDS
+                }
+            session.commit()
+    finally:
+        engine.dispose()
+
+    output = tmp_path / "report-clean.md"
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "generate-report",
+            "--consolidation-id",
+            "1",
+            "--output",
+            str(output),
+            "--database-url",
+            f"sqlite:///{db_path.as_posix()}",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "上游来源绑定警告" not in result.output
+    report = output.read_text(encoding="utf-8")
+    assert "**上游来源绑定**：" not in report
+
+
 def test_report_rejects_missing_batch(tmp_path) -> None:
     """批次不存在时拒绝生成。"""
     db_path = tmp_path / "market.db"

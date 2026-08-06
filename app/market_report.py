@@ -123,7 +123,9 @@ def _evidence_block(source_requirements: tuple[dict[str, Any], ...]) -> str:
 
 
 
-def build_market_report(stats: MarketStatistics) -> str:
+def build_market_report(
+    stats: MarketStatistics, provenance_note: str | None = None
+) -> str:
     """把市场统计渲染为可读 Markdown（纯函数，确定性输出）。"""
     sections: list[str] = []
 
@@ -247,6 +249,8 @@ def build_market_report(stats: MarketStatistics) -> str:
         f"- **样本限制**：当前样本为 {stats.total_job_count} 份 JD，统计"
         "结论不得外推为市场结论。\n"
     )
+    if provenance_note:
+        sections.append(f"- **上游来源绑定**：{provenance_note}\n")
     return "".join(sections)
 
 
