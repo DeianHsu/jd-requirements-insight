@@ -1,6 +1,6 @@
 # 当前状态
 
-updated_at: 2026-08-06
+updated_at: 2026-08-07
 
 ## 当前可运行功能
 
@@ -67,7 +67,22 @@ updated_at: 2026-08-06
   `unverified`。文档保留其既有人工审计结论，但本阶段不回填、不重跑、
   不将其宣称为 `fully_bound`；
 - 合成端到端测试覆盖：模型候选不进入正式表，审核定稿后正式抽取/归并
-  才出现，并可进入市场统计和报告门禁。
+  才出现，并可进入市场统计和报告门禁；
+- **接口收口（2026-08-07）**：
+  - 验收产物合同统一：run_real_jd_acceptance 的 report/raw 共享整轮
+    identity（raw 顶层含 job_ids）；finalize-extraction 校验改为"定稿
+    JD ∈ 整轮 job_ids"，批量验收产物（如 job_ids=[4,5]）可逐 JD 定稿；
+    verify_extraction_source 对新格式同合同（旧格式向后兼容）；
+  - 候选产物定位明确为**单次预检产物**：extract-jds / consolidate-
+    requirements 候选不进入正式链路，finalize 只消费完整验收产物；
+    README/ARCHITECTURE 已同步；
+  - 报告门禁增加上游 provenance 标注：generate-report 检查批次来源
+    抽取绑定状态，存在 unverified/reviewed_unbound 时报告与方法节
+    显式标注风险（不阻塞生成）；audit-consolidation 输出
+    extraction_source_status；
+  - E2E 真实化：test_pipeline_e2e 调用 run_real_jd_acceptance /
+    run_acceptance / apply_review_decisions 真实链路（仅人工审核步骤
+    模拟），不再手工构造中间 JSON；候选命令断言为预检落盘。
 
 ## P0-4 要求归并定稿（2026-08-05，离线完成）
 
