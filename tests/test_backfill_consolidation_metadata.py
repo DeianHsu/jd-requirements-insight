@@ -300,8 +300,6 @@ def test_backfill_succeeds_and_is_idempotent(monkeypatch, tmp_path) -> None:
     assert batch["final_result_fingerprint"] == ctx["result_fingerprint"]
 
     # 幂等：再次执行不改动。
-    import hashlib
-
     before = json.dumps(_read_batch(db_path), sort_keys=True)
     assert (
         _run_backfill(
