@@ -165,11 +165,11 @@ updated_at: 2026-08-07
 - **CLI**：`generate-report --consolidation-id <id> [--output <path>]`，
   完全离线（不读 LLM 配置、无 --execute），默认输出
   `reports/P0-5/market-report-<id>.md`；覆盖已有文件时明确提示。
-- **真实报告**：`reports/P0-5/market-report-1.md`（本地私有，含真实
-  evidence，不提交）：批次 #1、3 JD、83 实例、72 canonical；高频
-  要求团队协作能力（3/3 JD，must 3，4 实例 23/27/53/81）；9 个跨
-  JD 共同要求、63 个长尾要求；证据全部可追溯；无占位名、无完整
-  JD 正文、无私有路径/密钥/模型响应。
+- **真实报告**：早期批次报告（批次 #1 的 3 JD 报告、批次 #2 的 5 JD
+  报告）为可再生派生产物，已随产物清理删除（`generate-report` 可随时
+  重建）；当前有效报告为批次 #3 的 8 JD 报告（8 JD、211 实例、
+  174 canonical、团队协作 5/8 JD），属私有材料，与验收/裁决产物一并
+  归档于 `data/private/artifacts/8jd-batch/`。
 - **公开样例**：`examples/market-report-sample.md`（合成数据，可提交），
   由 `python -m scripts.make_sample_report` 用同一渲染逻辑生成；
   测试断言样例不含真实 JD、密钥、私有路径与模型原始响应。
@@ -229,10 +229,9 @@ updated_at: 2026-08-07
   NONE、重复定稿幂等；中间候选批次（unresolved 旧语义，103
   canonical、指纹 b87d2563…）已按"不维护错误派生数据"原则保存
   身份后删除；
-- **5 JD 报告** `reports/P0-5/market-report-5jd.md`（私有）：5 JD、
-  136 实例、97 canonical、团队协作 4/5 JD、跨 JD 共同 19、长尾 78、
-  样本声明动态 5 JD、重复生成一致、无完整 JD/私有路径/密钥/模型
-  原始响应；
+- **5 JD 报告**：批次 #2 报告（5 JD、136 实例、97 canonical、团队
+  协作 4/5 JD、跨 JD 共同 19、长尾 78）为可再生派生产物，已随产物
+  清理删除（`generate-report --consolidation-id 2` 可重建）；
 - **3→5 对比摘要** `reports/P0-4/module4-3to5-comparison.json`：
   共同要求 9→19、长尾 63→78、团队协作 3/3→4/5；只描述扩展影响，
   不解释为市场趋势；
