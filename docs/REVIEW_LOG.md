@@ -4,54 +4,44 @@
 完成时覆盖更新，只保留最新一轮；历史由 Git 保存。项目状态以
 `docs/CURRENT_STATE.md` / `docs/PROJECT_PLAN.md` 为准。
 
-## 最近一轮：产物集中归档 + 无效产物清理（2026-08-07）
+## 最近一轮：报告 provenance 文案修正 + 8 JD 批次正式关闭（2026-08-07）
 
-### 任务内容（用户指令：产物集中、删除无效产物）
+### 任务内容（外部 Review 发现报告事实错误后最小修正）
 
-1. **8 JD 批次产物归档**：全部 6 项产物（验收报告/raw、review-
-   decisions、final result、脱敏摘要、8 JD 市场报告）+ 清单 README
-   移动至独立目录 `data/private/artifacts/8jd-batch/`（含完整指纹链：
-   输入 a0c4ea2a… → run-2 2b32cc47… → decisions f93b9394… →
-   final d6e80729… → consolidation_id=3）；
-2. **清理无效产物（24 个文件）**：
-   - P0-3 历史迭代验收（000314/154036/161320/165102 的 report+raw、
-     revalidated）、失败批次（213527 report+raw，首次验收 Connection
-     error 产物）、JD 4/5 一次性来源检查输出（source-check-4/5）；
-   - 被取代的旧摘要/分析：final-consolidation-summary（3 JD）、
-     final-consolidation-5jd-summary v1、acceptance-runs（早期）、
-     precheck-result、incremental-3to5-summary、incremental-3to5-analysis、
-     final-consolidation-5jd v1（被 v2 取代）；
-   - 可再生旧市场报告：market-report-1.md（批次 #1）、
-     market-report-5jd.md ×2（批次 #2，reports/P0-4 与 P0-5 各一）、
-     market-report-3jd.md（P0-4 下）——`generate-report` 可随时重建；
-3. **保留**（正式批次证据链 / 文档引用）：P0-3A 172141 report+raw、
-   JD 1/2/3 验收 174748/175840 report+raw（豁免记录 evidence 引用）、
-   JD 4/5 定稿输入 module4-jd45 report+raw（正式抽取记录绑定其文件
-   指纹）、JD 6/7/8 定稿输入 214825 report+raw、批次 #1/#2 全部验收/
-   裁决/最终输入（acceptance-final、acceptance-5jd 及其 raw、
-   review-decisions(.json/-5jd)、final-consolidation(.json/-5jd-v2)、
-   摘要 v2、backfill 记录、previous-batch-note×2、stability-report、
-   stability-analysis、module4-3to5-comparison、precheck）、
-   P0-7 豁免记录；
-4. **文档同步**：CURRENT_STATE 中两处已删旧报告引用（market-report-1.md、
-   market-report-5jd.md）改为"可再生派生产物已清理"表述，并记录
-   8 JD 产物归档位置。
-
-### 验证结果
-
-- 删除 24 个文件（1 个原路径不存在，已核实为路径笔误，v1 摘要实际
-  在 reports/P0-4 下并已删除）；全部在 gitignore 范围，git 状态不受
-  影响；
-- 剩余产物逐一核对：均为正式批次证据链或被 CURRENT_STATE/豁免记录
-  引用的文件，无悬空引用（grep 核对）。
+1. **问题**：`market-report-3.md`「方法与限制」写 JD 1/2/3 为
+   `unverified`、"无结构化豁免"——与 P0-7 项目级历史风险豁免记录
+   （`reports/P0-7/legacy-extraction-waiver.json`）事实冲突；
+2. **最小修正**（`app/cli.py` provenance_note 生成文案）：
+   原"无结构化豁免"改为显式引用 P0-7 豁免记录：JD 1/2/3 仍
+   `unverified`；按 P0-7 项目级历史风险豁免仅供当前 MVP 的归并、
+   统计和报告消费；豁免不等于 `fully_bound`；可追溯性风险仍显式
+   保留。未改 extraction/consolidation/finalize 业务语义、未改
+   批次 #3 数据、未调用 LLM；
+3. **重新生成报告** `reports/P0-5/market-report-3.md`（离线）：
+   - "无结构化豁免"不再出现；豁免记录路径显式引用；
+   - 最终文案：`**上游来源绑定**：批次来源 JD [1, 2, 3] 的正式抽取
+     未 fully_bound（JD 1:unverified、JD 2:unverified、JD
+     3:unverified）；该批记录按 P0-7 项目级历史风险豁免
+     （reports/P0-7/legacy-extraction-waiver.json）仅供当前MVP 的
+     归并、统计和报告消费，豁免不等于 fully_bound；报告结论的
+     可追溯性仍受此限制。`
+   - 统计保持：8 JD、211 instances、174 canonical、团队协作能力
+     5/8 JD（6 instances，must 5）；
+   - artifacts 归档副本已同步更新；
+4. **测试**：`test_market_report.py` 28 passed、`test_pipeline_e2e.py`
+   4 passed、全量 **352 passed**、Ruff 全过；
+5. **文档同步**：CURRENT_STATE 记录批次 #3（8 JD、211 条、174
+   canonical、指纹 f93b9394…/d6e80729…、报告归档位置）、报告
+   provenance 豁免引用语义、「下一步」更新为 **8 JD 批次已正式关闭，
+   进入 8 → 12 JD 扩样**。
 
 ### 执行提交
 
-- 本轮变更：CURRENT_STATE.md（两处报告引用同步）+ REVIEW_LOG
-  （本文件），随本提交一并推送。
+- 修改文件：`app/cli.py`（provenance 文案）、`docs/CURRENT_STATE.md`、
+  `docs/REVIEW_LOG.md`（本文件）；报告产物（gitignore）重新生成。
 
 ### 当前状态
 
-- 8 JD 产物归档 `data/private/artifacts/8jd-batch/`；历史无效产物
-  已清理（reports/ 与 data/private/experiments/ 各保留证据链文件）；
-- 下一步（等待指令）：扩样（8 → 12 → 15 JD）或 MVP 收尾交付。
+- 8 JD 批次正式关闭（批次 #3 reportable、报告可展示）；
+- 下一阶段：8 → 12 JD 扩样（需用户提供 4 份新 JD；付费调用前先汇报
+  模型/范围/目的/命令等待授权）。

@@ -503,7 +503,10 @@ def generate_report_cmd(
             )
             provenance_note = (
                 f"批次来源 JD {sorted(unbound)} 的正式抽取未 fully_bound"
-                f"（{detail}），无结构化豁免；报告结论的可追溯性受此限制。"
+                f"（{detail}）；该批记录按 P0-7 项目级历史风险豁免"
+                f"（reports/P0-7/legacy-extraction-waiver.json）仅供当前"
+                f"MVP 的归并、统计和报告消费，豁免不等于 fully_bound；"
+                f"报告结论的可追溯性仍受此限制。"
             )
             console.print(
                 "[yellow]上游来源绑定警告（不阻塞生成，已写入报告）："

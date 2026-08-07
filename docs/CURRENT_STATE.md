@@ -46,6 +46,10 @@ updated_at: 2026-08-07
     `prompt:4.3|schema:3.0`，来源 run-0 + 5 JD 审核决定，审核指纹
     `d7a6942c…`、结果指纹 `edfe2c1a…`；中间候选批次 2（unresolved
     旧语义）身份见 `reports/P0-4/previous-batch-2-note.json`）；
+  - 批次 #3（job_ids=1,2,3,4,5,6,7,8，211 条精确覆盖，deepseek-v4-flash
+    `prompt:4.3|schema:3.0`，来源 run-2 + 8 JD 人工裁决，审核指纹
+    `f93b9394…`、结果指纹 `d6e80729…`、**174 canonical**；8 JD 报告
+    `data/private/artifacts/8jd-batch/market-report-3.md`）；
 - 真实 JD 原文属于私有输入（Git 忽略；重新克隆仓库的环境不会包含
   这些私有文件）。
 
@@ -91,7 +95,10 @@ updated_at: 2026-08-07
     已用 backfill_consolidation_metadata.py 离线补齐（不改结果）；
   - 报告门禁增加上游 provenance 标注：generate-report 检查批次来源
     抽取绑定状态，存在 unverified/reviewed_unbound 时报告与方法节
-    显式标注风险（不阻塞生成）；audit-consolidation 输出
+    显式标注风险（不阻塞生成）；JD 1/2/3 按 P0-7 项目级历史风险豁免
+    （`reports/P0-7/legacy-extraction-waiver.json`）在报告中显式引用
+    （仅供当前 MVP 归并/统计/报告消费，豁免不等于 fully_bound），
+    风险标注保留、不因豁免隐藏；audit-consolidation 输出
     extraction_source_status；
   - E2E 真实化：test_pipeline_e2e 调用 run_real_jd_acceptance /
     run_acceptance / apply_review_decisions 真实链路（仅人工审核步骤
@@ -277,14 +284,15 @@ hard gate=0）与 P0-3B（JD 1/2/3 累计 hard gate=0、人工审计无阻塞
 
 ## 下一步
 
-1. 8 JD 全量 P0-4 归并验收（JD 1～8，约 210+ 条实例）：P0-4
-   `run_acceptance` 验收（3 独立 + 顺序变形）+ 稳定性分析 + 必要人工
-   裁决 → `finalize-consolidation` 定稿 → `generate-report`；
-2. 8 JD 批次实测抽取成本、全量归并规模与人工裁决量后，无真实阻塞再
-   增到 12 JD，最后 15 JD（固定终点，不扩展到 20）；每批只执行现有
-   正式主线，新增 JD 禁止使用 JD 1/2/3 的历史豁免；
-3. 付费调用前汇报模型、本批 JD 数量与 ID、调用目的、预计命令，等待
-   授权后执行。
+1. **8 JD 批次已正式关闭**（批次 #3 定稿 + 8 JD 报告生成，provenance
+   文案已修正为引用 P0-7 豁免记录）；进入 **8 → 12 JD 扩样**：用户
+   提供新增 4 份真实 JD → 导入 → 抽取验收 → 人工审核 → finalize
+   extraction → 全量归并验收 → 必要人工裁决 → finalize consolidation
+   → 报告；实测抽取成本、全量归并规模与人工裁决量，无真实阻塞再增到
+   15 JD（固定终点，不扩展到 20）；新增 JD 禁止使用 JD 1/2/3 的历史
+   豁免；
+2. 每批只执行现有正式主线；付费调用前汇报模型、本批 JD 数量与 ID、
+   调用目的、预计命令，等待授权后执行。
 
 ## 付费与私有数据依赖
 
