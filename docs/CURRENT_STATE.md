@@ -33,8 +33,9 @@ updated_at: 2026-08-09
 
 - 数据库已使用现行 Schema 创建（六张业务表，无旧表）；
 - 15 份真实 JD 已导入 `data/jd_skill_insight.db`（JD 1～15，重复导入幂等跳过）；
-- JD 9～15 已按现行 Markdown/frontmatter 格式保存并导入，尚未执行付费
-  抽取或创建正式抽取记录；
+- JD 9～15 已按现行 Markdown/frontmatter 格式保存并导入；JD 9～12 已完成
+  3 次独立付费抽取验收但尚未人工审核或创建正式抽取记录，JD 13～15 尚未
+  执行付费抽取；
 - **已持久化正式抽取结果：JD 1/2/3/4/5/6/7/8**（deepseek-v4-flash、
   `prompt:0.10|schema:3.0`，要求数 37/30/16/27/26/12/43/20，幂等已验证；
   JD 4/5/6/7/8 已绑定完整验收实验身份与来源文件指纹；JD 6/7/8 按
@@ -276,6 +277,23 @@ updated_at: 2026-08-09
   4. 边缘 category 漂移（Workflow agent_capability/agent_framework、
      算法功底 software_engineering/other 等）→ 轻微影响 category 分布。
 
+## JD 9～12 抽取验收（2026-08-09，已授权付费）
+
+- 配置：deepseek-v4-flash、Prompt 0.10、Schema 3.0、每 JD 3 runs、
+  每阶段 max_attempts=2；12/12 个 run 成功，hard gate=0，验收通过；
+- 各 run 要求数：JD 9 为 36/36/32，JD 10 为 8/8/8，JD 11 为
+  23/24/24，JD 12 为 25/21/19；
+- 6 条非阻塞稳定性 warning：JD 9 三组 run 对分别有 6/4/4 个未匹配项，
+  JD 11 两组为 5/3，JD 12 一组为 12；需在人工审核时重点检查拆分粒度、
+  category 和证据归属，尤其是 JD 12；
+- 验收报告：`reports/P0-3/jd9-12-acceptance-report.json`（本地忽略的脱敏
+  产物）；原始响应：`data/private/experiments/p0_3/real_jd/
+  jd9-12-acceptance-raw.json`（私有）；
+- 验收脚本未记录逐阶段实际尝试次数，因此只能确认理论调用范围为
+  24～48 次，不能从产物精确复算实际请求数；
+- 正式数据库 JD 9～12 的 extraction 记录仍为 0；未执行 finalize、归并或
+  报告生成。
+
 ## 是否达到进入 P0-4 的条件
 
 **是。** Prompt 0.10 + Schema V3 的抽取结果已通过 P0-3A（13 场景
@@ -285,12 +303,11 @@ hard gate=0）与 P0-3B（JD 1/2/3 累计 hard gate=0、人工审计无阻塞
 ## 下一步
 
 1. **8 JD 批次已正式关闭**（批次 #3 定稿 + 8 JD 报告生成，provenance
-   文案已修正为引用 P0-7 豁免记录）；15 JD 输入已收齐，按既定节奏先处理
-   **JD 9～12**，形成 12 JD 批次：抽取验收 → 人工审核 → finalize
-   extraction → 全量归并验收 → 必要人工裁决 → finalize consolidation
-   → 报告；实测抽取成本、全量归并规模与人工裁决量，无真实阻塞再处理
-   **JD 13～15**，形成 15 JD 最终批次（固定终点，不扩展到 20）；新增 JD
-   禁止使用 JD 1/2/3 的历史豁免；
+   文案已修正为引用 P0-7 豁免记录）；JD 9～12 抽取验收已通过，下一步是
+   人工审核并选择每份 JD 的批准 run，随后离线 finalize extraction，再执行
+   12 JD 全量归并验收 → 必要人工裁决 → finalize consolidation → 报告；
+   无真实阻塞再处理 **JD 13～15**，形成 15 JD 最终批次（固定终点，不扩展
+   到 20）；新增 JD 禁止使用 JD 1/2/3 的历史豁免；
 2. 每批只执行现有正式主线；付费调用前汇报模型、本批 JD 数量与 ID、
    调用目的、预计命令，等待授权后执行。
 
