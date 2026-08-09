@@ -7,7 +7,9 @@
 from __future__ import annotations
 
 import datetime
+import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
@@ -42,6 +44,10 @@ CONSOLIDATION_FINALIZATION_FIELDS = (
     "final_result_fingerprint",
 )
 
+LEGACY_EXTRACTION_WAIVER_PATH = Path(
+    "reports/P0-7/legacy-extraction-waiver.json"
+)
+
 
 def missing_finalization_fields(
     raw_response: dict[str, Any] | None,
@@ -59,6 +65,70 @@ def validate_extraction_finalization_metadata(
     return missing_finalization_fields(
         raw_response, EXTRACTION_FINALIZATION_FIELDS
     )
+
+
+def validate_legacy_extraction_waiver(
+    path: Path,
+    unbound_job_ids: set[int],
+) -> dict[str, Any]:
+    """校验 P0-7 历史抽取豁免是否明确覆盖待报告的未绑定 JD。"""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ValueError(f"P0-7 historical waiver 不存在：{path}") from exc
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"P0-7 historical waiver 无法读取或不是合法 JSON：{path}") from exc
+
+    failures: list[str] = []
+    if not isinstance(payload, dict):
+        raise ValueError("P0-7 historical waiver 顶层必须是 JSON object")
+    if payload.get("record_type") != "legacy_extraction_waiver":
+        failures.append("record_type 必须为 legacy_extraction_waiver")
+    if payload.get("schema_version") != 1:
+        failures.append("schema_version 必须为 1")
+    for field in ("approved_by", "approved_at", "reason", "risk", "status"):
+        if not isinstance(payload.get(field), str) or not payload[field].strip():
+            failures.append(f"{field} 必须是非空字符串")
+    approved_at = payload.get("approved_at")
+    if isinstance(approved_at, str) and approved_at.strip():
+        try:
+            datetime.date.fromisoformat(approved_at)
+        except ValueError:
+            failures.append("approved_at 必须是 ISO 日期")
+    evidence = payload.get("existing_evidence")
+    if not isinstance(evidence, list) or not evidence or not all(
+        isinstance(item, str) and item.strip() for item in evidence
+    ):
+        failures.append("existing_evidence 必须是非空字符串列表")
+    allowed_use = payload.get("allowed_use")
+    if not isinstance(allowed_use, str) or "generate-report" not in allowed_use:
+        failures.append("allowed_use 未明确允许 generate-report")
+    if "unverified" not in str(payload.get("status", "")):
+        failures.append("status 必须保留 unverified 分类")
+    constraints = payload.get("constraints")
+    if not isinstance(constraints, dict) or not isinstance(
+        constraints.get("new_records"), str
+    ) or not constraints["new_records"].strip():
+        failures.append("constraints.new_records 必须明确新增记录边界")
+
+    applicable = payload.get("applicable_records")
+    raw_job_ids = applicable.get("job_ids") if isinstance(applicable, dict) else None
+    covered_job_ids: set[int] = set()
+    if not isinstance(raw_job_ids, list) or not raw_job_ids or not all(
+        type(job_id) is int and job_id > 0 for job_id in raw_job_ids
+    ):
+        failures.append("applicable_records.job_ids 必须是非空正整数列表")
+    else:
+        covered_job_ids = set(raw_job_ids)
+        if len(covered_job_ids) != len(raw_job_ids):
+            failures.append("applicable_records.job_ids 不得重复")
+        uncovered = sorted(unbound_job_ids - covered_job_ids)
+        if uncovered:
+            failures.append(f"未覆盖 non-fully-bound 来源 JD：{uncovered}")
+
+    if failures:
+        raise ValueError("P0-7 historical waiver 无效：" + "；".join(failures))
+    return payload
 
 
 def validate_consolidation_finalization(

@@ -17,6 +17,7 @@
 """
 from __future__ import annotations
 
+import json
 from datetime import date
 
 import pytest
@@ -56,7 +57,7 @@ from app.requirement_consolidation import (
 )
 
 
-def _seed_market_db(database_path: Path) -> None:
+def _seed_market_db(database_path: Path, *, include_job_4: bool = False) -> None:
     """合成市场数据库：3 份 JD、跨 JD canonical、importance 与特殊字符。"""
     engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
     try:
@@ -64,12 +65,15 @@ def _seed_market_db(database_path: Path) -> None:
         session_factory = create_session_factory(engine)
         with session_factory() as session:
             jobs = []
-            for index, (company, title, city) in enumerate(
-                (
+            job_specs = [
                     ("示例科技", "大模型应用工程师", "北京"),
                     ("示例智能", "Agent 开发工程师", "上海"),
                     ("示例数据", "RAG 平台工程师", "深圳"),
-                ),
+            ]
+            if include_job_4:
+                job_specs.append(("新增示例", "Agent 工程师", "杭州"))
+            for index, (company, title, city) in enumerate(
+                job_specs,
                 start=1,
             ):
                 job = JobDescription(
@@ -110,6 +114,10 @@ def _seed_market_db(database_path: Path) -> None:
                     ("学历", "unknown", "本科及以上学历。"),
                 ],
             }
+            if include_job_4:
+                by_job[jobs[3].id] = [
+                    ("新增要求", "must", "新增 JD 的独立要求。")
+                ]
             requirement_ids: dict[str, list[int]] = {}
             for job in jobs:
                 extraction = JobExtraction(
@@ -185,6 +193,16 @@ def _seed_market_db(database_path: Path) -> None:
                 confidence=0.9,
             ),
         ]
+        if include_job_4:
+            canonical_items.append(
+                CanonicalRequirement(
+                    canonical_requirement_id="cr-new",
+                    canonical_name="新增要求",
+                    source_requirement_ids=sorted(requirement_ids["新增要求"]),
+                    rationale="合成数据",
+                    confidence=0.9,
+                )
+            )
         result = RequirementConsolidationResult(
             canonical_requirements=canonical_items,
             mappings=build_mappings_from_canonical_partition(canonical_items),
@@ -282,19 +300,67 @@ def test_report_rejects_incomplete_consolidation_finalization(tmp_path) -> None:
         engine.dispose()
 
 
-def test_cli_generate_report_marks_unbound_upstream(tmp_path) -> None:
-    """上游抽取未 fully_bound 时报告显式标注风险（不阻塞生成）。"""
+def _write_valid_waiver(path: Path) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "record_type": "legacy_extraction_waiver",
+                "schema_version": 1,
+                "approved_by": "test-owner",
+                "approved_at": "2026-08-07",
+                "applicable_records": {"job_ids": [1, 2, 3]},
+                "reason": "测试历史记录缺少现行绑定字段。",
+                "existing_evidence": ["测试验收与人工审计证据。"],
+                "allowed_use": "允许 generate-report 消费 JD 1/2/3。",
+                "risk": "来源绑定无法机器证明，报告必须保留风险。",
+                "status": "unverified",
+                "constraints": {"new_records": "新增 JD 禁止使用。"},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _bind_extractions(database_path: Path, job_ids: set[int] | None = None) -> None:
+    """把测试夹具中的指定抽取标为 fully_bound。"""
+    from app.finalization import EXTRACTION_FINALIZATION_FIELDS
+
+    engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
+    try:
+        session_factory = create_session_factory(engine)
+        with session_factory() as session:
+            for extraction in session.query(JobExtraction).all():
+                if job_ids is None or extraction.job_id in job_ids:
+                    extraction.raw_response = {
+                        field: f"test-{field}"
+                        for field in EXTRACTION_FINALIZATION_FIELDS
+                    }
+            session.commit()
+    finally:
+        engine.dispose()
+
+
+def test_cli_generate_report_marks_waived_unbound_upstream(
+    tmp_path, monkeypatch
+) -> None:
+    """JD 1～3 unverified 且 waiver 合法时放行并保留风险提示。"""
     from typer.testing import CliRunner
 
-    from app.cli import cli
+    from app import cli as cli_module
 
     db_path = tmp_path / "market.db"
     _seed_market_db(db_path)  # 夹具 extraction raw_response={}（unverified）
+    waiver_path = tmp_path / "legacy-waiver.json"
+    _write_valid_waiver(waiver_path)
+    monkeypatch.setattr(
+        cli_module, "LEGACY_EXTRACTION_WAIVER_PATH", waiver_path
+    )
 
     output = tmp_path / "report.md"
     runner = CliRunner()
     result = runner.invoke(
-        cli,
+        cli_module.cli,
         [
             "generate-report",
             "--consolidation-id",
@@ -310,6 +376,118 @@ def test_cli_generate_report_marks_unbound_upstream(tmp_path) -> None:
     report = output.read_text(encoding="utf-8")
     assert "**上游来源绑定**：" in report
     assert "unverified" in report
+
+
+def test_cli_generate_report_rejects_unwaived_new_job(
+    tmp_path, monkeypatch
+) -> None:
+    """waiver 外新增 JD non-fully-bound 时拒绝生成。"""
+    from typer.testing import CliRunner
+
+    from app import cli as cli_module
+
+    db_path = tmp_path / "market.db"
+    _seed_market_db(db_path, include_job_4=True)
+    waiver_path = tmp_path / "legacy-waiver.json"
+    _write_valid_waiver(waiver_path)
+    monkeypatch.setattr(
+        cli_module, "LEGACY_EXTRACTION_WAIVER_PATH", waiver_path
+    )
+    output = tmp_path / "report.md"
+
+    result = CliRunner().invoke(
+        cli_module.cli,
+        [
+            "generate-report",
+            "--consolidation-id",
+            "1",
+            "--output",
+            str(output),
+            "--database-url",
+            f"sqlite:///{db_path.as_posix()}",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "non-fully-bound" in result.output
+    assert "[4]" in result.output
+    assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    "waiver_content",
+    [None, "{not-json", json.dumps({"record_type": "wrong"})],
+    ids=["missing", "invalid-json", "invalid-contract"],
+)
+def test_cli_generate_report_rejects_missing_or_invalid_waiver(
+    tmp_path, monkeypatch, waiver_content
+) -> None:
+    """存在 unverified 来源时，waiver 缺失或非法均拒绝。"""
+    from typer.testing import CliRunner
+
+    from app import cli as cli_module
+
+    db_path = tmp_path / "market.db"
+    _seed_market_db(db_path)
+    waiver_path = tmp_path / "legacy-waiver.json"
+    if waiver_content is not None:
+        waiver_path.write_text(waiver_content, encoding="utf-8")
+    monkeypatch.setattr(
+        cli_module, "LEGACY_EXTRACTION_WAIVER_PATH", waiver_path
+    )
+
+    result = CliRunner().invoke(
+        cli_module.cli,
+        [
+            "generate-report",
+            "--consolidation-id",
+            "1",
+            "--output",
+            str(tmp_path / "report.md"),
+            "--database-url",
+            f"sqlite:///{db_path.as_posix()}",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "historical waiver" in result.output
+
+
+def test_cli_generate_report_allows_waived_history_and_bound_new_job(
+    tmp_path, monkeypatch
+) -> None:
+    """JD 1～3 unverified + 新 JD fully_bound 时合法 waiver 继续放行。"""
+    from typer.testing import CliRunner
+
+    from app import cli as cli_module
+
+    db_path = tmp_path / "market.db"
+    _seed_market_db(db_path, include_job_4=True)
+    _bind_extractions(db_path, {4})
+    waiver_path = tmp_path / "legacy-waiver.json"
+    _write_valid_waiver(waiver_path)
+    monkeypatch.setattr(
+        cli_module, "LEGACY_EXTRACTION_WAIVER_PATH", waiver_path
+    )
+    output = tmp_path / "report.md"
+
+    result = CliRunner().invoke(
+        cli_module.cli,
+        [
+            "generate-report",
+            "--consolidation-id",
+            "1",
+            "--output",
+            str(output),
+            "--database-url",
+            f"sqlite:///{db_path.as_posix()}",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    report = output.read_text(encoding="utf-8")
+    assert "JD 1:unverified" in report
+    assert "JD 4:" not in report
 
 
 def test_cli_generate_report_clean_upstream_no_note(tmp_path) -> None:
@@ -528,6 +706,7 @@ def test_cli_generate_report_offline(tmp_path, monkeypatch) -> None:
 
     db_path = tmp_path / "market.db"
     _seed_market_db(db_path)
+    _bind_extractions(db_path)
     report_path = tmp_path / "report.md"
 
     def exploding_settings():
@@ -843,6 +1022,7 @@ def test_gate_failure_does_not_overwrite_output(tmp_path) -> None:
 
     db_path = tmp_path / "market.db"
     _seed_market_db(db_path)
+    _bind_extractions(db_path)
     report_path = tmp_path / "report.md"
 
     runner = CliRunner()

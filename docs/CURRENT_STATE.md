@@ -95,13 +95,11 @@ updated_at: 2026-08-09
     时间/批准运行/批准结果指纹/审核决定指纹/最终结果指纹），
     final_result_fingerprint 必须与当前持久化结果一致；旧批次 #1/#2
     已用 backfill_consolidation_metadata.py 离线补齐（不改结果）；
-  - 报告门禁增加上游 provenance 标注：generate-report 检查批次来源
-    抽取绑定状态，存在 unverified/reviewed_unbound 时报告与方法节
-    显式标注风险（不阻塞生成）；JD 1/2/3 按 P0-7 项目级历史风险豁免
-    （`reports/P0-7/legacy-extraction-waiver.json`）在报告中显式引用
-    （仅供当前 MVP 归并/统计/报告消费，豁免不等于 fully_bound），
-    风险标注保留、不因豁免隐藏；audit-consolidation 输出
-    extraction_source_status；
+  - 报告门禁检查上游 provenance：存在 unverified/reviewed_unbound 时实际
+    读取并校验 `reports/P0-7/legacy-extraction-waiver.json` 的结构、
+    `generate-report` 用途和适用 job_ids；只有明确覆盖的 JD 1/2/3 历史
+    记录可继续生成并保留风险标注，waiver 缺失、非法或出现范围外未绑定
+    JD 均拒绝生成；audit-consolidation 输出 extraction_source_status；
   - E2E 真实化：test_pipeline_e2e 调用 run_real_jd_acceptance /
     run_acceptance / apply_review_decisions 真实链路（仅人工审核步骤
     模拟），终点为真实 generate-report 生成 Markdown 报告；不再手工

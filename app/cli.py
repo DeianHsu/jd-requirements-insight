@@ -39,9 +39,11 @@ from app.extraction import (
 )
 from app.extraction_finalization import finalize_extraction
 from app.finalization import (
+    LEGACY_EXTRACTION_WAIVER_PATH,
     audit_consolidation_identity,
     audit_extraction_sources,
     classify_batch_extraction_sources,
+    validate_legacy_extraction_waiver,
 )
 from app.market_analysis import build_market_statistics
 from app.market_report import build_market_report, validate_report_inputs
@@ -480,8 +482,7 @@ def generate_report_cmd(
             raise typer.Exit(code=1)
 
         # 上游 provenance 检查（只读）：批次来源抽取未 fully_bound 时，
-        # 报告必须显式标注风险（不拒绝——批次本身已定稿，缺的是上游
-        # 机器可验证的来源绑定；结构化豁免或补齐后标注消失）。
+        # 仅允许 P0-7 文件明确覆盖的历史 JD 继续生成，并保留风险标注。
         with session_factory() as session:
             record = session.scalar(
                 select(JobConsolidation).where(
@@ -498,13 +499,23 @@ def generate_report_cmd(
             if status != "fully_bound"
         }
         if unbound:
+            try:
+                validate_legacy_extraction_waiver(
+                    LEGACY_EXTRACTION_WAIVER_PATH,
+                    set(unbound),
+                )
+            except ValueError as exc:
+                console.print(
+                    f"[red]上游来源绑定门禁未通过，拒绝生成报告：{exc}[/red]"
+                )
+                raise typer.Exit(code=1) from exc
             detail = "、".join(
                 f"JD {job_id}:{status}" for job_id, status in sorted(unbound.items())
             )
             provenance_note = (
                 f"批次来源 JD {sorted(unbound)} 的正式抽取未 fully_bound"
                 f"（{detail}）；该批记录按 P0-7 项目级历史风险豁免"
-                f"（reports/P0-7/legacy-extraction-waiver.json）仅供当前"
+                f"（{LEGACY_EXTRACTION_WAIVER_PATH.as_posix()}）仅供当前"
                 f"MVP 的归并、统计和报告消费，豁免不等于 fully_bound；"
                 f"报告结论的可追溯性仍受此限制。"
             )
