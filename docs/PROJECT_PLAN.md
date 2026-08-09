@@ -33,7 +33,7 @@ requirement → 独立 JD 统计 → 原文证据追溯 → Markdown 市场分�
 
 | # | 所属阶段 | 例外内容 | 是否阻塞关闭 | 处置状态 |
 |---|---|---|---|---|
-| 1 | P0-3B / P0-7 | JD 1/2/3 正式抽取记录缺新定稿合同字段（机器分类 `unverified`，保留 legacy 人工审计结论；JD 4/5 为 `fully_bound`） | 不阻塞（2026-08-07 已批准结构化历史豁免，P0-7 关闭条件满足） | **✅ 已豁免**：`reports/P0-7/legacy-extraction-waiver.json`（批准人 project-owner，2026-08-07）。仅限 JD 1/2/3 历史记录、仅供当前 MVP 归并/统计/报告；新增 JD 禁止使用；不重新验收、不回填指纹；分类保持 `unverified`；报告 provenance 风险提示保留 |
+| 1 | P0-3B / P0-7 | JD 1/2/3 正式抽取记录缺新定稿合同字段（机器分类 `unverified`，保留 legacy 人工审计结论；JD 4～8 为 `fully_bound`） | 不阻塞（2026-08-07 已批准结构化历史豁免，P0-7 关闭条件满足） | **✅ 已豁免**：`reports/P0-7/legacy-extraction-waiver.json`（批准人 project-owner，2026-08-07）。仅限 JD 1/2/3 历史记录、仅供当前 MVP 归并/统计/报告；新增 JD 禁止使用；不重新验收、不回填指纹；分类保持 `unverified`；报告 provenance 风险提示保留 |
 | 2 | P0-4 | 归并稳定性 positive-pair Jaccard 39~67%（诊断指标）未达标，正式结果靠人工裁决兜底 | 不阻塞（P0-4 关闭时已明确判定 P0-4B 不阻塞） | 扩样 5→6→7→8 时逐轮测量新增不稳定对与裁决量，有数据后再定是否调整 Prompt / 引入确定性归一化 |
 | 3 | P0-7 | 抽取来源状态 `reviewed_unbound` 命名过乐观（八个绑定字段任一存在即标记） | 不阻塞（纯命名待办） | 非阻塞待办：细分 `fully_bound` / `reviewed_legacy` / `partially_bound` / `unverified` |
 
@@ -41,10 +41,11 @@ requirement → 独立 JD 统计 → 原文证据追溯 → Markdown 市场分�
 
 1. P0-7 已关闭（2026-08-07，豁免记录 `reports/P0-7/legacy-extraction-waiver.json`）；
    例外 1 处置完成，JD 1～3 不回填、不重验、不宣称 `fully_bound`；
-2. 进入扩样阶段（固定终点 15 JD）：用户提供新增真实 JD → 先新增 3 份
-   形成 8 JD 批次，实测抽取成本、全量归并规模与人工裁决量 → 无真实阻塞
-   再增到 12 JD → 最后 15 JD。每批只执行正式主线（导入 → 验收 → 人工
-   审核 → finalize extraction → 全量归并验收 → 必要人工裁决 → finalize
+2. 进入扩样阶段（固定终点 15 JD）：8 JD 批次已关闭；JD 9 已按现行格式
+   导入但尚未抽取，用户再提供 3 份真实 JD 形成 12 JD 批次，实测抽取成本、
+   全量归并规模与人工裁决量 → 无真实阻塞再增到 15 JD。每批只执行
+   正式主线（导入 → 验收 → 人工审核 → finalize extraction → 全量归并
+   验收 → 必要人工裁决 → finalize
    consolidation → 报告），并按例外 2 在批次级测量稳定性；
 3. 新增 JD 必须全部走现行正式主线，禁止使用例外 1 豁免。
 

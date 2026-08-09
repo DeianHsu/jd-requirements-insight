@@ -4,40 +4,30 @@
 完成时覆盖更新，只保留最新一轮；历史由 Git 保存。项目状态以
 `docs/CURRENT_STATE.md` / `docs/PROJECT_PLAN.md` 为准。
 
-## 最近一轮：项目现状与生产主线 L3 审计（2026-08-09）
+## 最近一轮：新增并导入 JD 9（2026-08-09）
 
-### 核实结论
+### 任务内容
 
-- 当前正式主线已走通到 8 JD 批次：8 份 JD、8 份正式抽取、3 个正式归并
-  批次；当前批次 #3 为 211 mappings / 174 canonical，离线验证 coverage
-  100%、结构违规 0、reportable=True，正式报告存在且含原文 evidence。
-- JD 4～8 的验收 report/raw 文件指纹和正式抽取结果指纹均可复算且与数据库
-  一致；JD 1～3 保持 `unverified`，仅由已提交的 P0-7 结构化历史豁免覆盖，
-  报告中保留 provenance 风险提示。
-- 候选抽取/归并不会写正式表；正式 E2E 调用验收脚本、人工审核模拟、
-  finalize 和 generate-report，没有手工拼接模型中间结果。
-- 当前基线未发现阻塞 8 JD 批次使用的问题。扩样前存在一个下一阶段门禁：
-  `generate-report` 会把任意未 `fully_bound` 的来源直接描述为受 JD 1～3
-  历史豁免覆盖，但没有读取和核对豁免文件的 job_ids/allowed_use；当前批次
-  恰好匹配，不影响现有报告，新增 JD 前应修复并补失败路径测试。
+- 根据用户提供的招聘截图新增
+  `data/raw_jds/jd_009_ai_agent工程师_百林科.md`，按现有 frontmatter 和
+  「职位介绍 / 岗位要求 / 加分项」结构完整转录。
+- 使用显式项目库导入：发现 9 个文件，新增 1、重复跳过 8、失败 0；
+  新记录为 JD ID 9（百林科｜AI Agent 工程师）。
+- 只执行导入；未调用付费模型，未生成候选、正式抽取或归并记录。
 
 ### 验证结果
 
-- `audit-extraction-sources`：JD 1～3 = `unverified`，JD 4～8 =
-  `fully_bound`。
-- `audit-consolidation --consolidation-id 3`：reportable=True；211 mappings，
-  174 canonical，来源 run-2。
-- `validate-consolidation --consolidation-id 3`：coverage 100%，结构违规 0。
-- 全量测试：352 passed；正式主线 E2E：4 passed。
-- `ruff check app scripts tests`：通过。
-- 未调用付费模型，未修改正式数据库或私有产物。
+- Markdown 解析：公司、岗位及 720 字符正文读取正确。
+- 数据库回查：JD ID 9 存在，正式抽取记录不存在。
+- `pytest tests/test_ingestion.py`：4 passed。
 
 ### 当前状态与下一步
 
-项目已完成 MVP 的 8 JD 可演示闭环，下一业务阶段是 8 → 12 → 15 JD 扩样。
-最小顺序：先收紧历史豁免范围门禁，再由用户提供 4 份新 JD，逐批执行现有
-正式主线并记录抽取成本、归并稳定性和人工裁决量；无真实阻塞后扩到 15 JD。
+正式闭环仍停留在 8 JD 批次；项目库现有 9 份 JD，其中 JD 9 待抽取。
+下一步由用户再提供 3 份真实 JD，形成 JD 9～12 增量后统一进入正式抽取
+验收、人工审核、全量归并与报告链路。
 
 ### 执行提交
 
-- 仅覆盖更新本评审日志；未修改业务代码和状态文档。
+- 更新 CURRENT_STATE、PROJECT_PLAN 与本评审日志；原始 JD 和 SQLite 数据库
+  保持私有，不提交 Git。
