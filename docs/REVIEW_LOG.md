@@ -4,37 +4,33 @@
 完成时覆盖更新，只保留最新一轮；历史由 Git 保存。项目状态以
 `docs/CURRENT_STATE.md` / `docs/PROJECT_PLAN.md` 为准。
 
-## 最近一轮：JD 9～12 正式抽取验收（2026-08-09）
+## 最近一轮：JD 9～12 抽取人工审核与正式定稿（2026-08-09）
 
 ### 任务内容
 
-- 经用户明确授权，将 JD 9～12 真实内容发送给外部 DeepSeek 模型，执行
-  v0.10 + Schema V3 正式抽取验收。
-- 配置为 deepseek-v4-flash、Prompt 0.10、Schema 3.0、每 JD 3 runs、
-  每阶段 max_attempts=2；未执行正式定稿、归并或报告生成。
+- 将用户批准的 JD 9/10/11/12 run 0/0/1/1 及结果指纹写入现有
+  `manual_review` 字段，并补充 project-owner、审核时间和简短 rationale。
+- 使用现有纯离线 `finalize-extraction` 主线定稿四份抽取；未调用模型、
+  未修改批准 run 的抽取结果，也未启动 JD 13～15 或 12 JD 归并。
 
 ### 验证结果
 
-- 12/12 个 run 成功，hard gate=0，验收通过；要求数：JD 9 为 36/36/32，
-  JD 10 为 8/8/8，JD 11 为 23/24/24，JD 12 为 25/21/19。
-- 报告包含 6 条非阻塞稳定性 warning、2 条诊断；JD 9/11/12 存在不同
-  程度的未匹配项，JD 12 漂移最大，需人工审核后才能选择批准 run。
-- 脱敏报告位于 `reports/P0-3/jd9-12-acceptance-report.json`，私有原始结果
-  位于 `data/private/experiments/p0_3/real_jd/jd9-12-acceptance-raw.json`；
-  两者均被 Git 忽略。
-- 正式数据库未被验收流程写入：JD 9～12 extraction 记录均为 0。
-- 产物未保存逐阶段尝试次数，只能确认调用数处于授权的 24～48 次范围，
-  无法精确复算实际请求数。
-- 全量测试使用新 basetemp 复跑为 357 passed；
-  `ruff check app scripts tests` 通过。首次复用旧 `.pytest-tmp` 时因 Windows
-  目录锁在 fixture 初始化阶段失败，不属于代码回归，未删除该旧目录。
+- 正式 extraction IDs：JD 9/10/11/12 → 9/10/11/12；要求数为
+  36/8/24/21，新增合计 89，JD 1～12 正式实例总数 300。
+- 四份正式来源均为 `fully_bound`；approved run、approved result
+  fingerprint、acceptance run identifier、report/raw SHA-256 均与当前
+  验收产物一致。
+- 四份重复 finalize 均明确幂等跳过写入；`audit-extraction-sources`
+  显示 JD 4～12 fully_bound，JD 1～3 按历史豁免保持 unverified。
+- 全量测试 357 passed；`ruff check app scripts tests` 通过。
 
 ### 当前状态与下一步
 
-JD 9～12 已完成机器验收但尚未定稿。下一步是人工审核语义与证据、选择
-每份 JD 的批准 run，再离线 finalize extraction；之后才能启动 12 JD 全量
-归并验收。JD 13～15 保持未付费抽取状态。
+JD 9～12 已完成正式抽取定稿。下一步仅准备 JD 1～12、300 instances 的
+全量归并验收；需再次获得用户授权后才能执行付费调用。JD 13～15 保持
+未付费抽取状态。
 
 ### 执行提交
 
-- 本轮仅同步当前状态与评审摘要；正式数据库、原始 JD 和模型产物均不提交。
+- 本轮提交当前状态与评审摘要；正式数据库、审核后的验收报告、原始 JD
+  和模型产物均保持 Git 忽略。

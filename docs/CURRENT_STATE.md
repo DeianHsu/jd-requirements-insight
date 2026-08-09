@@ -34,12 +34,12 @@ updated_at: 2026-08-09
 - 数据库已使用现行 Schema 创建（六张业务表，无旧表）；
 - 15 份真实 JD 已导入 `data/jd_skill_insight.db`（JD 1～15，重复导入幂等跳过）；
 - JD 9～15 已按现行 Markdown/frontmatter 格式保存并导入；JD 9～12 已完成
-  3 次独立付费抽取验收但尚未人工审核或创建正式抽取记录，JD 13～15 尚未
-  执行付费抽取；
-- **已持久化正式抽取结果：JD 1/2/3/4/5/6/7/8**（deepseek-v4-flash、
-  `prompt:0.10|schema:3.0`，要求数 37/30/16/27/26/12/43/20，幂等已验证；
-  JD 4/5/6/7/8 已绑定完整验收实验身份与来源文件指纹；JD 6/7/8 按
-  人工审核批准的 run 0/2/0 完成正式定稿，结果指纹与批准值一致）；
+  付费抽取验收、人工审核和正式定稿，JD 13～15 尚未执行付费抽取；
+- **已持久化正式抽取结果：JD 1～12**（deepseek-v4-flash、
+  `prompt:0.10|schema:3.0`，要求数 37/30/16/27/26/12/43/20/36/8/24/21，
+  合计 300；JD 4～12 为 `fully_bound`，JD 1～3 保持历史 `unverified`；
+  JD 9/10/11/12 按人工审核批准的 run 0/0/1/1 定稿，正式 extraction ID
+  为 9/10/11/12，结果、report 与 raw 指纹绑定完整，重复 finalize 幂等）；
 - **已持久化正式归并批次：3 份**：
   - 批次 #1（job_ids=1,2,3，83 条精确覆盖，来源 run-1 + 人工审核决定，
     审核指纹 `51cebada…`、结果指纹 `c5be704e…`，旧候选批次已按
@@ -277,7 +277,7 @@ updated_at: 2026-08-09
   4. 边缘 category 漂移（Workflow agent_capability/agent_framework、
      算法功底 software_engineering/other 等）→ 轻微影响 category 分布。
 
-## JD 9～12 抽取验收（2026-08-09，已授权付费）
+## JD 9～12 抽取验收与定稿（2026-08-09）
 
 - 配置：deepseek-v4-flash、Prompt 0.10、Schema 3.0、每 JD 3 runs、
   每阶段 max_attempts=2；12/12 个 run 成功，hard gate=0，验收通过；
@@ -291,8 +291,14 @@ updated_at: 2026-08-09
   jd9-12-acceptance-raw.json`（私有）；
 - 验收脚本未记录逐阶段实际尝试次数，因此只能确认理论调用范围为
   24～48 次，不能从产物精确复算实际请求数；
-- 正式数据库 JD 9～12 的 extraction 记录仍为 0；未执行 finalize、归并或
-  报告生成。
+- 人工审核批准 JD 9/10/11/12 的 run 0/0/1/1，对应结果指纹
+  `709a21a0…` / `a5627243…` / `bcaed1ce…` / `7ed33394…`；现有
+  `manual_review` 字段记录 project-owner、审核时间和简短结论；
+- 离线 finalize 生成 extraction ID 9/10/11/12，要求数 36/8/24/21，新增
+  89 条，JD 1～12 正式 requirement instances 合计 300；四份来源均为
+  `fully_bound`，批准 run、结果指纹及 report/raw 文件指纹核对通过；
+- 重复 finalize 全部幂等跳过写入；`audit-extraction-sources` 显示 JD 4～12
+  为 `fully_bound`，JD 1～3 按既有历史豁免保持 `unverified`；未执行归并。
 
 ## 是否达到进入 P0-4 的条件
 
@@ -303,8 +309,7 @@ hard gate=0）与 P0-3B（JD 1/2/3 累计 hard gate=0、人工审计无阻塞
 ## 下一步
 
 1. **8 JD 批次已正式关闭**（批次 #3 定稿 + 8 JD 报告生成，provenance
-   文案已修正为引用 P0-7 豁免记录）；JD 9～12 抽取验收已通过，下一步是
-   人工审核并选择每份 JD 的批准 run，随后离线 finalize extraction，再执行
+   文案已修正为引用 P0-7 豁免记录）；JD 9～12 抽取已正式定稿，下一步是
    12 JD 全量归并验收 → 必要人工裁决 → finalize consolidation → 报告；
    无真实阻塞再处理 **JD 13～15**，形成 15 JD 最终批次（固定终点，不扩展
    到 20）；新增 JD 禁止使用 JD 1/2/3 的历史豁免；
