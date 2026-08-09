@@ -300,6 +300,23 @@ updated_at: 2026-08-09
 - 重复 finalize 全部幂等跳过写入；`audit-extraction-sources` 显示 JD 4～12
   为 `fully_bound`，JD 1～3 按既有历史豁免保持 `unverified`；未执行归并。
 
+## 12 JD 全量归并验收（2026-08-09，已授权付费）
+
+- 输入身份：JD 1～12、300 条正式 requirement instances、抽取版本
+  `deepseek-v4-flash|prompt:0.10|schema:3.0`；归并模型
+  deepseek-v4-flash、Prompt 4.3、Schema 3.0；
+- 3 次独立运行 + 1 次顺序变形全部完成，实际 attempts 为 1/2/1/2，合计
+  6 次模型请求；所有结果 coverage=100%、300 mappings、结构违规=0，
+  hard gate=0；
+- 独立运行 canonical 数为 183/211/209；positive-pair Jaccard 为
+  run0-1 51.41%、run0-2 52.84%、run1-2 85.12%；顺序变形 canonical=238，
+  与 run0 Jaccard=32.30%；3 条稳定性 warning 均需后续分析和人工裁决；
+- 脱敏报告 `reports/P0-4/12jd-acceptance-report.json`，私有原始结果
+  `data/private/experiments/P0-4/12jd-acceptance-raw.json`；报告/raw SHA-256
+  为 `72ce842d…` / `6fd66310…`；
+- 验收未写正式归并表：当前仍只有批次 #1～#3，尚未执行人工裁决或
+  finalize consolidation。
+
 ## 是否达到进入 P0-4 的条件
 
 **是。** Prompt 0.10 + Schema V3 的抽取结果已通过 P0-3A（13 场景
@@ -309,8 +326,8 @@ hard gate=0）与 P0-3B（JD 1/2/3 累计 hard gate=0、人工审计无阻塞
 ## 下一步
 
 1. **8 JD 批次已正式关闭**（批次 #3 定稿 + 8 JD 报告生成，provenance
-   文案已修正为引用 P0-7 豁免记录）；JD 9～12 抽取已正式定稿，下一步是
-   12 JD 全量归并验收 → 必要人工裁决 → finalize consolidation → 报告；
+   文案已修正为引用 P0-7 豁免记录）；12 JD 全量归并机器验收已通过，
+   下一步是稳定性分析与必要人工裁决 → finalize consolidation → 报告；
    无真实阻塞再处理 **JD 13～15**，形成 15 JD 最终批次（固定终点，不扩展
    到 20）；新增 JD 禁止使用 JD 1/2/3 的历史豁免；
 2. 每批只执行现有正式主线；付费调用前汇报模型、本批 JD 数量与 ID、
