@@ -4,27 +4,40 @@
 完成时覆盖更新，只保留最新一轮；历史由 Git 保存。项目状态以
 `docs/CURRENT_STATE.md` / `docs/PROJECT_PLAN.md` 为准。
 
-## 最近一轮：CURRENT_STATE 状态数字收口（2026-08-07）
+## 最近一轮：项目现状与生产主线 L3 审计（2026-08-09）
 
-### 任务内容（外部 Review 通过 provenance 修复后，纯文档最小修正）
+### 核实结论
 
-`docs/CURRENT_STATE.md` 两处状态残留收口：
+- 当前正式主线已走通到 8 JD 批次：8 份 JD、8 份正式抽取、3 个正式归并
+  批次；当前批次 #3 为 211 mappings / 174 canonical，离线验证 coverage
+  100%、结构违规 0、reportable=True，正式报告存在且含原文 evidence。
+- JD 4～8 的验收 report/raw 文件指纹和正式抽取结果指纹均可复算且与数据库
+  一致；JD 1～3 保持 `unverified`，仅由已提交的 P0-7 结构化历史豁免覆盖，
+  报告中保留 provenance 风险提示。
+- 候选抽取/归并不会写正式表；正式 E2E 调用验收脚本、人工审核模拟、
+  finalize 和 generate-report，没有手工拼接模型中间结果。
+- 当前基线未发现阻塞 8 JD 批次使用的问题。扩样前存在一个下一阶段门禁：
+  `generate-report` 会把任意未 `fully_bound` 的来源直接描述为受 JD 1～3
+  历史豁免覆盖，但没有读取和核对豁免文件的 job_ids/allowed_use；当前批次
+  恰好匹配，不影响现有报告，新增 JD 前应修复并补失败路径测试。
 
-1. 已持久化正式归并批次：`2 份` → **`3 份`**（批次 #3 已定稿）；
-2. 「当前批次 #2 的脱敏身份检查通过」→ 同步为当前正式批次 **#3**：
-   job_ids=1～8、211 mappings、174 canonical、结果指纹
-   `d6e80729…`、审核决定指纹 `f93b9394…`、来源 run-2、
-   属于可报告正式批次。
+### 验证结果
 
-未修改业务代码、未重新生成报告、未重跑测试/模型、未修改任何归并结果。
+- `audit-extraction-sources`：JD 1～3 = `unverified`，JD 4～8 =
+  `fully_bound`。
+- `audit-consolidation --consolidation-id 3`：reportable=True；211 mappings，
+  174 canonical，来源 run-2。
+- `validate-consolidation --consolidation-id 3`：coverage 100%，结构违规 0。
+- 全量测试：352 passed；正式主线 E2E：4 passed。
+- `ruff check app scripts tests`：通过。
+- 未调用付费模型，未修改正式数据库或私有产物。
+
+### 当前状态与下一步
+
+项目已完成 MVP 的 8 JD 可演示闭环，下一业务阶段是 8 → 12 → 15 JD 扩样。
+最小顺序：先收紧历史豁免范围门禁，再由用户提供 4 份新 JD，逐批执行现有
+正式主线并记录抽取成本、归并稳定性和人工裁决量；无真实阻塞后扩到 15 JD。
 
 ### 执行提交
 
-- `docs(CURRENT_STATE.md)` + 本评审日志覆盖更新，随本提交一并推送。
-
-### 当前状态
-
-- **8 JD 阶段彻底结束**（批次 #3 reportable、报告 provenance 已修复、
-  状态文档收口）；
-- 下一步：**8 → 12 JD 扩样**（需用户提供新增 4 份真实 JD；付费调用前
-  先汇报模型/范围/目的/命令等待授权）。
+- 仅覆盖更新本评审日志；未修改业务代码和状态文档。
