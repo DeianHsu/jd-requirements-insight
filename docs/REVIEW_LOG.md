@@ -4,32 +4,33 @@
 完成时覆盖更新，只保留最新一轮；历史由 Git 保存。项目状态以
 `docs/CURRENT_STATE.md` / `docs/PROJECT_PLAN.md` 为准。
 
-## 最近一轮：12 JD 全量归并机器验收（2026-08-09）
+## 最近一轮：12 JD 离线稳定性分析（2026-08-10）
 
 ### 任务内容
 
-- 经用户再次授权，将 JD 1～12 的 300 条正式 requirement instances 发送给
-  外部 DeepSeek 模型，执行 Prompt 4.3 / Schema 3.0 全量归并验收。
-- 执行 3 次独立运行与 1 次顺序变形，每次最多 3 attempts；未执行人工
-  裁决、正式归并定稿、报告生成或 JD 13～15 抽取。
+- 使用现有 `scripts/experiments/p0_4/analyze_stability.py` 对 12 JD
+  acceptance raw 执行纯离线稳定性分析，生成 public 脱敏报告与 private
+  人工审核分析；未调用模型或创建新归并运行。
+- 分析前及脚本内部均核对当前正式数据库：job_ids=1～12、300 instances、
+  raw/数据库 input fingerprint 完全一致。
 
 ### 验证结果
 
-- 四个任务全部成功，实际 attempts 为 1/2/1/2，共 6 次模型请求；
-  hard gate=0，所有结果 coverage=100%、300 mappings、结构违规=0。
-- 独立运行 canonical=183/211/209；Jaccard 为 51.41%/52.84%/85.12%；
-  顺序变形 canonical=238、与 run0 Jaccard=32.30%，共产生 3 条稳定性
-  warning，需要离线分析和人工裁决。
-- 报告 `reports/P0-4/12jd-acceptance-report.json`，私有 raw
-  `data/private/experiments/P0-4/12jd-acceptance-raw.json`；文件 SHA-256
-  为 `72ce842d…` / `6fd66310…`。
-- 正式数据库未写入新归并批次，仍只有批次 #1～#3。
+- 4 个观察全部纳入：稳定对 63、不稳定对 230、不稳定跨 JD 对 151；
+  27 个稳定跨 JD 核心簇中有 14 个 market-impact、13 个 edge-only。
+- 最大 distinct-job-count 漂移为沟通能力 3～8、问题分析 2～7、团队协作
+  4～8、问题解决 3～7、大模型应用开发 2～4，应优先人工审核。
+- 8 JD 历史 11 条裁决中有 6 条在至少一个观察被破坏；未修改历史决定。
+- public：`reports/P0-4/12jd-stability-report.json`；private：
+  `data/private/experiments/P0-4/12jd-stability-analysis.json`。正式数据库仍
+  只有 consolidation #1～#3。
 - 全量测试 357 passed；`ruff check app scripts tests` 通过。
 
 ### 当前状态与下一步
 
-12 JD 归并机器合同已通过，但稳定性不足；下一步是离线稳定性分析和必要
-人工裁决，之后才能选择批准运行并正式定稿。JD 13～15 保持未付费抽取状态。
+12 JD 离线 stability analysis 已完成，人工审核材料已准备好；不存在阻止
+进入外部语义 Review 的身份或产物问题。未选择 source run、未生成裁决、
+未 finalize。JD 13～15 保持未付费抽取状态。
 
 ### 执行提交
 

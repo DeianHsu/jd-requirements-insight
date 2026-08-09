@@ -1,6 +1,6 @@
 # 当前状态
 
-updated_at: 2026-08-09
+updated_at: 2026-08-10
 
 ## 当前可运行功能
 
@@ -317,6 +317,29 @@ updated_at: 2026-08-09
 - 验收未写正式归并表：当前仍只有批次 #1～#3，尚未执行人工裁决或
   finalize consolidation。
 
+## 12 JD 离线稳定性分析（2026-08-10）
+
+- 使用现有 `analyze_stability.py`，输入为 12 JD acceptance raw 与当前正式
+  项目数据库；selected_job_ids 精确为 1～12、requirement instances=300，
+  raw/数据库 input fingerprint 均为 `51928ae4…d52989b`；
+- 覆盖全部 4 个实际观察（3 independent + 1 successful order
+  transformation）：稳定对 63、不稳定对 230、不稳定跨 JD 对 151；
+- 形成 27 个稳定跨 JD 核心簇，其中 14 个 market-impact canonical 的
+  distinct job count 会漂移，13 个 edge-only canonical 的 job count 稳定；
+- 最大市场影响边界：沟通能力 3～8 JD、问题分析 2～7、团队协作 4～8、
+  问题解决 3～7、大模型应用开发 2～4；这些边界可能改变共同要求覆盖率及
+  排名，人工审核优先级最高；
+- 8 JD 历史 11 条 adjudication 中，6 条在至少一个原始观察被破坏：17/45
+  must-link（4/4）、56/74 must-link（3/4）、团队协作族
+  23/27/53/81/110/154（3/4）、3/38 cannot-link（3/4）、25/142
+  must-link（1/4）、22/153 与 105 分组（1/4）；仅分析风险，未修改历史决定；
+- public report：`reports/P0-4/12jd-stability-report.json`；private analysis：
+  `data/private/experiments/P0-4/12jd-stability-analysis.json`（包含名称、
+  raw_name、evidence 和逐观察成员）；两者均为本地 Git 忽略产物；
+- 正式数据库仍只有 consolidation #1～#3；未选择 source run，未生成或应用
+  裁决，未执行 finalize consolidation。身份、观察和产物均完整，不阻止进入
+  外部人工语义 Review。
+
 ## 是否达到进入 P0-4 的条件
 
 **是。** Prompt 0.10 + Schema V3 的抽取结果已通过 P0-3A（13 场景
@@ -326,8 +349,9 @@ hard gate=0）与 P0-3B（JD 1/2/3 累计 hard gate=0、人工审计无阻塞
 ## 下一步
 
 1. **8 JD 批次已正式关闭**（批次 #3 定稿 + 8 JD 报告生成，provenance
-   文案已修正为引用 P0-7 豁免记录）；12 JD 全量归并机器验收已通过，
-   下一步是稳定性分析与必要人工裁决 → finalize consolidation → 报告；
+   文案已修正为引用 P0-7 豁免记录）；12 JD 离线稳定性分析已完成，人工
+   审核材料已准备好；下一步由外部 Reviewer 做语义审核并决定 source run
+   与必要裁决，之后才可 finalize consolidation → 报告；
    无真实阻塞再处理 **JD 13～15**，形成 15 JD 最终批次（固定终点，不扩展
    到 20）；新增 JD 禁止使用 JD 1/2/3 的历史豁免；
 2. 每批只执行现有正式主线；付费调用前汇报模型、本批 JD 数量与 ID、
