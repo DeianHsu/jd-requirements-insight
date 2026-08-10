@@ -4,35 +4,41 @@
 完成时覆盖更新，只保留最新一轮；历史由 Git 保存。项目状态以
 `docs/CURRENT_STATE.md` / `docs/PROJECT_PLAN.md` 为准。
 
-## 最近一轮：12 JD 离线稳定性分析（2026-08-10）
+## 最近一轮：12 JD run2 裁决离线应用（2026-08-10，阻塞）
 
 ### 任务内容
 
-- 使用现有 `scripts/experiments/p0_4/analyze_stability.py` 对 12 JD
-  acceptance raw 执行纯离线稳定性分析，生成 public 脱敏报告与 private
-  人工审核分析；未调用模型或创建新归并运行。
-- 分析前及脚本内部均核对当前正式数据库：job_ids=1～12、300 instances、
-  raw/数据库 input fingerprint 完全一致。
+- 从 12 JD acceptance raw 读取 independent run2（`run_index=2`，结果指纹
+  `e091f2cc…ec6a5`），创建绑定 JD1～12、300 instances 与当前 input
+  fingerprint 的私有裁决文件；共 34 条决定，拆分决定全部位于依赖它们的
+  Java/Go must-link 之前。
+- 使用现有 `apply_review_decisions.py` 对 run2 做纯离线 apply；未调用模型、
+  未修改 Prompt/Schema、未 finalize、未生成报告、未处理 JD13～15。
 
 ### 验证结果
 
-- 4 个观察全部纳入：稳定对 63、不稳定对 230、不稳定跨 JD 对 151；
-  27 个稳定跨 JD 核心簇中有 14 个 market-impact、13 个 edge-only。
-- 最大 distinct-job-count 漂移为沟通能力 3～8、问题分析 2～7、团队协作
-  4～8、问题解决 3～7、大模型应用开发 2～4，应优先人工审核。
-- 8 JD 历史 11 条裁决中有 6 条在至少一个观察被破坏；未修改历史决定。
-- public：`reports/P0-4/12jd-stability-report.json`；private：
-  `data/private/experiments/P0-4/12jd-stability-analysis.json`。正式数据库仍
-  只有 consolidation #1～#3。
-- 全量测试 357 passed；`ruff check app scripts tests` 通过。
+- 裁决文件 SHA-256 为 `adf1023c…5dabb`；身份预检通过。严格按决定顺序做
+  ID partition 模拟得到 241 canonical、300 mappings、300 个唯一 ID；全部
+  指定历史裁决、新增 must-link、问题边界、Python 工程能力边界及 20 组
+  any_of/parallel-item 拆分均成立。
+- 正式 apply 在候选构造阶段被 canonical 名称唯一性合同拒绝：`Python`
+  出现于既有组和拆出的 112/160，`C++` 出现于既有 195 和拆出的 87，
+  `Java` 出现于既有 156 和新合并的 88/159，`LangChain` 出现于既有 71
+  和拆出的 116。未写出 final candidate 或 public summary。
+- 这不是 241/300 分区数量偏差；追加合并会改变预期数量，擅自改名又超出
+  当前裁决。按 Reviewer 的停止条件，没有调整决定凑数或绕过校验。
+- 全量测试 357 passed；`ruff check app scripts tests` 通过。首次 pytest 启动
+  使用旧 `.pytest-tmp` 时受 Windows 目录锁影响，改用新的仓库内 basetemp
+  后全量通过。
 
 ### 当前状态与下一步
 
-12 JD 离线 stability analysis 已完成，人工审核材料已准备好；不存在阻止
-进入外部语义 Review 的身份或产物问题。未选择 source run、未生成裁决、
-未 finalize。JD 13～15 保持未付费抽取状态。
+run2 与裁决身份已确定，但 12 JD 离线候选尚未生成。需外部 Reviewer 对四类
+同名且当前要求保持独立的 canonical 明确唯一名称，或明确新增合并裁决；之后
+才能重新 apply。正式数据库仍只有 consolidation #1～#3，未 finalize，
+JD13～15 未动。
 
 ### 执行提交
 
-- 本轮仅提交当前状态与评审摘要；正式数据库、真实验收报告、原始 JD 和
-  模型产物均保持 Git 忽略。
+- 本轮仅提交当前状态与评审摘要；私有 review-decisions、正式数据库、真实
+  验收报告、原始 JD 和模型产物均保持 Git 忽略。
