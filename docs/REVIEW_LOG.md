@@ -4,7 +4,7 @@
 完成时覆盖更新，只保留最新一轮；历史由 Git 保存。项目状态以
 `docs/CURRENT_STATE.md` / `docs/PROJECT_PLAN.md` 为准。
 
-## 最近一轮：12 JD run2 裁决离线应用（2026-08-10，阻塞）
+## 最近一轮：12 JD run2 裁决离线应用复核（2026-08-12，阻塞）
 
 ### 任务内容
 
@@ -14,6 +14,8 @@
   Java/Go must-link 之前。
 - 使用现有 `apply_review_decisions.py` 对 run2 做纯离线 apply；未调用模型、
   未修改 Prompt/Schema、未 finalize、未生成报告、未处理 JD13～15。
+- 复核最新仓库后，run2 记录指纹与项目正式函数复算一致，现有 12 JD 裁决
+  文件身份、内容及顺序均未变化；再次执行正式入口仍触发下述同名门禁。
 
 ### 验证结果
 
@@ -33,7 +35,8 @@
 
 ### 当前状态与下一步
 
-run2 与裁决身份已确定，但 12 JD 离线候选尚未生成。需外部 Reviewer 对四类
+run2 与裁决身份已确定，但 12 JD 离线候选尚未生成。现有工具不能在保持
+partition 不变的同时为拆分 singleton 指定唯一名称；需外部 Reviewer 对四类
 同名且当前要求保持独立的 canonical 明确唯一名称，或明确新增合并裁决；之后
 才能重新 apply。正式数据库仍只有 consolidation #1～#3，未 finalize，
 JD13～15 未动。
