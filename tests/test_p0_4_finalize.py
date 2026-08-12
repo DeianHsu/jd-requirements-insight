@@ -6,6 +6,8 @@ import sys
 from datetime import date
 from pathlib import Path
 
+import pytest
+
 from app.consolidation import (
     CONSOLIDATION_PROMPT_VERSION,
     CONSOLIDATION_SCHEMA_VERSION,
@@ -533,6 +535,249 @@ def test_apply_review_decisions_must_link_explicit_name(
         if c["canonical_requirement_id"] == member_to_cid[2]
     )
     assert merged["canonical_name"] == "数据分析经验与学历"
+
+
+def test_apply_name_override_changes_only_final_canonical_name(
+    monkeypatch, tmp_path
+) -> None:
+    """名称 override 精确定位最终成员集合，只改名称、不改分区。"""
+    db_path = tmp_path / "finalize.db"
+    _seed_database(db_path)
+    _, raw_path = _write_inputs(tmp_path, db_path)
+    raw = json.loads(raw_path.read_text(encoding="utf-8"))
+    source_partition = sorted(
+        sorted(item["source_requirement_ids"])
+        for item in raw["runs"][0]["result"]["canonical_requirements"]
+    )
+    decisions_path = tmp_path / "decisions.json"
+    decisions_path.write_text(
+        json.dumps(
+            {
+                "input_fingerprint": raw["input_fingerprint"],
+                "extractor_version": raw["extractor_version"],
+                "selected_job_ids": [1],
+                "model": "test-model",
+                "prompt_version": CONSOLIDATION_PROMPT_VERSION,
+                "schema_version": CONSOLIDATION_SCHEMA_VERSION,
+                "reviewed_by": "tester",
+                "reviewed_at": "2026-08-12T00:00:00+00:00",
+                "decisions": [],
+                "canonical_name_overrides": [
+                    {
+                        "requirement_ids": [2],
+                        "canonical_name": "数据分析实践经验",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        _run_apply_review_decisions(
+            monkeypatch, tmp_path, raw_path, decisions_path, db_path
+        )
+        == 0
+    )
+    final = json.loads((tmp_path / "final.json").read_text(encoding="utf-8"))
+    result = final["result"]
+    final_partition = sorted(
+        sorted(item["source_requirement_ids"])
+        for item in result["canonical_requirements"]
+    )
+    renamed = next(
+        item
+        for item in result["canonical_requirements"]
+        if item["source_requirement_ids"] == [2]
+    )
+    assert final_partition == source_partition
+    assert renamed["canonical_name"] == "数据分析实践经验"
+    summary = json.loads(
+        (tmp_path / "final-summary.json").read_text(encoding="utf-8")
+    )
+    assert summary["applied_canonical_name_overrides"] == [
+        {
+            "requirement_ids": [2],
+            "canonical_name": "数据分析实践经验",
+        }
+    ]
+
+
+def test_apply_without_name_override_keeps_existing_name(
+    monkeypatch, tmp_path
+) -> None:
+    """缺少 name override 时保持旧名称策略。"""
+    db_path = tmp_path / "finalize.db"
+    _seed_database(db_path)
+    _, raw_path = _write_inputs(tmp_path, db_path)
+    raw = json.loads(raw_path.read_text(encoding="utf-8"))
+    decisions_path = tmp_path / "decisions.json"
+    decisions_path.write_text(
+        json.dumps(
+            {
+                "input_fingerprint": raw["input_fingerprint"],
+                "extractor_version": raw["extractor_version"],
+                "selected_job_ids": [1],
+                "model": "test-model",
+                "prompt_version": CONSOLIDATION_PROMPT_VERSION,
+                "schema_version": CONSOLIDATION_SCHEMA_VERSION,
+                "reviewed_by": "tester",
+                "reviewed_at": "2026-08-12T00:00:00+00:00",
+                "decisions": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        _run_apply_review_decisions(
+            monkeypatch, tmp_path, raw_path, decisions_path, db_path
+        )
+        == 0
+    )
+    final = json.loads((tmp_path / "final.json").read_text(encoding="utf-8"))
+    source_names = {
+        tuple(item["source_requirement_ids"]): item["canonical_name"]
+        for item in raw["runs"][0]["result"]["canonical_requirements"]
+    }
+    final_names = {
+        tuple(item["source_requirement_ids"]): item["canonical_name"]
+        for item in final["result"]["canonical_requirements"]
+    }
+    assert final_names == source_names
+
+
+def test_apply_name_override_still_enforces_unique_names(
+    monkeypatch, tmp_path
+) -> None:
+    """override 后仍由最终结果合同拒绝重复 canonical_name。"""
+    db_path = tmp_path / "finalize.db"
+    _seed_database(db_path)
+    _, raw_path = _write_inputs(tmp_path, db_path)
+    raw = json.loads(raw_path.read_text(encoding="utf-8"))
+    duplicate_name = raw["runs"][0]["result"]["canonical_requirements"][0][
+        "canonical_name"
+    ]
+    decisions_path = tmp_path / "decisions.json"
+    decisions_path.write_text(
+        json.dumps(
+            {
+                "input_fingerprint": raw["input_fingerprint"],
+                "extractor_version": raw["extractor_version"],
+                "selected_job_ids": [1],
+                "model": "test-model",
+                "prompt_version": CONSOLIDATION_PROMPT_VERSION,
+                "schema_version": CONSOLIDATION_SCHEMA_VERSION,
+                "reviewed_by": "tester",
+                "reviewed_at": "2026-08-12T00:00:00+00:00",
+                "decisions": [],
+                "canonical_name_overrides": [
+                    {
+                        "requirement_ids": [2],
+                        "canonical_name": duplicate_name,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        _run_apply_review_decisions(
+            monkeypatch, tmp_path, raw_path, decisions_path, db_path
+        )
+        == 1
+    )
+    assert not (tmp_path / "final.json").exists()
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        [{"requirement_ids": [], "canonical_name": "非法"}],
+        [{"requirement_ids": [999], "canonical_name": "无法定位"}],
+        [{"requirement_ids": [2], "canonical_name": "  "}],
+        [
+            {"requirement_ids": [2], "canonical_name": "名称一"},
+            {"requirement_ids": [2], "canonical_name": "名称二"},
+        ],
+    ],
+)
+def test_apply_name_override_rejects_invalid_or_unlocatable_target(
+    monkeypatch, tmp_path, overrides
+) -> None:
+    """非法结构或无法按完整成员集合定位时明确拒绝。"""
+    db_path = tmp_path / "finalize.db"
+    _seed_database(db_path)
+    _, raw_path = _write_inputs(tmp_path, db_path)
+    raw = json.loads(raw_path.read_text(encoding="utf-8"))
+    decisions_path = tmp_path / "decisions.json"
+    decisions_path.write_text(
+        json.dumps(
+            {
+                "input_fingerprint": raw["input_fingerprint"],
+                "extractor_version": raw["extractor_version"],
+                "selected_job_ids": [1],
+                "model": "test-model",
+                "prompt_version": CONSOLIDATION_PROMPT_VERSION,
+                "schema_version": CONSOLIDATION_SCHEMA_VERSION,
+                "reviewed_by": "tester",
+                "reviewed_at": "2026-08-12T00:00:00+00:00",
+                "decisions": [],
+                "canonical_name_overrides": overrides,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        _run_apply_review_decisions(
+            monkeypatch, tmp_path, raw_path, decisions_path, db_path
+        )
+        == 1
+    )
+    assert not (tmp_path / "final.json").exists()
+
+
+def test_apply_name_override_rejects_non_list_contract(
+    monkeypatch, tmp_path
+) -> None:
+    """顶层 canonical_name_overrides 非列表时不得静默忽略。"""
+    db_path = tmp_path / "finalize.db"
+    _seed_database(db_path)
+    _, raw_path = _write_inputs(tmp_path, db_path)
+    raw = json.loads(raw_path.read_text(encoding="utf-8"))
+    decisions_path = tmp_path / "decisions.json"
+    decisions_path.write_text(
+        json.dumps(
+            {
+                "input_fingerprint": raw["input_fingerprint"],
+                "extractor_version": raw["extractor_version"],
+                "selected_job_ids": [1],
+                "model": "test-model",
+                "prompt_version": CONSOLIDATION_PROMPT_VERSION,
+                "schema_version": CONSOLIDATION_SCHEMA_VERSION,
+                "reviewed_by": "tester",
+                "reviewed_at": "2026-08-12T00:00:00+00:00",
+                "decisions": [],
+                "canonical_name_overrides": {},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        _run_apply_review_decisions(
+            monkeypatch, tmp_path, raw_path, decisions_path, db_path
+        )
+        == 1
+    )
+    assert not (tmp_path / "final.json").exists()
 
 
 def test_apply_unresolved_preserve_source_keeps_partition(

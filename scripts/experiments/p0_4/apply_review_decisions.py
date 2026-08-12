@@ -90,6 +90,7 @@ def _apply_decisions(
     result: RequirementConsolidationResult,
     decisions: list[dict],
     raw_name_by_id: dict[int, str],
+    canonical_name_overrides: list[dict] | None = None,
 ) -> RequirementConsolidationResult:
     """把 must-link / cannot-link 决定应用到 canonical 分区。
 
@@ -103,6 +104,8 @@ def _apply_decisions(
       `groups=[[...], ...]`（组内合并、组间分开）或
       `preserve_source=true`（保留来源运行当前分区，不做多余变化）；
       两者皆缺时拒绝应用，不默认拆成全部 singleton。
+    - canonical_name_overrides：全部分区决定应用后，以最终 canonical 的
+      完整 requirement_ids 集合精确定位并改名；只改名称，不改变分区。
     """
     canonicals: dict[str, CanonicalRequirement] = {
         item.canonical_requirement_id: item
@@ -288,6 +291,57 @@ def _apply_decisions(
         for item in canonicals.values()
         if item.canonical_requirement_id not in merged_ids
     ]
+    member_set_to_canonical = {
+        frozenset(item.source_requirement_ids): item for item in remaining
+    }
+    overridden_member_sets: set[frozenset[int]] = set()
+    overrides = (
+        [] if canonical_name_overrides is None else canonical_name_overrides
+    )
+    if not isinstance(overrides, list):
+        raise ValueError("canonical_name_overrides 必须是列表")
+    for index, override in enumerate(overrides):
+        if not isinstance(override, dict):
+            raise ValueError(
+                f"canonical_name_overrides[{index}] 必须是对象"
+            )
+        requirement_ids = override.get("requirement_ids")
+        canonical_name = override.get("canonical_name")
+        if (
+            not isinstance(requirement_ids, list)
+            or not requirement_ids
+            or any(
+                not isinstance(requirement_id, int)
+                for requirement_id in requirement_ids
+            )
+            or len(requirement_ids) != len(set(requirement_ids))
+        ):
+            raise ValueError(
+                f"canonical_name_overrides[{index}].requirement_ids "
+                "必须是非空且不重复的整数列表"
+            )
+        if not isinstance(canonical_name, str) or not canonical_name.strip():
+            raise ValueError(
+                f"canonical_name_overrides[{index}].canonical_name "
+                "必须是非空字符串"
+            )
+        member_set = frozenset(requirement_ids)
+        if member_set in overridden_member_sets:
+            raise ValueError(
+                "canonical_name_overrides 重复定位最终 canonical："
+                f"{sorted(member_set)}"
+            )
+        target = member_set_to_canonical.get(member_set)
+        if target is None:
+            raise ValueError(
+                "canonical_name_overrides 无法按完整成员集合定位最终 "
+                f"canonical：{sorted(member_set)}"
+            )
+        target.canonical_name = canonical_name.strip()
+        target.rationale += (
+            f"（审核修正：最终名称定为“{canonical_name.strip()}”）"
+        )
+        overridden_member_sets.add(member_set)
     mappings = build_mappings_from_canonical_partition(remaining)
     return RequirementConsolidationResult(
         canonical_requirements=remaining,
@@ -403,7 +457,10 @@ def main() -> int:
 
     try:
         final_result = _apply_decisions(
-            result, decisions_payload["decisions"], raw_name_by_id
+            result,
+            decisions_payload["decisions"],
+            raw_name_by_id,
+            decisions_payload.get("canonical_name_overrides"),
         )
     except ValueError as exc:
         print(f"审核决定应用失败，拒绝输出：{exc}")
@@ -477,6 +534,15 @@ def main() -> int:
                 "requirement_ids": d["requirement_ids"],
             }
             for d in decisions_payload["decisions"]
+        ],
+        "applied_canonical_name_overrides": [
+            {
+                "requirement_ids": override["requirement_ids"],
+                "canonical_name": override["canonical_name"],
+            }
+            for override in decisions_payload.get(
+                "canonical_name_overrides", []
+            )
         ],
     }
     args.report.parent.mkdir(parents=True, exist_ok=True)

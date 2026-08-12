@@ -1,6 +1,6 @@
 # 当前状态
 
-updated_at: 2026-08-10
+updated_at: 2026-08-12
 
 ## 当前可运行功能
 
@@ -340,21 +340,25 @@ updated_at: 2026-08-10
   裁决，未执行 finalize consolidation。身份、观察和产物均完整，不阻止进入
   外部人工语义 Review。
 
-## 12 JD 人工裁决应用（2026-08-10，阻塞）
+## 12 JD 人工裁决应用（2026-08-12，离线候选完成）
 
-- 外部语义 Review 已选择 independent run2（`run_index=2`，结果指纹
-  `e091f2cc…ec6a5`），并给出 34 条有序裁决；当前 12 JD 身份的私有
-  `review-decisions-12jd.json` 指纹为 `adf1023c…5dabb`；
-- 纯 ID partition 模拟严格按现有脚本顺序得到预期的 241 canonical、300
-  mappings，并通过全部指定历史 must-link/cannot-link、问题分析边界、
-  Python 工程能力边界及 20 组 any_of/parallel-item 拆分检查；
-- 现有 `apply_review_decisions.py` 在构造正式候选时被 canonical 名称唯一性
-  合同拒绝，未写出候选：拆分后出现 `Python`（既有组及 112、160）、
-  `C++`（既有 195 及 87）、`Java`（既有 156 及新合并 88/159）、
-  `LangChain`（既有 71 及 116）重名；
-- 未追加未授权合并、未改名、未绕过校验，未执行 finalize 或报告，正式
-  数据库仍只有 consolidation #1～#3。需外部 Reviewer 明确这些同名但要求
-  保持独立的 canonical 应采用何种唯一名称，或明确新增语义合并裁决。
+- 外部语义 Review 选择 independent run2（`run_index=2`，结果指纹
+  `e091f2cc…ec6a5`）并确定 241 canonical 的成员 partition；当前 12 JD 私有
+  `review-decisions-12jd.json` 指纹为 `7170abe0…8c2a6`；
+- `apply_review_decisions.py` 新增最小的 `canonical_name_overrides` 合同：在
+  所有分区决定完成后，以最终 canonical 的完整 requirement IDs 精确定位并
+  改名，不改变 partition；非法、重复或无法定位的 override 明确失败，最终
+  canonical 名称唯一性仍由原合同强制；
+- 9 个冻结名称 override 消除了 Python/C++/Java/LangChain 同名冲突；离线
+  candidate 为 `data/private/experiments/P0-4/final-consolidation-12jd.json`，
+  脱敏 summary 为 `reports/P0-4/final-consolidation-12jd-summary.json`，最终
+  结果指纹 `47591259…e052f`；
+- 完整复核为 241 canonical、300 mappings、coverage=100%、结构违规=0、
+  300 个 requirement IDs 精确覆盖、canonical_name 唯一；source/decisions/
+  final 三类指纹均与 candidate 和 summary 正确绑定；
+- 8 JD 历史 adjudication、问题能力边界、20 组 any_of/parallel-item 拆分、
+  新增 must-link 及 212「Python 工程能力」独立边界全部成立；未执行 finalize
+  或报告，正式数据库仍只有 consolidation #1～#3，等待外部 Review。
 
 ## 是否达到进入 P0-4 的条件
 
@@ -365,10 +369,9 @@ hard gate=0）与 P0-3B（JD 1/2/3 累计 hard gate=0、人工审计无阻塞
 ## 下一步
 
 1. **8 JD 批次已正式关闭**（批次 #3 定稿 + 8 JD 报告生成，provenance
-   文案已修正为引用 P0-7 豁免记录）；12 JD 已选择 run2 并形成裁决，但
-   apply 被四类 canonical 重名合同阻塞；下一步由外部 Reviewer 明确同名
-   独立项的唯一名称或新增合并裁决，重新离线 apply 并复核 241/300 后，
-   才可 finalize consolidation → 报告；
+   文案已修正为引用 P0-7 豁免记录）；12 JD 已选择 run2、应用人工裁决并
+   生成通过 241/300 完整门禁的离线 candidate；下一步由外部 Reviewer 审核
+   candidate，批准后才可 finalize consolidation → 报告；
    无真实阻塞再处理 **JD 13～15**，形成 15 JD 最终批次（固定终点，不扩展
    到 20）；新增 JD 禁止使用 JD 1/2/3 的历史豁免；
 2. 每批只执行现有正式主线；付费调用前汇报模型、本批 JD 数量与 ID、

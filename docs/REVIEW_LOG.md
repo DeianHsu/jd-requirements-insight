@@ -4,44 +4,40 @@
 完成时覆盖更新，只保留最新一轮；历史由 Git 保存。项目状态以
 `docs/CURRENT_STATE.md` / `docs/PROJECT_PLAN.md` 为准。
 
-## 最近一轮：12 JD run2 裁决离线应用复核（2026-08-12，阻塞）
+## 最近一轮：12 JD canonical 名称门禁收口（2026-08-12）
 
 ### 任务内容
 
-- 从 12 JD acceptance raw 读取 independent run2（`run_index=2`，结果指纹
-  `e091f2cc…ec6a5`），创建绑定 JD1～12、300 instances 与当前 input
-  fingerprint 的私有裁决文件；共 34 条决定，拆分决定全部位于依赖它们的
-  Java/Go must-link 之前。
-- 使用现有 `apply_review_decisions.py` 对 run2 做纯离线 apply；未调用模型、
-  未修改 Prompt/Schema、未 finalize、未生成报告、未处理 JD13～15。
-- 复核最新仓库后，run2 记录指纹与项目正式函数复算一致，现有 12 JD 裁决
-  文件身份、内容及顺序均未变化；再次执行正式入口仍触发下述同名门禁。
+- 为现有 `apply_review_decisions.py` 增加最小
+  `canonical_name_overrides` 能力：所有分区决定应用后，按最终 canonical 的
+  完整 requirement IDs 精确定位并改名，只改变名称，不改变 partition。
+- 未放松 canonical_name 唯一性、未新增 merge、未硬编码本批 IDs、未修改
+  Prompt/Schema、未调用模型、未 finalize、未处理 JD13～15。
+- 当前 12 JD 私有 decisions 加入 9 个外部 Review 冻结名称 override，并对
+  independent run2 重新执行正式离线 apply。
 
 ### 验证结果
 
-- 裁决文件 SHA-256 为 `adf1023c…5dabb`；身份预检通过。严格按决定顺序做
-  ID partition 模拟得到 241 canonical、300 mappings、300 个唯一 ID；全部
-  指定历史裁决、新增 must-link、问题边界、Python 工程能力边界及 20 组
-  any_of/parallel-item 拆分均成立。
-- 正式 apply 在候选构造阶段被 canonical 名称唯一性合同拒绝：`Python`
-  出现于既有组和拆出的 112/160，`C++` 出现于既有 195 和拆出的 87，
-  `Java` 出现于既有 156 和新合并的 88/159，`LangChain` 出现于既有 71
-  和拆出的 116。未写出 final candidate 或 public summary。
-- 这不是 241/300 分区数量偏差；追加合并会改变预期数量，擅自改名又超出
-  当前裁决。按 Reviewer 的停止条件，没有调整决定凑数或绕过校验。
-- 全量测试 357 passed；`ruff check app scripts tests` 通过。首次 pytest 启动
-  使用旧 `.pytest-tmp` 时受 Windows 目录锁影响，改用新的仓库内 basetemp
-  后全量通过。
+- Source 为 `run-2`，结果指纹 `e091f2cc…ec6a5`；input fingerprint 与当前
+  JD1～12 / 300 instances 数据库输入一致。
+- Decisions 指纹 `7170abe0…8c2a6`；final result 指纹
+  `47591259…e052f`，source/decisions/final 指纹均与 candidate 和 summary
+  完整绑定。
+- 最终 241 canonical、300 mappings、coverage=100%、结构违规=0、名称唯一、
+  exact ID coverage 通过，与外部 Review 预期完全一致。
+- 8 JD 历史 adjudication、问题能力边界、20 组 any_of/parallel-item 拆分、
+  新增 must-link、9 个名称 override 及 212 Python 工程能力独立边界全部通过。
+- 新增测试覆盖：无 override 的旧行为、只改名不改 partition、唯一名称门禁、
+  非法/重复/无法定位 override 拒绝；相关测试 29 passed，Ruff 通过。
+- 全量测试 365 passed；`ruff check app scripts tests` 通过。
 
 ### 当前状态与下一步
 
-run2 与裁决身份已确定，但 12 JD 离线候选尚未生成。现有工具不能在保持
-partition 不变的同时为拆分 singleton 指定唯一名称；需外部 Reviewer 对四类
-同名且当前要求保持独立的 canonical 明确唯一名称，或明确新增合并裁决；之后
-才能重新 apply。正式数据库仍只有 consolidation #1～#3，未 finalize，
-JD13～15 未动。
+12 JD 离线 candidate 与脱敏 summary 已生成；正式数据库仍只有 consolidation
+#1～#3，未执行 finalize-consolidation 或 generate-report。等待外部 Reviewer
+审核 candidate 后再决定是否正式定稿。
 
 ### 执行提交
 
-- 本轮仅提交当前状态与评审摘要；私有 review-decisions、正式数据库、真实
-  验收报告、原始 JD 和模型产物均保持 Git 忽略。
+- 提交最小 name override 能力、核心回归测试与三份状态文档；私有 decisions、
+  candidate、真实数据库和验收 raw 保持 Git 忽略。
