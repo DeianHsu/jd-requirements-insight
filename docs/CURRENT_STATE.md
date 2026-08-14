@@ -1,6 +1,6 @@
 # 当前状态
 
-updated_at: 2026-08-12
+updated_at: 2026-08-14
 
 ## 当前可运行功能
 
@@ -340,25 +340,27 @@ updated_at: 2026-08-12
   裁决，未执行 finalize consolidation。身份、观察和产物均完整，不阻止进入
   外部人工语义 Review。
 
-## 12 JD 人工裁决应用（2026-08-12，离线候选完成）
+## 12 JD 正式归并与报告（2026-08-14，已关闭）
 
 - 外部语义 Review 选择 independent run2（`run_index=2`，结果指纹
-  `e091f2cc…ec6a5`）并确定 241 canonical 的成员 partition；当前 12 JD 私有
-  `review-decisions-12jd.json` 指纹为 `7170abe0…8c2a6`；
+  `e091f2cc…ec6a5`）并批准 241 canonical 的 final candidate；当前 12 JD
+  私有 `review-decisions-12jd.json` 指纹为 `7170abe0…8c2a6`；
 - `apply_review_decisions.py` 新增最小的 `canonical_name_overrides` 合同：在
   所有分区决定完成后，以最终 canonical 的完整 requirement IDs 精确定位并
   改名，不改变 partition；非法、重复或无法定位的 override 明确失败，最终
   canonical 名称唯一性仍由原合同强制；
-- 9 个冻结名称 override 消除了 Python/C++/Java/LangChain 同名冲突；离线
-  candidate 为 `data/private/experiments/P0-4/final-consolidation-12jd.json`，
-  脱敏 summary 为 `reports/P0-4/final-consolidation-12jd-summary.json`，最终
-  结果指纹 `47591259…e052f`；
-- 完整复核为 241 canonical、300 mappings、coverage=100%、结构违规=0、
-  300 个 requirement IDs 精确覆盖、canonical_name 唯一；source/decisions/
-  final 三类指纹均与 candidate 和 summary 正确绑定；
-- 8 JD 历史 adjudication、问题能力边界、20 组 any_of/parallel-item 拆分、
-  新增 must-link 及 212「Python 工程能力」独立边界全部成立；未执行 finalize
-  或报告，正式数据库仍只有 consolidation #1～#3，等待外部 Review。
+- 9 个冻结名称 override 消除了 Python/C++/Java/LangChain 同名冲突；审核后的
+  candidate 已通过正式 `finalize-consolidation` 定稿为 **批次 #4**，范围
+  JD1～12、300 instances、241 canonical、300 mappings，最终结果指纹
+  `47591259…e052f`；重复 finalize 幂等跳过；
+- `audit-consolidation` 显示 source run、review-decisions 和 final result 指纹
+  完整绑定且 `reportable=True`；`validate-consolidation` 为 coverage=100%、
+  结构违规=0、300 requirement IDs 精确覆盖；
+- 抽取 provenance 保持 JD1～3=`unverified`、JD4～12=`fully_bound`；
+  `generate-report` 实际校验 P0-7 waiver 后生成私有报告
+  `data/private/artifacts/12jd-batch/market-report-4.md`，保留历史风险提示；
+- 报告身份为 12 JD / 300 instances / 241 canonical；31 个跨 JD 共同要求、
+  210 个单 JD 长尾；最高频为团队协作能力（8/12 JD、9 instances）。
 
 ## 是否达到进入 P0-4 的条件
 
@@ -369,11 +371,9 @@ hard gate=0）与 P0-3B（JD 1/2/3 累计 hard gate=0、人工审计无阻塞
 ## 下一步
 
 1. **8 JD 批次已正式关闭**（批次 #3 定稿 + 8 JD 报告生成，provenance
-   文案已修正为引用 P0-7 豁免记录）；12 JD 已选择 run2、应用人工裁决并
-   生成通过 241/300 完整门禁的离线 candidate；下一步由外部 Reviewer 审核
-   candidate，批准后才可 finalize consolidation → 报告；
-   无真实阻塞再处理 **JD 13～15**，形成 15 JD 最终批次（固定终点，不扩展
-   到 20）；新增 JD 禁止使用 JD 1/2/3 的历史豁免；
+   文案已修正为引用 P0-7 豁免记录）；**12 JD 批次也已正式关闭**（批次 #4
+   定稿 + 12 JD 报告生成）；下一步处理 **JD 13～15**，形成 15 JD 最终批次
+   （固定终点，不扩展到 20）；新增 JD 禁止使用 JD1～3 的历史豁免；
 2. 每批只执行现有正式主线；付费调用前汇报模型、本批 JD 数量与 ID、
    调用目的、预计命令，等待授权后执行。
 

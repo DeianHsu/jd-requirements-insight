@@ -28,7 +28,7 @@ requirement → 独立 JD 统计 → 原文证据追溯 → Markdown 市场分�
 | P0-5 市场统计、证据追溯与 Markdown 报告 | 独立 JD 数口径统计 + 完整性门禁 + `generate-report` 离线 Markdown 报告（总览/共同/长尾/证据追溯）；真实报告私有，公开样例 `examples/market-report-sample.md` | ✅ 已关闭（样本限制声明明确） |
 | P0-6 样本扩展（3 → 5 JD） | JD 4/5 抽取验收与定稿、5 JD 归并验收、3→5 增量稳定性、旧 83 条回归、最终批次与报告 | ✅ 已关闭（批次 #2：136 条/97 canonical/指纹 edfe2c1a…；旧对 0 破坏；3→5 对比摘要已生成） |
 | P0-7 正式生产主线收口 | 显式数据库目标；模型候选不入正式表；app finalize 定稿；报告只消费完整定稿批次；离线来源审计；真实链路 E2E | ✅ 已关闭（2026-08-07：正式生产机制全部完成；JD 1～3 按项目级历史风险接受记录豁免，见例外 1） |
-| P0-8 样本扩展（8 → 12 → 15 JD） | 先完成 JD 9～12 抽取/归并/报告，再处理 JD 13～15；逐批测量成本、稳定性与人工裁决量 | 进行中（8 JD 已关闭；12 JD run2 人工裁决已离线应用，241 canonical/300 mappings candidate 等待外部 Review；15 为 MVP 固定终点） |
+| P0-8 样本扩展（8 → 12 → 15 JD） | 先完成 JD 9～12 抽取/归并/报告，再处理 JD 13～15；逐批测量成本、稳定性与人工裁决量 | 进行中（8 JD、12 JD 均已关闭；批次 #4 为 241 canonical/300 mappings，12 JD 报告已生成；下一步 JD13～15，15 为 MVP 固定终点） |
 
 ## 当前例外
 
@@ -42,11 +42,10 @@ requirement → 独立 JD 统计 → 原文证据追溯 → Markdown 市场分�
 
 1. P0-7 已关闭（2026-08-07，豁免记录 `reports/P0-7/legacy-extraction-waiver.json`）；
    例外 1 处置完成，JD 1～3 不回填、不重验、不宣称 `fully_bound`；
-2. 进入扩样阶段（固定终点 15 JD）：8 JD 批次已关闭，JD 9～12 已完成
-   抽取定稿，JD 1～12 全量归并机器验收 hard gate=0，run2 人工裁决已离线
-   应用并生成 241 canonical/300 mappings candidate；下一步由外部 Reviewer
-   审核 candidate，批准后再 finalize consolidation → 12 JD 报告。
-   无真实阻塞再处理 JD 13～15，形成 15 JD 最终批次；
+2. 进入扩样最终阶段（固定终点 15 JD）：8 JD 与 12 JD 批次均已关闭；12 JD
+   正式批次 #4 为 241 canonical/300 mappings，coverage=100%、结构违规=0，
+   报告与 P0-7 provenance 提示已生成并通过门禁。下一步处理 JD13～15，
+   形成 15 JD 最终批次；
 3. 新增 JD 必须全部走现行正式主线，禁止使用例外 1 豁免。
 
 边界与硬依赖见 `AGENTS.md`（不维护旧版本兼容、付费调用必须
