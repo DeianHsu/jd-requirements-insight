@@ -412,7 +412,15 @@ updated_at: 2026-08-14
 - 独立验证确认 IDs 1～409 精确覆盖，冻结 IDs 1～300 的 partition、canonical ID、
   canonical name 逐项零差异；45 条裁决全部成立，明确要求独立的 14 个新增项均为
   singleton；数据库 21 个 any_of 组无错误归并，canonical name / mapping / identity
-  合同全部通过。尚未 finalize，等待外部 Review。
+  合同全部通过。尚未 finalize，等待外部 Review；
+- `run_acceptance.py` 已增加 order-only resume：复用原 acceptance report/raw 中的三个
+  successful independent runs，只重试固定种子 `20260803` 的 order transformation。
+  入口在创建模型客户端前强校验当前数据库输入身份、JD 范围、模型/Prompt/Schema、
+  source run 结果与指纹、精确覆盖及结构合同；仅接受单一 order execution hard gate，
+  且新 report/raw 不得覆盖原产物。execution/coverage/结构失败仍为 hard gate，低
+  Jaccard 仍只作 warning；真实 15 JD 原产物的只读身份预检已通过，但本轮未执行模型；
+- 现有 `manual_cluster_review` 字段足以绑定 reviewer、审核时间、批准 run、批准结果
+  fingerprint、结论与备注，无需扩展数据模型。
 
 ## 是否达到进入 P0-4 的条件
 
@@ -423,11 +431,13 @@ hard gate=0）与 P0-3B（JD 1/2/3 累计 hard gate=0、人工审计无阻塞
 ## 下一步
 
 1. **8 JD 与 12 JD 批次均已正式关闭**；JD 13～15 extraction 也已完成验收、
-   人工审核和正式定稿；15 JD consolidation acceptance、增量候选审核和 frozen-base
-   离线 apply 已完成。当前 candidate 为 329 canonical / 409 mappings，等待外部
-   Reviewer 对 decisions、指纹和最终 partition 做正式收口前复核；
-2. order transformation hard gate=1 仍是 finalize 前的独立 blocker；本轮没有处理、
-   豁免或绕过。15 JD 为 MVP 固定终点，不扩展到 20；
+   人工审核和正式定稿；15 JD consolidation acceptance、增量候选审核、frozen-base
+   离线 apply 与 candidate 外部 Review 已完成。当前 candidate 为 329 canonical /
+   409 mappings；
+2. order-only resume 入口与定向验证已完成，下一步经显式付费授权后只重试 order
+   transformation（预计 1 次、最多 3 次），不重跑三个 independent runs。当前原
+   acceptance 的 hard gate=1 仍阻止 finalize；不豁免、不绕过。15 JD 为 MVP 固定终点，
+   不扩展到 20；
 3. 每批只执行现有正式主线；付费调用前汇报模型、本批 JD 数量与 ID、
    调用目的、预计命令，等待授权后执行。
 

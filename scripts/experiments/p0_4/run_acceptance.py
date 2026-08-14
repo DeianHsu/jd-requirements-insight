@@ -37,6 +37,7 @@ from app.consolidation_validation import (
     result_fingerprint,
     singleton_and_canonical_drift,
     validate_contract,
+    validate_exact_identity,
     write_acceptance_report,
 )
 from app.database import (
@@ -45,7 +46,14 @@ from app.database import (
     create_session_factory,
 )
 from app.extraction import assert_current_extractor_version
-from app.requirement_consolidation import RequirementConsolidationInput
+from app.requirement_consolidation import (
+    RequirementConsolidationInput,
+    RequirementConsolidationResult,
+)
+
+
+ORDER_TRANSFORMATION_SEED = 20260803
+ORDER_EXECUTION_FAILURE_PREFIX = "order_transformation: 聚类失败："
 
 
 def build_input(selection, job_ids: set[int] | None = None):
@@ -129,6 +137,242 @@ def evaluate_gates(
     return hard_gate_failures, warnings
 
 
+def _same_path(first: Path, second: Path) -> bool:
+    """比较尚未创建也可能存在的两个路径是否指向同一位置。"""
+    return first.resolve(strict=False) == second.resolve(strict=False)
+
+
+def _validate_order_resume_sources(
+    *,
+    report: dict,
+    raw: dict,
+    selection,
+    settings,
+    consolidation_input: RequirementConsolidationInput,
+) -> list[RequirementConsolidationResult]:
+    """强校验可复用验收产物，只接受单一 order 执行失败。"""
+    hard_gate_failures = report.get("hard_gate_failures")
+    if (
+        not isinstance(hard_gate_failures, list)
+        or len(hard_gate_failures) != 1
+        or not isinstance(hard_gate_failures[0], str)
+        or not hard_gate_failures[0].startswith(ORDER_EXECUTION_FAILURE_PREFIX)
+    ):
+        raise ValueError("原验收报告必须且只能包含一个 order execution hard gate")
+    original_failure = hard_gate_failures[0]
+    report_order = (report.get("metamorphic") or {}).get(
+        "order_transformation"
+    ) or {}
+    raw_order = raw.get("order_transformation") or {}
+    if report_order.get("failed") != original_failure:
+        raise ValueError("report 的 order failure 与顶层 hard gate 不一致")
+    if raw_order.get("failed") != original_failure:
+        raise ValueError("raw 的 order failure 与 report 不一致")
+    if raw_order.get("seed") != ORDER_TRANSFORMATION_SEED:
+        raise ValueError("raw 的 order transformation seed 不符合当前合同")
+    if "result" in raw_order or "raw_response" in raw_order:
+        raise ValueError("原 raw 已包含成功 order result，不得按失败产物重试")
+
+    expected_identity = {
+        "input_fingerprint": selection.input_fingerprint,
+        "extractor_version": selection.extractor_version,
+        "selected_job_ids": sorted(selection.selected_job_ids),
+        "model": settings.model,
+        "prompt_version": ConsolidatorMetadata(
+            model_name=settings.model
+        ).prompt_version,
+        "schema_version": ConsolidatorMetadata(
+            model_name=settings.model
+        ).schema_version,
+    }
+    report_identity = report.get("input_identity") or {}
+    for field, expected in expected_identity.items():
+        if raw.get(field) != expected:
+            raise ValueError(f"raw 与当前输入身份不一致：{field}")
+        if report_identity.get(field) != expected:
+            raise ValueError(f"report 与当前输入身份不一致：{field}")
+    if report_identity.get("instance_count") != len(
+        consolidation_input.occurrences
+    ):
+        raise ValueError("report instance_count 与当前输入不一致")
+    if report_identity.get("job_count") != len(selection.selected_job_ids):
+        raise ValueError("report job_count 与当前输入不一致")
+
+    runs = raw.get("runs")
+    if not isinstance(runs, list) or not runs:
+        raise ValueError("raw 缺少可复用的 independent runs")
+    if raw.get("run_count") != len(runs):
+        raise ValueError("raw run_count 与 independent runs 数量不一致")
+    if (report.get("p0_4_stability") or {}).get("run_count") != len(runs):
+        raise ValueError("report run_count 与 raw 不一致")
+
+    expected_ids = {
+        occurrence.requirement_id
+        for occurrence in consolidation_input.occurrences
+    }
+    results: list[RequirementConsolidationResult] = []
+    run_identifiers: set[str] = set()
+    for index, run in enumerate(runs):
+        if not isinstance(run, dict):
+            raise ValueError(f"raw run{index} 不是对象")
+        identifier = run.get("run_identifier")
+        if not isinstance(identifier, str) or not identifier:
+            raise ValueError(f"raw run{index} 缺少 run_identifier")
+        if identifier in run_identifiers:
+            raise ValueError("raw independent run_identifier 重复")
+        run_identifiers.add(identifier)
+        metadata = run.get("metadata") or {}
+        for field in ("model", "prompt_version", "schema_version"):
+            if metadata.get(field) != expected_identity[field]:
+                raise ValueError(f"raw run{index} metadata 不一致：{field}")
+        try:
+            result = RequirementConsolidationResult.model_validate(run["result"])
+        except (KeyError, ValueError) as exc:
+            raise ValueError(f"raw run{index} result 不合法：{exc}") from exc
+        if run.get("result_fingerprint") != result_fingerprint(result):
+            raise ValueError(f"raw run{index} result_fingerprint 不一致")
+        contract = validate_contract(result, expected_ids=expected_ids)
+        identity_failures = validate_exact_identity(result, expected_ids)
+        if (
+            contract.coverage != 1.0
+            or contract.structural_violation_count != 0
+            or identity_failures
+        ):
+            raise ValueError(f"raw run{index} 未通过完整归并合同")
+        results.append(result)
+    return results
+
+
+def _resume_order_transformation(
+    *,
+    args,
+    settings,
+    selection,
+    consolidation_input: RequirementConsolidationInput,
+) -> int:
+    """只重试失败的顺序变形，复用并保留既有 independent runs。"""
+    source_report_path = args.retry_order_from_report
+    source_raw_path = args.retry_order_from_raw
+    if not source_report_path.exists() or not source_raw_path.exists():
+        print("order-only resume 的原 report/raw 不存在。")
+        return 1
+    if args.raw_output is None:
+        print("order-only resume 必须显式指定新的 --raw-output。")
+        return 2
+    output_paths = (args.report, args.raw_output)
+    source_paths = (source_report_path, source_raw_path)
+    if _same_path(args.report, args.raw_output):
+        print("order-only resume 的 report/raw 输出路径不得相同。")
+        return 2
+    if any(_same_path(output, source) for output in output_paths for source in source_paths):
+        print("order-only resume 不得覆盖原 report/raw。")
+        return 2
+    if args.report.exists() or args.raw_output.exists():
+        print("order-only resume 输出文件已存在，拒绝覆盖。")
+        return 2
+
+    try:
+        report = json.loads(source_report_path.read_text(encoding="utf-8"))
+        raw = json.loads(source_raw_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"order-only resume 无法读取原验收产物：{exc}")
+        return 1
+    try:
+        source_results = _validate_order_resume_sources(
+            report=report,
+            raw=raw,
+            selection=selection,
+            settings=settings,
+            consolidation_input=consolidation_input,
+        )
+    except ValueError as exc:
+        print(f"order-only resume 身份校验失败：{exc}")
+        return 1
+
+    shuffled_occurrences = list(consolidation_input.occurrences)
+    random.Random(ORDER_TRANSFORMATION_SEED).shuffle(shuffled_occurrences)
+    shuffled_input = RequirementConsolidationInput(
+        occurrences=shuffled_occurrences
+    )
+
+    def make_client() -> NamedClient:
+        return NamedClient(settings)
+
+    warnings = [
+        item
+        for item in report.get("warnings") or []
+        if not str(item).startswith("order_transformation:")
+    ]
+    try:
+        order_result, order_metadata, order_raw = run_once(
+            make_client, shuffled_input, args.max_attempts
+        )
+    except (ConsolidationError, ValueError) as exc:
+        order_run_failed = f"{ORDER_EXECUTION_FAILURE_PREFIX}{exc}"
+        hard_gate_failures = [order_run_failed]
+        report.setdefault("metamorphic", {})["order_transformation"] = {
+            "failed": order_run_failed
+        }
+        raw["order_transformation"] = {
+            "seed": ORDER_TRANSFORMATION_SEED,
+            "failed": order_run_failed,
+        }
+    else:
+        expected_ids = {
+            occurrence.requirement_id
+            for occurrence in consolidation_input.occurrences
+        }
+        order_contract = validate_contract(order_result, expected_ids=expected_ids)
+        order_jaccard = positive_pair_jaccard(
+            mapping_clusters(source_results[0]), mapping_clusters(order_result)
+        )
+        hard_gate_failures = []
+        if order_contract.coverage != 1.0:
+            hard_gate_failures.append(
+                f"order_transformation: coverage={order_contract.coverage}"
+            )
+        if order_contract.structural_violation_count != 0:
+            hard_gate_failures.append(
+                "order_transformation: structural_violations="
+                f"{order_contract.structural_violation_count}"
+            )
+        if order_jaccard < 0.85:
+            warnings.append(
+                "order_transformation: positive_pair_jaccard="
+                f"{order_jaccard:.2%}"
+            )
+        report.setdefault("metamorphic", {})["order_transformation"] = {
+            "positive_pair_jaccard": round(order_jaccard, 4),
+            "coverage": order_contract.coverage,
+            "structural_violations": order_contract.structural_violation_count,
+        }
+        raw["order_transformation"] = {
+            "seed": ORDER_TRANSFORMATION_SEED,
+            "requirement_id_order": [
+                occurrence.requirement_id for occurrence in shuffled_occurrences
+            ],
+            "metadata": {
+                "model": order_metadata.model_name,
+                "prompt_version": order_metadata.prompt_version,
+                "schema_version": order_metadata.schema_version,
+            },
+            "result": order_result.model_dump(mode="json"),
+            "raw_response": order_raw,
+        }
+
+    report["hard_gate_failures"] = hard_gate_failures
+    report["warnings"] = warnings
+    write_acceptance_report(report, args.report)
+    args.raw_output.parent.mkdir(parents=True, exist_ok=True)
+    args.raw_output.write_text(
+        json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(f"order-only resume 报告已写入：{args.report}")
+    print(f"order-only resume raw 已写入：{args.raw_output}")
+    print(f"hard_gate_failures={len(hard_gate_failures)}")
+    return 0 if not hard_gate_failures else 1
+
+
 def main() -> int:
     """解析参数并执行真实模型验收（P0-4 事实归并）。"""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -181,7 +425,26 @@ def main() -> int:
         default=None,
         help="显式指定原始运行结果输出路径（含证据，私有）",
     )
+    parser.add_argument(
+        "--retry-order-from-report",
+        type=Path,
+        default=None,
+        help="只重试顺序变形时使用的原验收报告；必须与原 raw 同时提供",
+    )
+    parser.add_argument(
+        "--retry-order-from-raw",
+        type=Path,
+        default=None,
+        help="只重试顺序变形时使用的原始验收 raw；必须与原 report 同时提供",
+    )
     args = parser.parse_args()
+
+    retry_order_only = bool(args.retry_order_from_report) or bool(
+        args.retry_order_from_raw
+    )
+    if bool(args.retry_order_from_report) != bool(args.retry_order_from_raw):
+        print("--retry-order-from-report 与 --retry-order-from-raw 必须同时提供。")
+        return 2
 
     if not args.execute:
         print("必须显式--execute确认付费模型调用；本次未执行。")
@@ -225,6 +488,14 @@ def main() -> int:
 
     consolidation_input = build_input(selection)
     job_ids = sorted(selection.selected_job_ids)
+    if retry_order_only:
+        return _resume_order_transformation(
+            args=args,
+            settings=settings,
+            selection=selection,
+            consolidation_input=consolidation_input,
+        )
+
     print(f"模型：{settings.model}")
     print(f"抽取器版本：{selection.extractor_version}")
     print(f"输入：{len(consolidation_input.occurrences)}条实例 / {len(job_ids)}份JD")
@@ -247,12 +518,12 @@ def main() -> int:
     # 变形测试：输入顺序打乱（固定随机种子保证可复现）。
     print("--- 顺序变形运行 ---")
     shuffled_occurrences = list(consolidation_input.occurrences)
-    random.Random(20260803).shuffle(shuffled_occurrences)
+    random.Random(ORDER_TRANSFORMATION_SEED).shuffle(shuffled_occurrences)
     shuffled_input = RequirementConsolidationInput(occurrences=shuffled_occurrences)
     order_result = None
     order_metadata = None
     order_raw = None
-    order_seed = 20260803
+    order_seed = ORDER_TRANSFORMATION_SEED
     try:
         order_result, order_metadata, order_raw = run_once(
             make_client, shuffled_input, args.max_attempts

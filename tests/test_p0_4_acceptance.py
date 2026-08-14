@@ -815,6 +815,294 @@ def test_order_transformation_contract_violation_is_hard_gate(
     )
 
 
+class _ResumeSettings:
+    model = "test-model"
+    api_key = "test-key"
+    base_url = None
+
+    def missing_fields(self) -> list[str]:
+        return []
+
+
+def _write_failed_order_acceptance(monkeypatch, tmp_path, database_path):
+    """先用假客户端生成完整产物，再确定性改成仅 order 执行失败。"""
+    import scripts.experiments.p0_4.run_acceptance as acceptance_script
+
+    report_path = tmp_path / "source-report.json"
+    raw_path = tmp_path / "source-raw.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_acceptance",
+            "--execute",
+            "--database-url",
+            f"sqlite:///{database_path.as_posix()}",
+            "--job-ids",
+            "1",
+            "--runs",
+            "3",
+            "--max-attempts",
+            "1",
+            "--report",
+            str(report_path),
+            "--raw-output",
+            str(raw_path),
+        ],
+    )
+    monkeypatch.setattr(
+        acceptance_script, "load_llm_settings", lambda: _ResumeSettings()
+    )
+    monkeypatch.setattr(
+        acceptance_script,
+        "OpenAICompatibleConsolidationClient",
+        FakeConsolidationClient,
+    )
+    assert acceptance_script.main() == 0
+
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    raw = json.loads(raw_path.read_text(encoding="utf-8"))
+    failure = (
+        "order_transformation: 聚类失败：经过3次尝试仍未通过归并校验"
+        "（canonical 聚类）：模型返回的内容不是合法JSON"
+    )
+    report["hard_gate_failures"] = [failure]
+    report["metamorphic"]["order_transformation"] = {"failed": failure}
+    report["manual_cluster_review"].update(
+        {
+            "reviewed_by": "project-owner",
+            "reviewed_at": "2026-08-14T00:00:00Z",
+            "approved_run_index": 1,
+            "approved_result_fingerprint": raw["runs"][1][
+                "result_fingerprint"
+            ],
+            "conclusion": "外部 Review 已完成",
+        }
+    )
+    raw["order_transformation"] = {
+        "seed": acceptance_script.ORDER_TRANSFORMATION_SEED,
+        "failed": failure,
+    }
+    report_path.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    raw_path.write_text(
+        json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return report_path, raw_path, report, raw
+
+
+def _run_order_resume(
+    monkeypatch,
+    tmp_path,
+    database_path,
+    report_path,
+    raw_path,
+    client_class,
+    *,
+    max_attempts=3,
+):
+    import scripts.experiments.p0_4.run_acceptance as acceptance_script
+
+    output_report = tmp_path / "resumed-report.json"
+    output_raw = tmp_path / "resumed-raw.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_acceptance",
+            "--execute",
+            "--database-url",
+            f"sqlite:///{database_path.as_posix()}",
+            "--job-ids",
+            "1",
+            "--max-attempts",
+            str(max_attempts),
+            "--retry-order-from-report",
+            str(report_path),
+            "--retry-order-from-raw",
+            str(raw_path),
+            "--report",
+            str(output_report),
+            "--raw-output",
+            str(output_raw),
+        ],
+    )
+    monkeypatch.setattr(
+        acceptance_script, "load_llm_settings", lambda: _ResumeSettings()
+    )
+    monkeypatch.setattr(
+        acceptance_script,
+        "OpenAICompatibleConsolidationClient",
+        client_class,
+    )
+    return acceptance_script.main(), output_report, output_raw
+
+
+def test_order_only_resume_reuses_runs_and_preserves_manual_review(
+    monkeypatch, tmp_path
+) -> None:
+    """成功 resume 只调用一次 order，原 runs 与人工审核字段逐项保留。"""
+    database_path = tmp_path / "resume.db"
+    _seed_current_extraction(database_path)
+    report_path, raw_path, original_report, original_raw = (
+        _write_failed_order_acceptance(monkeypatch, tmp_path, database_path)
+    )
+    original_report_bytes = report_path.read_bytes()
+    original_raw_bytes = raw_path.read_bytes()
+
+    class CountingClient(FakeConsolidationClient):
+        calls = 0
+
+        def complete(self, system_prompt: str, user_prompt: str) -> str:
+            type(self).calls += 1
+            return super().complete(system_prompt, user_prompt)
+
+    result, output_report, output_raw = _run_order_resume(
+        monkeypatch,
+        tmp_path,
+        database_path,
+        report_path,
+        raw_path,
+        CountingClient,
+    )
+
+    assert result == 0
+    assert CountingClient.calls == 1
+    resumed_report = json.loads(output_report.read_text(encoding="utf-8"))
+    resumed_raw = json.loads(output_raw.read_text(encoding="utf-8"))
+    assert resumed_raw["runs"] == original_raw["runs"]
+    assert resumed_raw["order_transformation"]["result"]
+    assert resumed_report["hard_gate_failures"] == []
+    assert resumed_report["manual_cluster_review"] == original_report[
+        "manual_cluster_review"
+    ]
+    assert report_path.read_bytes() == original_report_bytes
+    assert raw_path.read_bytes() == original_raw_bytes
+
+
+@pytest.mark.parametrize("failure_kind", ["identity", "extra_gate"])
+def test_order_only_resume_rejects_invalid_sources_before_client(
+    monkeypatch, tmp_path, failure_kind
+) -> None:
+    """身份不匹配或存在其他 hard gate 时，模型客户端不得初始化。"""
+    database_path = tmp_path / f"resume-{failure_kind}.db"
+    _seed_current_extraction(database_path)
+    report_path, raw_path, report, raw = _write_failed_order_acceptance(
+        monkeypatch, tmp_path, database_path
+    )
+    if failure_kind == "identity":
+        raw["input_fingerprint"] = "f" * 64
+        raw_path.write_text(
+            json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    else:
+        report["hard_gate_failures"].append("run0: coverage=0.5")
+        report_path.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+    class ExplodingClient:
+        def __init__(self, settings) -> None:
+            raise AssertionError("身份门禁前不得初始化模型客户端")
+
+    result, output_report, output_raw = _run_order_resume(
+        monkeypatch,
+        tmp_path,
+        database_path,
+        report_path,
+        raw_path,
+        ExplodingClient,
+    )
+    assert result == 1
+    assert not output_report.exists()
+    assert not output_raw.exists()
+
+
+def test_order_only_resume_failure_remains_hard_gate(monkeypatch, tmp_path) -> None:
+    """order-only 有限重试仍失败时输出新 hard gate，原产物保持不变。"""
+    database_path = tmp_path / "resume-failure.db"
+    _seed_current_extraction(database_path)
+    report_path, raw_path, _, _ = _write_failed_order_acceptance(
+        monkeypatch, tmp_path, database_path
+    )
+    original_report_bytes = report_path.read_bytes()
+    original_raw_bytes = raw_path.read_bytes()
+
+    class InvalidJsonClient:
+        calls = 0
+
+        def __init__(self, settings) -> None:
+            self.model_name = settings.model
+
+        def complete(self, system_prompt: str, user_prompt: str) -> str:
+            type(self).calls += 1
+            return "not-json"
+
+    result, output_report, output_raw = _run_order_resume(
+        monkeypatch,
+        tmp_path,
+        database_path,
+        report_path,
+        raw_path,
+        InvalidJsonClient,
+        max_attempts=2,
+    )
+    assert result == 1
+    assert InvalidJsonClient.calls == 2
+    resumed_report = json.loads(output_report.read_text(encoding="utf-8"))
+    assert len(resumed_report["hard_gate_failures"]) == 1
+    assert resumed_report["hard_gate_failures"][0].startswith(
+        "order_transformation: 聚类失败："
+    )
+    assert json.loads(output_raw.read_text(encoding="utf-8"))[
+        "order_transformation"
+    ]["failed"] == resumed_report["hard_gate_failures"][0]
+    assert report_path.read_bytes() == original_report_bytes
+    assert raw_path.read_bytes() == original_raw_bytes
+
+
+def test_order_only_resume_low_jaccard_is_warning(monkeypatch, tmp_path) -> None:
+    """合法但与 run0 分区差异大的 order result 只产生 warning。"""
+    database_path = tmp_path / "resume-warning.db"
+    _seed_current_extraction(database_path)
+    report_path, raw_path, _, _ = _write_failed_order_acceptance(
+        monkeypatch, tmp_path, database_path
+    )
+
+    class SingletonClient:
+        def __init__(self, settings) -> None:
+            self.model_name = settings.model
+
+        def complete(self, system_prompt: str, user_prompt: str) -> str:
+            return json.dumps(
+                {
+                    "canonical_requirements": [
+                        _canonical("order-1", "技术甲A", [1]),
+                        _canonical("order-2", "能力乙", [2]),
+                        _canonical("order-3", "技术甲B", [3]),
+                    ]
+                },
+                ensure_ascii=False,
+            )
+
+    result, output_report, _ = _run_order_resume(
+        monkeypatch,
+        tmp_path,
+        database_path,
+        report_path,
+        raw_path,
+        SingletonClient,
+    )
+    assert result == 0
+    report = json.loads(output_report.read_text(encoding="utf-8"))
+    assert report["hard_gate_failures"] == []
+    assert any(
+        item.startswith("order_transformation: positive_pair_jaccard=")
+        for item in report["warnings"]
+    )
+
+
 def test_precheck_legacy_database_fails_cleanly(
     monkeypatch, tmp_path, capsys
 ) -> None:
