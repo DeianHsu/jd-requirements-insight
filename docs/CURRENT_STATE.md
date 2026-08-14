@@ -380,6 +380,27 @@ updated_at: 2026-08-14
   `audit-extraction-sources` 与逐 JD `verify_extraction_source` 均通过；
 - 本批未调用额外模型、未启动 15 JD consolidation。
 
+## 15 JD frozen-base 离线审核能力（2026-08-14）
+
+- 15 JD consolidation acceptance 已完成 3 个 independent runs；人工选择
+  run1 作为 source candidate，但其 IDs 1～300 投影只有 229 个 cluster，不能
+  代替已经关闭的 12 JD final partition（241 canonical / 300 mappings）。顺序
+  变形仍因非法 JSON 失败，hard gate=1，本轮未处理该独立 blocker；
+- `apply_review_decisions.py` 增加可选 `--frozen-base`：直接继承较小范围的完整
+  final consolidation，把其余 requirement 初始化为增量 singleton，再复用现有
+  must-link / cannot-link / canonical name override；不重放旧 review decisions；
+- frozen base 必须由当前 review-decisions 显式绑定 input/result/review-decisions
+  fingerprints、selected job IDs、精确 requirement IDs、canonical/mapping 数量；
+  同时校验完整 final metadata、内容 fingerprint、当前数据库子范围 fingerprint、
+  exact identity、coverage 与结构合同。不完整或身份不匹配均拒绝；
+- 增量裁决不得包含两个 frozen requirement、不得提交 pure old↔old decision，运行时
+  也拒绝通过共享新成员间接合并两个 frozen canonicals。最终逐 canonical 校验冻结
+  成员、owner、ID 与名称完全不变，最终名称唯一性及现有结果合同仍严格执行；
+- 真实只读校验确认 frozen artifact 指纹为 `47591259…e052f`，精确覆盖 IDs
+  1～300、241 canonical / 300 mappings；当前数据库 12 JD 子范围 fingerprint 与
+  artifact 一致，加入 IDs 301～409 后基底为 350 canonical / 409 mappings，冻结
+  partition 未变化；尚未创建或应用 15 JD review-decisions，未生成 final candidate。
+
 ## 是否达到进入 P0-4 的条件
 
 **是。** Prompt 0.10 + Schema V3 的抽取结果已通过 P0-3A（13 场景
@@ -389,10 +410,12 @@ hard gate=0）与 P0-3B（JD 1/2/3 累计 hard gate=0、人工审计无阻塞
 ## 下一步
 
 1. **8 JD 与 12 JD 批次均已正式关闭**；JD 13～15 extraction 也已完成验收、
-   人工审核和正式定稿。下一步以 409 条正式 requirement instances 启动
-   **15 JD consolidation acceptance**，形成 MVP 最终批次（固定终点，不扩展
-   到 20）；新增 JD 禁止使用 JD1～3 的历史豁免；
-2. 每批只执行现有正式主线；付费调用前汇报模型、本批 JD 数量与 ID、
+   人工审核和正式定稿，15 JD consolidation acceptance 与增量候选审核已完成。
+   下一步把已批准的增量语义裁决写成 15 JD review-decisions，使用 frozen 12 JD
+   final result + run1 的新增成员离线生成 candidate；IDs 1～300 必须保持不变；
+2. order transformation hard gate=1 仍是 finalize 前的独立 blocker；本轮没有处理、
+   豁免或绕过。15 JD 为 MVP 固定终点，不扩展到 20；
+3. 每批只执行现有正式主线；付费调用前汇报模型、本批 JD 数量与 ID、
    调用目的、预计命令，等待授权后执行。
 
 ## 付费与私有数据依赖

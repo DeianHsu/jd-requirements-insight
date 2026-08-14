@@ -62,6 +62,14 @@ def parse_args() -> argparse.Namespace:
         help="选择作为来源的独立运行索引（默认 0）",
     )
     parser.add_argument(
+        "--frozen-base",
+        type=Path,
+        help=(
+            "已批准的较小范围 final consolidation；提供后，旧 partition "
+            "直接继承且只允许本轮增量裁决"
+        ),
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         required=True,
@@ -91,6 +99,7 @@ def _apply_decisions(
     decisions: list[dict],
     raw_name_by_id: dict[int, str],
     canonical_name_overrides: list[dict] | None = None,
+    protected_requirement_ids: set[int] | None = None,
 ) -> RequirementConsolidationResult:
     """把 must-link / cannot-link 决定应用到 canonical 分区。
 
@@ -117,6 +126,27 @@ def _apply_decisions(
             member_to_canonical[requirement_id] = item.canonical_requirement_id
 
     merged_ids: set[str] = set()
+    protected_ids = set(protected_requirement_ids or set())
+
+    def select_primary(owners: set[str]) -> str:
+        """冻结模式优先保留旧 canonical owner；普通模式保持旧策略。"""
+        protected_owners = {
+            member_to_canonical[requirement_id]
+            for requirement_id in protected_ids
+            if member_to_canonical.get(requirement_id) in owners
+        }
+        if len(protected_owners) > 1:
+            raise ValueError(
+                "审核决定试图合并多个 frozen canonical，拒绝应用："
+                f"{sorted(protected_owners)}"
+            )
+        if protected_owners:
+            return next(iter(protected_owners))
+        owner_items = [
+            (len(canonicals[owner].source_requirement_ids), owner)
+            for owner in owners
+        ]
+        return min(owner_items, key=lambda pair: (-pair[0], pair[1]))[1]
 
     for decision in decisions:
         ids = list(dict.fromkeys(decision["requirement_ids"]))
@@ -129,11 +159,7 @@ def _apply_decisions(
             }
             if len(owners) == 1:
                 continue  # 已在同一 canonical
-            owner_items = [
-                (len(canonicals[owner].source_requirement_ids), owner)
-                for owner in owners
-            ]
-            primary = min(owner_items, key=lambda pair: (-pair[0], pair[1]))[1]
+            primary = select_primary(owners)
             for owner in sorted(owners - {primary}):
                 primary_item = canonicals[primary]
                 moved = [
@@ -178,13 +204,7 @@ def _apply_decisions(
                 }
                 if len(owners) <= 1:
                     continue
-                owner_items = [
-                    (len(canonicals[owner].source_requirement_ids), owner)
-                    for owner in owners
-                ]
-                primary = min(
-                    owner_items, key=lambda pair: (-pair[0], pair[1])
-                )[1]
+                primary = select_primary(owners)
                 for owner in sorted(owners - {primary}):
                     primary_item = canonicals[primary]
                     moved = [
@@ -254,7 +274,20 @@ def _apply_decisions(
         elif decision["decision"] == "cannot_link":
             if len(ids) < 2:
                 continue
-            for requirement_id in ids:
+            ids_to_split = ids
+            if protected_ids:
+                members_by_owner: dict[str, list[int]] = {}
+                for requirement_id in ids:
+                    owner = member_to_canonical[requirement_id]
+                    members_by_owner.setdefault(owner, []).append(requirement_id)
+                ids_to_split = [
+                    requirement_id
+                    for owner_ids in members_by_owner.values()
+                    if len(owner_ids) > 1
+                    for requirement_id in owner_ids
+                    if requirement_id not in protected_ids
+                ]
+            for requirement_id in ids_to_split:
                 owner = member_to_canonical[requirement_id]
                 item = canonicals[owner]
                 if len(item.source_requirement_ids) == 1:
@@ -367,7 +400,10 @@ def _raw_identity(raw: dict) -> dict[str, object]:
 
 def main() -> int:
     args = parse_args()
-    for path in (args.raw_output, args.review_decisions):
+    input_paths = [args.raw_output, args.review_decisions]
+    if args.frozen_base is not None:
+        input_paths.append(args.frozen_base)
+    for path in input_paths:
         if not path.exists():
             print(f"文件不存在：{path}")
             return 1
@@ -379,6 +415,10 @@ def main() -> int:
     decisions_fingerprint = _file_fingerprint(
         args.review_decisions.read_bytes()
     )
+    frozen_contract = decisions_payload.get("frozen_base")
+    if bool(args.frozen_base) != bool(frozen_contract):
+        print("--frozen-base 与 review-decisions.frozen_base 必须同时提供。")
+        return 1
 
     # 审核决定文件与 raw 的身份一致。
     raw_identity = _raw_identity(raw)
@@ -414,6 +454,9 @@ def main() -> int:
         RequirementConsolidationResult.model_validate(selected_run["result"])
     )
 
+    frozen_artifact: dict | None = None
+    frozen_result: RequirementConsolidationResult | None = None
+    frozen_requirement_ids: set[int] = set()
     engine = create_database_engine(args.database_url)
     try:
         assert_current_database_schema(engine)
@@ -435,6 +478,30 @@ def main() -> int:
                 occurrence.requirement_id: occurrence.requirement.raw_name
                 for occurrence in consolidation_input.occurrences
             }
+            if args.frozen_base is not None:
+                frozen_artifact, frozen_result, frozen_requirement_ids = (
+                    _load_and_validate_frozen_base(
+                        args.frozen_base,
+                        frozen_contract,
+                        expected_ids,
+                        job_ids,
+                        raw_identity,
+                    )
+                )
+                frozen_selection = load_consolidation_selection(
+                    session,
+                    job_ids=set(frozen_artifact["selected_job_ids"]),
+                    extractor_version=str(raw_identity["extractor_version"]),
+                )
+                if frozen_selection.input_fingerprint != frozen_artifact[
+                    "input_fingerprint"
+                ]:
+                    raise ValueError(
+                        "frozen base input_fingerprint 与当前数据库子范围不一致"
+                    )
+    except ValueError as exc:
+        print(f"frozen-base 身份校验失败，拒绝应用：{exc}")
+        return 1
     finally:
         engine.dispose()
 
@@ -456,12 +523,34 @@ def main() -> int:
         return 1
 
     try:
+        application_result = result
+        if frozen_result is not None:
+            _validate_incremental_decision_scope(
+                decisions_payload["decisions"],
+                decisions_payload.get("canonical_name_overrides"),
+                frozen_requirement_ids,
+                expected_ids,
+            )
+            application_result = _build_frozen_incremental_base(
+                frozen_result,
+                result,
+                frozen_requirement_ids,
+                expected_ids,
+                raw_name_by_id,
+            )
         final_result = _apply_decisions(
-            result,
+            application_result,
             decisions_payload["decisions"],
             raw_name_by_id,
             decisions_payload.get("canonical_name_overrides"),
+            protected_requirement_ids=frozen_requirement_ids,
         )
+        if frozen_result is not None:
+            _validate_frozen_base_unchanged(
+                frozen_result,
+                final_result,
+                frozen_requirement_ids,
+            )
     except ValueError as exc:
         print(f"审核决定应用失败，拒绝输出：{exc}")
         return 1
@@ -508,6 +597,18 @@ def main() -> int:
         "result_fingerprint": final_fingerprint,
         "result": final_result.model_dump(mode="json"),
     }
+    if frozen_artifact is not None:
+        payload["frozen_base"] = {
+            "input_fingerprint": frozen_artifact["input_fingerprint"],
+            "result_fingerprint": frozen_artifact["result_fingerprint"],
+            "review_decisions_fingerprint": frozen_artifact[
+                "review_decisions_fingerprint"
+            ],
+            "selected_job_ids": frozen_artifact["selected_job_ids"],
+            "requirement_count": len(frozen_requirement_ids),
+            "canonical_count": len(frozen_result.canonical_requirements),
+            "mapping_count": len(frozen_result.mappings),
+        }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -545,6 +646,8 @@ def main() -> int:
             )
         ],
     }
+    if frozen_artifact is not None:
+        public["frozen_base"] = payload["frozen_base"]
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(
         json.dumps(public, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -559,6 +662,257 @@ def main() -> int:
     )
     print(f"最终结果指纹：{final_fingerprint[:16]}…")
     return 0
+
+
+def _validate_incremental_decision_scope(
+    decisions: list[dict],
+    canonical_name_overrides: list[dict] | None,
+    frozen_requirement_ids: set[int],
+    expected_ids: set[int],
+) -> None:
+    """冻结模式只允许涉及新增成员的裁决，不重放纯旧分区语义。"""
+    if not isinstance(decisions, list):
+        raise ValueError("decisions 必须是列表")
+    for index, decision in enumerate(decisions):
+        requirement_ids = decision.get("requirement_ids")
+        if not isinstance(requirement_ids, list) or not requirement_ids:
+            raise ValueError(f"decisions[{index}].requirement_ids 必须是非空列表")
+        ids = set(requirement_ids)
+        unknown = sorted(ids - expected_ids)
+        if unknown:
+            raise ValueError(f"decisions[{index}] 引用未知 requirement IDs：{unknown}")
+        frozen_ids = ids & frozen_requirement_ids
+        if len(frozen_ids) > 1:
+            raise ValueError(
+                "增量裁决不得包含两个及以上 frozen requirement IDs："
+                f"decisions[{index}]={sorted(frozen_ids)}"
+            )
+        if frozen_ids and ids <= frozen_requirement_ids:
+            raise ValueError(
+                f"增量裁决不得只修改 frozen requirement：decisions[{index}]"
+            )
+        if decision.get("decision") == "unresolved" and frozen_ids:
+            raise ValueError(
+                "frozen-base 模式不接受涉及 frozen requirement 的 unresolved；"
+                "请使用明确 must_link / cannot_link"
+            )
+
+    overrides = [] if canonical_name_overrides is None else canonical_name_overrides
+    if not isinstance(overrides, list):
+        raise ValueError("canonical_name_overrides 必须是列表")
+    for index, override in enumerate(overrides):
+        requirement_ids = override.get("requirement_ids")
+        if not isinstance(requirement_ids, list) or not requirement_ids:
+            continue  # 由现有 override 合同给出统一错误
+        ids = set(requirement_ids)
+        unknown = sorted(ids - expected_ids)
+        if unknown:
+            raise ValueError(
+                f"canonical_name_overrides[{index}] 引用未知 IDs：{unknown}"
+            )
+        if ids <= frozen_requirement_ids:
+            raise ValueError(
+                "增量名称 override 不得只重命名 frozen canonical："
+                f"canonical_name_overrides[{index}]"
+            )
+
+
+def _build_frozen_incremental_base(
+    frozen_result: RequirementConsolidationResult,
+    source_result: RequirementConsolidationResult,
+    frozen_requirement_ids: set[int],
+    expected_ids: set[int],
+    raw_name_by_id: dict[int, str],
+) -> RequirementConsolidationResult:
+    """复制冻结 canonical，并把本轮新增 requirement 初始化为 singleton。"""
+    source_by_requirement = {
+        requirement_id: canonical
+        for canonical in source_result.canonical_requirements
+        for requirement_id in canonical.source_requirement_ids
+    }
+    canonicals = [item.model_copy(deep=True) for item in frozen_result.canonical_requirements]
+    known_canonical_ids = {
+        item.canonical_requirement_id for item in canonicals
+    }
+    for requirement_id in sorted(expected_ids - frozen_requirement_ids):
+        raw_name = raw_name_by_id.get(requirement_id)
+        source = source_by_requirement.get(requirement_id)
+        if not raw_name or not raw_name.strip() or source is None:
+            raise ValueError(
+                f"新增 requirement {requirement_id} 缺少来源或 raw_name"
+            )
+        canonical_id = f"incremental-{requirement_id}"
+        if canonical_id in known_canonical_ids:
+            raise ValueError(f"增量 canonical ID 与 frozen base 冲突：{canonical_id}")
+        canonicals.append(
+            CanonicalRequirement(
+                canonical_requirement_id=canonical_id,
+                canonical_name=raw_name.strip(),
+                source_requirement_ids=[requirement_id],
+                rationale=(
+                    "frozen-base 增量初始化：新增 requirement 先保持 singleton，"
+                    "仅由本轮 review-decisions 改变归属"
+                ),
+                confidence=source.confidence,
+            )
+        )
+    # 中间态可能存在同名 singleton；最终仍由 RequirementConsolidationResult
+    # 的唯一名称合同与 canonical_name_overrides 严格校验。
+    return RequirementConsolidationResult.model_construct(
+        canonical_requirements=canonicals,
+        mappings=build_mappings_from_canonical_partition(canonicals),
+    )
+
+
+def _validate_frozen_base_unchanged(
+    frozen_result: RequirementConsolidationResult,
+    final_result: RequirementConsolidationResult,
+    frozen_requirement_ids: set[int],
+) -> None:
+    """逐 canonical 校验 frozen ID、成员 partition 与名称均未改变。"""
+    final_by_id = {
+        item.canonical_requirement_id: item
+        for item in final_result.canonical_requirements
+    }
+    final_owner = {
+        requirement_id: item.canonical_requirement_id
+        for item in final_result.canonical_requirements
+        for requirement_id in item.source_requirement_ids
+    }
+    failures: list[str] = []
+    for frozen in frozen_result.canonical_requirements:
+        current = final_by_id.get(frozen.canonical_requirement_id)
+        if current is None:
+            failures.append(f"frozen canonical 缺失：{frozen.canonical_requirement_id}")
+            continue
+        expected_members = set(frozen.source_requirement_ids)
+        actual_old_members = set(current.source_requirement_ids) & frozen_requirement_ids
+        if actual_old_members != expected_members:
+            failures.append(
+                f"frozen canonical 成员变化：{frozen.canonical_requirement_id}"
+            )
+        if current.canonical_name != frozen.canonical_name:
+            failures.append(
+                f"frozen canonical 名称变化：{frozen.canonical_requirement_id}"
+            )
+        for requirement_id in expected_members:
+            if final_owner.get(requirement_id) != frozen.canonical_requirement_id:
+                failures.append(f"frozen requirement 归属变化：{requirement_id}")
+    if failures:
+        raise ValueError("；".join(failures))
+
+
+def _load_and_validate_frozen_base(
+    path: Path,
+    contract: dict,
+    current_expected_ids: set[int],
+    current_selected_job_ids: set[int],
+    raw_identity: dict[str, object],
+) -> tuple[dict, RequirementConsolidationResult, set[int]]:
+    """读取完整 final artifact，并按 decisions 中绑定的身份强校验。"""
+    required_artifact_fields = {
+        "input_fingerprint",
+        "extractor_version",
+        "selected_job_ids",
+        "model",
+        "prompt_version",
+        "schema_version",
+        "source_run_identifier",
+        "source_result_fingerprint",
+        "review_decisions_fingerprint",
+        "reviewed_by",
+        "reviewed_at",
+        "result_fingerprint",
+        "result",
+    }
+    if not path.exists():
+        raise ValueError(f"frozen base 文件不存在：{path}")
+    artifact = json.loads(path.read_text(encoding="utf-8"))
+    missing_fields = sorted(required_artifact_fields - set(artifact))
+    if missing_fields or any(
+        artifact.get(field) in (None, "")
+        for field in required_artifact_fields - {"result"}
+    ):
+        raise ValueError(
+            f"frozen base 不是完整 final result，缺失/空字段：{missing_fields}"
+        )
+
+    required_contract_fields = {
+        "input_fingerprint",
+        "result_fingerprint",
+        "review_decisions_fingerprint",
+        "selected_job_ids",
+        "requirement_ids",
+        "canonical_count",
+        "mapping_count",
+    }
+    if not isinstance(contract, dict):
+        raise ValueError("review-decisions 缺少 frozen_base 身份合同")
+    missing_contract = sorted(required_contract_fields - set(contract))
+    if missing_contract:
+        raise ValueError(f"frozen_base 身份合同缺少字段：{missing_contract}")
+    requirement_ids = contract.get("requirement_ids")
+    if (
+        not isinstance(requirement_ids, list)
+        or not requirement_ids
+        or any(not isinstance(item, int) for item in requirement_ids)
+        or len(requirement_ids) != len(set(requirement_ids))
+    ):
+        raise ValueError("frozen_base.requirement_ids 必须是非空、不重复整数列表")
+    frozen_ids = set(requirement_ids)
+    if not frozen_ids < current_expected_ids:
+        raise ValueError("frozen requirement IDs 必须是当前完整输入的真子集")
+
+    selected_job_ids = contract.get("selected_job_ids")
+    if (
+        not isinstance(selected_job_ids, list)
+        or not selected_job_ids
+        or any(not isinstance(item, int) for item in selected_job_ids)
+        or len(selected_job_ids) != len(set(selected_job_ids))
+    ):
+        raise ValueError("frozen_base.selected_job_ids 必须是非空、不重复整数列表")
+    if not set(selected_job_ids) <= current_selected_job_ids:
+        raise ValueError("frozen selected_job_ids 不在当前输入范围内")
+
+    bound_fields = (
+        "input_fingerprint",
+        "result_fingerprint",
+        "review_decisions_fingerprint",
+        "selected_job_ids",
+    )
+    for field in bound_fields:
+        if artifact.get(field) != contract.get(field):
+            raise ValueError(f"frozen base 与 review-decisions 身份不一致：{field}")
+    for field in (
+        "extractor_version",
+        "model",
+        "prompt_version",
+        "schema_version",
+    ):
+        if artifact.get(field) != raw_identity.get(field):
+            raise ValueError(f"frozen base 与当前 raw 版本身份不一致：{field}")
+
+    try:
+        result = RequirementConsolidationResult.model_validate(artifact["result"])
+    except (KeyError, ValueError) as exc:
+        raise ValueError(f"frozen base result 不合法：{exc}") from exc
+    content_fingerprint = result_fingerprint(result)
+    if content_fingerprint != artifact["result_fingerprint"]:
+        raise ValueError("frozen base 内容与 result_fingerprint 不一致")
+    if len(result.canonical_requirements) != contract["canonical_count"]:
+        raise ValueError("frozen base canonical_count 不匹配")
+    if len(result.mappings) != contract["mapping_count"]:
+        raise ValueError("frozen base mapping_count 不匹配")
+    identity_failures = validate_exact_identity(result, frozen_ids)
+    contract_result = validate_contract(result, expected_ids=frozen_ids)
+    if identity_failures or contract_result.coverage != 1.0 or (
+        contract_result.structural_violation_count != 0
+    ):
+        raise ValueError(
+            "frozen base 未精确覆盖绑定 requirement IDs："
+            f"{identity_failures}"
+        )
+    return artifact, result, frozen_ids
 
 
 if __name__ == "__main__":
