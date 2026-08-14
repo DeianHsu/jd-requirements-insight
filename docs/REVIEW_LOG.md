@@ -4,35 +4,36 @@
 只保留最新一轮；历史由 Git 保存。项目状态以 `docs/CURRENT_STATE.md` /
 `docs/PROJECT_PLAN.md` 为准。
 
-## 最近一轮：JD13～15 extraction 正式定稿（2026-08-14）
+## 最近一轮：15 JD consolidation acceptance 付费前预检（2026-08-14）
 
 ### 任务内容
 
-- 将外部 Review 批准的 JD13/JD14/JD15 run 0/0/1 及对应 result fingerprint 写入
-  acceptance report 既有人工审核字段，并通过正式 `finalize-extraction` 主线离线定稿。
-- 定稿后执行 `audit-extraction-sources`、逐 JD `verify_extraction_source`、精确数据库
-  断言和重复 finalize 幂等检查；未调用模型，未启动 15 JD consolidation。
+- 使用现有 `run_acceptance.py` 正式选择逻辑，对 15 JD consolidation acceptance
+  执行纯只读付费前预检；正式入口在缺少 `--execute` 时按预期拒绝。
+- 未调用模型，未创建 acceptance report/raw，未 finalize consolidation，未生成报告；
+  未修改代码、Prompt 或 Schema，按用户要求未运行全量 pytest。
 
 ### 验证结果
 
-- 正式 extraction IDs 为 13/14/15；每个 JD 恰好一条，requirements 分别为
-  31/64/14，新增 109，JD1～15 正式 instances 合计 409。
-- 持久化结果指纹精确等于批准值：JD13 `7860dbe1…f613`、JD14
-  `3dcbcfd9…9aea`、JD15 `13c2ece5…9731`；source run 为 job13_run0 /
-  job14_run0 / job15_run1。
-- 三份 extraction 均为 deepseek-v4-flash、Prompt 0.10、Schema 3.0，provenance
-  均为 `fully_bound`；report/raw fingerprint 和 acceptance identity 绑定通过。
-- `audit-extraction-sources` 显示 JD4～15=`fully_bound`、JD1～3 保持历史
-  `unverified`；逐 JD 来源复核通过且元数据已一致；重复 finalize 均幂等跳过，
-  没有创建重复 extraction。
-- 全量测试 `365 passed`，`ruff check app scripts tests` 通过。
+- 正式选择范围严格为 job_ids=1～15、extraction IDs=1～15，409 个 requirements
+  且 409 个 requirement IDs 唯一；共同 extraction 版本为
+  `deepseek-v4-flash|prompt:0.10|schema:3.0`。
+- 输入 fingerprint 为
+  `1696b89d4ea74b6b2c5581630ad325b2a6d252f60937fc6f264856ad3a63e78a`。
+- Consolidation 配置保持 deepseek-v4-flash、Prompt 4.3、Schema 3.0；LLM 配置无缺项。
+- JD4～15 provenance=`fully_bound`；JD1～3=`unverified`，现有 P0-7 historical
+  waiver 结构校验通过、适用范围精确为 [1,2,3]，且明确允许 consolidation 消费。
+- 计划结构为 3 次独立运行 + 1 次固定种子的顺序变形；预计 4 次模型请求，
+  `max_attempts=3` 时最多 12 次。
+- 目标 report `reports/P0-4/15jd-acceptance-report.json` 与 private raw
+  `data/private/experiments/P0-4/15jd-acceptance-raw.json` 均不存在，无覆盖冲突；
+  正式 consolidation 仍为 4 份。
 
 ### 当前状态与下一步
 
-JD13～15 extraction 已正式关闭。下一步为 15 JD / 409 instances 的 consolidation
-acceptance；本轮未启动，等待外部 Review 和后续付费授权。
+15 JD consolidation acceptance 付费前预检通过，无 blocker。本轮已停止，等待用户
+明确授权将 409 条真实 requirement instances 发送给外部 DeepSeek 并执行付费命令。
 
 ### 执行提交
 
-- 同步 REVIEW_LOG / CURRENT_STATE / PROJECT_PLAN；真实 report/raw、来源复核产物和正式
-  数据库保持 Git 忽略，未修改业务代码。
+- 仅覆盖更新本评审摘要；未修改正式数据库、业务代码或其他状态文档。
