@@ -380,12 +380,12 @@ updated_at: 2026-08-14
   `audit-extraction-sources` 与逐 JD `verify_extraction_source` 均通过；
 - 本批未调用额外模型、未启动 15 JD consolidation。
 
-## 15 JD frozen-base 离线审核能力（2026-08-14）
+## 15 JD frozen-base 审核与正式收口（2026-08-14）
 
 - 15 JD consolidation acceptance 已完成 3 个 independent runs；人工选择
   run1 作为 source candidate，但其 IDs 1～300 投影只有 229 个 cluster，不能
-  代替已经关闭的 12 JD final partition（241 canonical / 300 mappings）。顺序
-  变形仍因非法 JSON 失败，hard gate=1，本轮未处理该独立 blocker；
+  代替已经关闭的 12 JD final partition（241 canonical / 300 mappings），因此正式
+  candidate 使用 frozen-base 增量 apply，禁止重新改写旧分区；
 - `apply_review_decisions.py` 增加可选 `--frozen-base`：直接继承较小范围的完整
   final consolidation，把其余 requirement 初始化为增量 singleton，再复用现有
   must-link / cannot-link / canonical name override；不重放旧 review decisions；
@@ -412,13 +412,13 @@ updated_at: 2026-08-14
 - 独立验证确认 IDs 1～409 精确覆盖，冻结 IDs 1～300 的 partition、canonical ID、
   canonical name 逐项零差异；45 条裁决全部成立，明确要求独立的 14 个新增项均为
   singleton；数据库 21 个 any_of 组无错误归并，canonical name / mapping / identity
-  合同全部通过。尚未 finalize，等待外部 Review；
+  合同全部通过；candidate 已通过外部 Review；
 - `run_acceptance.py` 已增加 order-only resume：复用原 acceptance report/raw 中的三个
   successful independent runs，只重试固定种子 `20260803` 的 order transformation。
   入口在创建模型客户端前强校验当前数据库输入身份、JD 范围、模型/Prompt/Schema、
   source run 结果与指纹、精确覆盖及结构合同；仅接受单一 order execution hard gate，
   且新 report/raw 不得覆盖原产物。execution/coverage/结构失败仍为 hard gate，低
-  Jaccard 仍只作 warning；真实 15 JD 原产物的只读身份预检已通过，但本轮未执行模型；
+  Jaccard 仍只作 warning；真实 15 JD 原产物身份校验与正式重试均已通过；
 - 现有 `manual_cluster_review` 字段足以绑定 reviewer、审核时间、批准 run、批准结果
   fingerprint、结论与备注，无需扩展数据模型；
 - 经显式付费授权执行 order-only resume 成功：新 order result 为 317 canonical /
@@ -426,7 +426,18 @@ updated_at: 2026-08-14
   `22066a2e…284c1`；order vs run0 Jaccard=28.85%，按合同只记 warning，新的
   acceptance hard gate=0。三个 independent runs 逐项未变，原 report/raw 未覆盖；
   新 report/raw 分别为 `reports/P0-4/15jd-acceptance-order-retry-report.json` 与
-  `data/private/experiments/P0-4/15jd-acceptance-order-retry-raw.json`。
+  `data/private/experiments/P0-4/15jd-acceptance-order-retry-raw.json`；
+- 外部 Review 已写入新 report 的现有人工审核字段，批准 run1（source fingerprint
+  `387405b7…e9748`）；已审核 final candidate 未修改。正式 `finalize-consolidation`
+  生成 **批次 #5**：JD1～15、409 instances、329 canonical / 409 mappings，final
+  fingerprint `17d087e8…172c2`、review-decisions fingerprint `165be7ba…c46e8`；
+- `audit-consolidation` 为 `reportable=True`，`validate-consolidation` 为 coverage=100%、
+  结构违规=0；相同 finalize 命令复跑命中 #5 并幂等跳过；
+- `generate-report` 经 P0-7 waiver 门禁生成私有报告
+  `data/private/artifacts/15jd-batch/market-report-5.md`，并保留 JD1～3 `unverified`、
+  “豁免不等于 fully_bound”及可追溯性限制提示。报告统计为 15 JD、409 instances、
+  329 canonical、43 个跨 JD 共同要求、286 个单 JD 长尾；团队协作能力覆盖最高
+  （9/15 JD，10 instances）。**P0-8 已正式关闭。**
 
 ## 是否达到进入 P0-4 的条件
 
@@ -436,16 +447,10 @@ hard gate=0）与 P0-3B（JD 1/2/3 累计 hard gate=0、人工审计无阻塞
 
 ## 下一步
 
-1. **8 JD 与 12 JD 批次均已正式关闭**；JD 13～15 extraction 也已完成验收、
-   人工审核和正式定稿；15 JD consolidation acceptance、增量候选审核、frozen-base
-   离线 apply 与 candidate 外部 Review 已完成。当前 candidate 为 329 canonical /
-   409 mappings；
-2. order-only resume 已付费执行成功，新的 acceptance hard gate=0，三个 independent
-   runs 未重跑。下一步把已完成的外部 Review 写入新 report 的现有
-   `manual_cluster_review` 字段，再按正式主线 finalize；15 JD 为 MVP 固定终点，
-   不扩展到 20；
-3. 每批只执行现有正式主线；付费调用前汇报模型、本批 JD 数量与 ID、
-   调用目的、预计命令，等待授权后执行。
+1. **P0-8 已正式关闭**：8 JD、12 JD 与最终 15 JD 批次均完成抽取、验收、人工审核、
+   正式定稿和报告；最终批次为 consolidation #5（329 canonical / 409 mappings）。
+2. 15 JD 是 MVP 固定终点，不扩展到 20；本轮不创建 portfolio package 或 v0.1 tag。
+3. 当前没有获授权的后续实施阶段；新增工作须单独确认范围。
 
 ## 付费与私有数据依赖
 
