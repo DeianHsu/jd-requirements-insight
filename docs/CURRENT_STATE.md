@@ -33,14 +33,15 @@ updated_at: 2026-08-14
 
 - 数据库已使用现行 Schema 创建（六张业务表，无旧表）；
 - 15 份真实 JD 已导入 `data/jd_skill_insight.db`（JD 1～15，重复导入幂等跳过）；
-- JD 9～15 已按现行 Markdown/frontmatter 格式保存并导入；JD 9～12 已完成
-  付费抽取验收、人工审核和正式定稿，JD 13～15 尚未执行付费抽取；
-- **已持久化正式抽取结果：JD 1～12**（deepseek-v4-flash、
-  `prompt:0.10|schema:3.0`，要求数 37/30/16/27/26/12/43/20/36/8/24/21，
-  合计 300；JD 4～12 为 `fully_bound`，JD 1～3 保持历史 `unverified`；
-  JD 9/10/11/12 按人工审核批准的 run 0/0/1/1 定稿，正式 extraction ID
-  为 9/10/11/12，结果、report 与 raw 指纹绑定完整，重复 finalize 幂等）；
-- **已持久化正式归并批次：3 份**：
+- JD 9～15 已按现行 Markdown/frontmatter 格式保存并导入，均已完成付费抽取
+  验收、人工审核和正式定稿；
+- **已持久化正式抽取结果：JD 1～15**（deepseek-v4-flash、
+  `prompt:0.10|schema:3.0`，要求数
+  37/30/16/27/26/12/43/20/36/8/24/21/31/64/14，合计 409；JD 4～15
+  为 `fully_bound`，JD 1～3 保持历史 `unverified`；JD 13/14/15 按人工
+  审核批准的 run 0/0/1 定稿，正式 extraction ID 为 13/14/15，结果、
+  report 与 raw 指纹绑定完整，重复 finalize 幂等）；
+- **已持久化正式归并批次：4 份**：
   - 批次 #1（job_ids=1,2,3，83 条精确覆盖，来源 run-1 + 人工审核决定，
     审核指纹 `51cebada…`、结果指纹 `c5be704e…`，旧候选批次已按
     "不维护旧派生结果"原则删除重建，身份见
@@ -53,6 +54,10 @@ updated_at: 2026-08-14
     `prompt:4.3|schema:3.0`，来源 run-2 + 8 JD 人工裁决，审核指纹
     `f93b9394…`、结果指纹 `d6e80729…`、**174 canonical**；8 JD 报告
     `data/private/artifacts/8jd-batch/market-report-3.md`）；
+  - 批次 #4（job_ids=1～12，300 条精确覆盖，deepseek-v4-flash
+    `prompt:4.3|schema:3.0`，来源 run-2 + 12 JD 人工裁决，审核指纹
+    `7170abe0…`、结果指纹 `47591259…`、**241 canonical**；12 JD 报告
+    `data/private/artifacts/12jd-batch/market-report-4.md`）；
 - 真实 JD 原文属于私有输入（Git 忽略；重新克隆仓库的环境不会包含
   这些私有文件）。
 
@@ -70,7 +75,7 @@ updated_at: 2026-08-14
 - 当前批次 #3 的脱敏身份检查通过：job_ids=1～8、211 mappings、174
   canonical、结果指纹 `d6e80729…`、审核决定指纹 `f93b9394…`、来源
   run-2，属于可报告正式批次；
-- 当前正式抽取来源绑定离线分类：JD 4/5/6/7/8 为 `fully_bound`；JD 1/2/3 的
+- 当前正式抽取来源绑定离线分类：JD 4～15 为 `fully_bound`；JD 1/2/3 的
   数据库记录没有当前定稿合同所需的验收/审核/文件指纹，机器分类为
   `unverified`，继续使用既有历史豁免（见下方 P0-7 关闭记录）。文档保留
   其既有人工审计结论；不回填、不重跑、不将其宣称为 `fully_bound`；
@@ -362,6 +367,19 @@ updated_at: 2026-08-14
 - 报告身份为 12 JD / 300 instances / 241 canonical；31 个跨 JD 共同要求、
   210 个单 JD 长尾；最高频为团队协作能力（8/12 JD、9 instances）。
 
+## JD 13～15 抽取验收与定稿（2026-08-14）
+
+- 配置：deepseek-v4-flash、Prompt 0.10、Schema 3.0、每 JD 3 runs、每阶段
+  max_attempts=2；9/9 runs 成功，hard gate=0；
+- 外部人工 Review 批准 JD 13/14/15 的 run 0/0/1，对应结果指纹
+  `7860dbe1…` / `3dcbcfd9…` / `13c2ece5…`；
+- 离线 finalize 生成 extraction ID 13/14/15，要求数 31/64/14，新增 109 条；
+  JD 1～15 正式 requirement instances 合计 409；
+- 三份来源均为 `fully_bound`，批准 run、结果指纹、report/raw 文件指纹、
+  Prompt/Schema/model 均核对通过；重复 finalize 全部幂等跳过写入；
+  `audit-extraction-sources` 与逐 JD `verify_extraction_source` 均通过；
+- 本批未调用额外模型、未启动 15 JD consolidation。
+
 ## 是否达到进入 P0-4 的条件
 
 **是。** Prompt 0.10 + Schema V3 的抽取结果已通过 P0-3A（13 场景
@@ -370,10 +388,10 @@ hard gate=0）与 P0-3B（JD 1/2/3 累计 hard gate=0、人工审计无阻塞
 
 ## 下一步
 
-1. **8 JD 批次已正式关闭**（批次 #3 定稿 + 8 JD 报告生成，provenance
-   文案已修正为引用 P0-7 豁免记录）；**12 JD 批次也已正式关闭**（批次 #4
-   定稿 + 12 JD 报告生成）；下一步处理 **JD 13～15**，形成 15 JD 最终批次
-   （固定终点，不扩展到 20）；新增 JD 禁止使用 JD1～3 的历史豁免；
+1. **8 JD 与 12 JD 批次均已正式关闭**；JD 13～15 extraction 也已完成验收、
+   人工审核和正式定稿。下一步以 409 条正式 requirement instances 启动
+   **15 JD consolidation acceptance**，形成 MVP 最终批次（固定终点，不扩展
+   到 20）；新增 JD 禁止使用 JD1～3 的历史豁免；
 2. 每批只执行现有正式主线；付费调用前汇报模型、本批 JD 数量与 ID、
    调用目的、预计命令，等待授权后执行。
 

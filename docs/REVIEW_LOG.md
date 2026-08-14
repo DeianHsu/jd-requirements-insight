@@ -4,37 +4,35 @@
 只保留最新一轮；历史由 Git 保存。项目状态以 `docs/CURRENT_STATE.md` /
 `docs/PROJECT_PLAN.md` 为准。
 
-## 最近一轮：JD13～15 extraction acceptance 付费执行（2026-08-14）
+## 最近一轮：JD13～15 extraction 正式定稿（2026-08-14）
 
 ### 任务内容
 
-- 经用户明确授权向外部 DeepSeek 发送 JD13～15 真实内容后，按现有正式真实 JD
-  extraction acceptance 入口执行付费 `--execute`。
-- 参数固定为 `deepseek-v4-flash`、Prompt 0.10、Schema 3.0、每 JD 3 runs、
-  `max_attempts=2`；未修改 JD 内容、Prompt、Schema，未 finalize extraction，未启动
-  consolidation。
+- 将外部 Review 批准的 JD13/JD14/JD15 run 0/0/1 及对应 result fingerprint 写入
+  acceptance report 既有人工审核字段，并通过正式 `finalize-extraction` 主线离线定稿。
+- 定稿后执行 `audit-extraction-sources`、逐 JD `verify_extraction_source`、精确数据库
+  断言和重复 finalize 幂等检查；未调用模型，未启动 15 JD consolidation。
 
 ### 验证结果
 
-- Report 与 raw 身份一致：job_ids=13～15，JD set fingerprint 为
-  `30877883565ae560608a5026c0dbb42a13e8afd4a3e136931349530ced96fcd1`。
-- 9/9 runs 成功，failed runs=0，`passed=true`，`hard_gate_failures=[]`。Requirement counts：
-  JD13=31/27/29，JD14=64/60/60，JD15=16/14/14。
-- 机器验收产生 9 条稳定性 warning、2 条 diagnostics；均非 hard gate。报告记录的候选
-  requirement 总数为 111，需外部 Reviewer 结合 raw 做语义审核并选择 source run。
-- Public report 为 `reports/P0-3/jd13-15-acceptance-report.json`，private raw 为
-  `data/private/experiments/p0_3/real_jd/jd13-15-acceptance-raw.json`；两者均按规则保持 Git 忽略。
-- Acceptance raw 未记录实际 retry 次数；只能确认两阶段成功请求下限为 18 次、授权上限为
-  36 次，不对实际计费请求数作无证据推断。
-- 正式数据库中 JD13～15 的 extraction 数仍均为 0。
+- 正式 extraction IDs 为 13/14/15；每个 JD 恰好一条，requirements 分别为
+  31/64/14，新增 109，JD1～15 正式 instances 合计 409。
+- 持久化结果指纹精确等于批准值：JD13 `7860dbe1…f613`、JD14
+  `3dcbcfd9…9aea`、JD15 `13c2ece5…9731`；source run 为 job13_run0 /
+  job14_run0 / job15_run1。
+- 三份 extraction 均为 deepseek-v4-flash、Prompt 0.10、Schema 3.0，provenance
+  均为 `fully_bound`；report/raw fingerprint 和 acceptance identity 绑定通过。
+- `audit-extraction-sources` 显示 JD4～15=`fully_bound`、JD1～3 保持历史
+  `unverified`；逐 JD 来源复核通过且元数据已一致；重复 finalize 均幂等跳过，
+  没有创建重复 extraction。
 - 全量测试 `365 passed`，`ruff check app scripts tests` 通过。
 
 ### 当前状态与下一步
 
-JD13～15 extraction machine acceptance 已完成，无需自动重跑。下一步由外部 Reviewer
-审核 9 个 extraction result、选择每个 JD 的 approved run 并给出 result fingerprint；在此之前
-不得 finalize extraction，也不得启动 15 JD consolidation。
+JD13～15 extraction 已正式关闭。下一步为 15 JD / 409 instances 的 consolidation
+acceptance；本轮未启动，等待外部 Review 和后续付费授权。
 
 ### 执行提交
 
-- 仅覆盖更新本评审摘要；真实 report/raw 保持 Git 忽略，未修改正式数据库或业务代码。
+- 同步 REVIEW_LOG / CURRENT_STATE / PROJECT_PLAN；真实 report/raw、来源复核产物和正式
+  数据库保持 Git 忽略，未修改业务代码。
