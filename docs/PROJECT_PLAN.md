@@ -46,8 +46,9 @@ requirement → 独立 JD 统计 → 原文证据追溯 → Markdown 市场分�
    329 canonical / 409 mappings、coverage=100%、结构违规=0、`reportable=True`，
    final fingerprint `17d087e8…172c2`；最终私有 Markdown 报告已生成并保留 P0-7
    provenance 风险提示；
-3. 15 JD 是 MVP 固定终点；本轮不创建 portfolio package 或 v0.1 tag。当前没有获授权的
-   后续实施阶段；新增 JD 必须全部走现行正式主线，禁止使用例外 1 豁免。
+3. 15 JD 是 MVP 固定终点；portfolio package 已通过 Review，`v0.1.0-mvp` annotated tag
+   标记当前 MVP release。当前没有获授权的后续实施阶段；新增 JD 必须全部走现行正式
+   主线，禁止使用例外 1 豁免。
 
 边界与硬依赖见 `AGENTS.md`（不维护旧版本兼容、付费调用必须
 `--execute`、私有材料不提交 Git、MVP 轻量开发原则）。

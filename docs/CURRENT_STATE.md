@@ -453,8 +453,9 @@ hard gate=0）与 P0-3B（JD 1/2/3 累计 hard gate=0、人工审计无阻塞
 
 1. **P0-8 已正式关闭**：8 JD、12 JD 与最终 15 JD 批次均完成抽取、验收、人工审核、
    正式定稿和报告；最终批次为 consolidation #5（329 canonical / 409 mappings）。
-2. 15 JD 是 MVP 固定终点，不扩展到 20；本轮不创建 portfolio package 或 v0.1 tag。
-3. 当前没有获授权的后续实施阶段；新增工作须单独确认范围。
+2. v0.1 MVP portfolio package 已通过 Review；版本号为 `0.1.0`，发布标记为
+   annotated tag `v0.1.0-mvp`。15 JD 是 MVP 固定终点，不扩展到 20。
+3. v0.1.0-mvp 已收口，当前没有获授权的后续实施阶段；新增工作须单独确认范围。
 
 ## 付费与私有数据依赖
 
