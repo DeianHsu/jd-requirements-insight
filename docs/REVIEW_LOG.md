@@ -4,38 +4,45 @@
 只保留最新一轮；历史由 Git 保存。项目状态以 `docs/CURRENT_STATE.md` /
 `docs/PROJECT_PLAN.md` 为准。
 
-## 最近一轮：15 JD frozen-base candidate（2026-08-14）
+## 最近一轮：15 JD order transformation blocker 调查（2026-08-14）
 
-### 执行内容
+### 根因与性质
 
-- 将外部 Reviewer 批准的 23 组增量语义裁决写入私有
-  `data/private/experiments/P0-4/review-decisions-15jd.json`；冻结基线显式绑定
-  IDs 1～300、241 canonical / 300 mappings、12 JD input/result/review fingerprints。
-- 正式 decisions 共 45 条：19 must-link、26 cannot-link；另有 1 条新 canonical
-  “上下文管理”的名称 override。审核清单的 66 条原子候选边均得到显式裁决：
-  23 must-link、43 cannot-link，遗漏=0、冲突=0。
-- 使用 `apply_review_decisions.py --run-index 1 --frozen-base ...` 纯离线生成私有
-  `final-consolidation-15jd-candidate.json` 和脱敏 summary；未调用模型、未 finalize。
+- 15 JD acceptance 的 3 个 independent runs 均成功且各自精确覆盖 409 IDs、
+  coverage=100%、结构违规=0，结果指纹均可复算；run1 及审核后的 329 canonical
+  final candidate 未发现 correctness blocker。
+- order transformation 使用固定种子 `20260803` 打乱同一 409 条输入，调用同一
+  deepseek-v4-flash / Prompt 4.3 / Schema 3.0；三次有限重试均返回非法 JSON，最终
+  错误位于 line 1852 / column 34。raw 只保留失败原因，没有可验证的 order result。
+- 因此这是 **metamorphic diagnostic execution failure**，不是已选 source run 或 final
+  candidate 的结构/覆盖失败；但它使正式 acceptance 缺少一次成功的顺序变形观察。
 
-### 结果与验证
+### 当前正式 gate 路径
 
-- source=`run-1`，source result fingerprint=
-  `387405b7b75da08f83d6c1b0965c5416184e9593862d2460b15105d8252e9748`；
-- review-decisions fingerprint=
-  `165be7ba81d43a716758248162de0bb6a27db2ad5453d6305ac5a52f8b3c46e8`；
-- final candidate fingerprint=
-  `17d087e8f8d628fb58aa85f26a69a07cd6300458ef58290e0d71da27935172c2`；
-- candidate=329 canonical / 409 mappings，IDs 1～409 精确覆盖，无重复或缺失；
-  coverage=100%、structural violations=0、canonical name 唯一；result/source/review
-  fingerprints 均与产物内容正确绑定；
-- frozen baseline fingerprint=
-  `47591259e0a8decb9288094803136df7f75e6c418408b9dbe8712804975e052f`；
-  IDs 1～300 的 partition、canonical ID、canonical name 逐项零差异；
-- 45 条 decisions 全部成立；14 个明确保持独立的新增 requirement 均为 singleton；
-  当前数据库 21 个 any_of 组全部保持成员分离，没有错误归并。
+- `run_acceptance.py` 明确把 order 聚类失败、coverage 不足或结构违规加入顶层
+  `hard_gate_failures`；order positive-pair Jaccard <85% 才只记 warning。该规则由
+  2026-08-03 的 `168de0c` 明确引入，代码注释、VALIDATION 文档和定向测试一致，
+  属于有意设计，不是 finalize 的历史偶然行为。
+- `finalize_consolidation()` 在读取 report 后首先检查顶层 hard gate，非空即拒绝；
+  没有按失败类型降级、人工批准或 exception 的消费分支。
+- 当前 runner 只有完整 `runs + order` 模式，不能读取既有 raw 复用三个 successful
+  runs；没有 order-only retry。仓库唯一结构化 waiver 是 P0-7 历史 extraction waiver，
+  仅服务指定旧 JD 的归并/统计/报告 provenance，不覆盖 P0-4 acceptance hard gate。
+
+### 推荐最小解决方案
+
+- 推荐增加 **order-only resume**，不修改 hard-gate 语义：强校验既有 report/raw、
+  当前数据库 input fingerprint、selected jobs、模型/Prompt/Schema、三个 source run
+  的完整结果及指纹，并要求原报告仅存在一个 order execution failure；按原 seed 重建
+  shuffled input，只调用 order transformation，输出新的完整 report/raw，原产物不覆盖。
+- 模型仍为 deepseek-v4-flash，Prompt 4.3，Schema 3.0，`max_attempts=3`；预计 1 次、
+  最多 3 次付费请求。成功结果继续执行 coverage/结构 hard gate，Jaccard 继续只作 warning。
+- 不推荐当前把 execution failure 改成非阻塞 exception：这会改变明确的 P0-4 合同并
+  放弃唯一的输入顺序观察，且仓库没有对应的结构化批准与 finalize 消费机制。若专用重试
+  再次耗尽，才应由外部 Reviewer 另行决定是否设计严格限定的 exception。
 
 ### 当前状态
 
-未发现 Reviewer 裁决冲突或现有机制无法表达的情况。15 JD final candidate 已准备好，
-等待外部 Review；未处理或绕过 order transformation hard gate=1，未执行
-finalize-consolidation 或 market report。
+本轮只读调查，未改代码、未调用模型、未修改 acceptance/candidate/decisions、未 finalize。
+当前 hard gate 仍为 1。另：acceptance report 的 `manual_cluster_review` 批准字段目前为空；
+order gate 修复后，还需把已完成的外部 Review 写入现有字段，finalize 才能继续。
