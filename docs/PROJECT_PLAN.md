@@ -28,7 +28,7 @@ requirement → 独立 JD 统计 → 原文证据追溯 → Markdown 市场分�
 | P0-5 市场统计、证据追溯与 Markdown 报告 | 独立 JD 数口径统计 + 完整性门禁 + `generate-report` 离线 Markdown 报告（总览/共同/长尾/证据追溯）；真实报告私有，公开样例 `examples/market-report-sample.md` | ✅ 已关闭（样本限制声明明确） |
 | P0-6 样本扩展（3 → 5 JD） | JD 4/5 抽取验收与定稿、5 JD 归并验收、3→5 增量稳定性、旧 83 条回归、最终批次与报告 | ✅ 已关闭（批次 #2：136 条/97 canonical/指纹 edfe2c1a…；旧对 0 破坏；3→5 对比摘要已生成） |
 | P0-7 正式生产主线收口 | 显式数据库目标；模型候选不入正式表；app finalize 定稿；报告只消费完整定稿批次；离线来源审计；真实链路 E2E | ✅ 已关闭（2026-08-07：正式生产机制全部完成；JD 1～3 按项目级历史风险接受记录豁免，见例外 1） |
-| P0-8 样本扩展（8 → 12 → 15 JD） | 先完成 JD 9～12 抽取/归并/报告，再处理 JD 13～15；逐批测量成本、稳定性与人工裁决量 | 进行中（8 JD、12 JD 均已关闭；15 JD extraction、acceptance、增量审核、frozen-base candidate 与外部 Review 已完成；candidate=329 canonical / 409 mappings；order-only resume 已就绪，待付费执行后收口；15 为 MVP 固定终点） |
+| P0-8 样本扩展（8 → 12 → 15 JD） | 先完成 JD 9～12 抽取/归并/报告，再处理 JD 13～15；逐批测量成本、稳定性与人工裁决量 | 进行中（8 JD、12 JD 均已关闭；15 JD extraction、acceptance、增量审核、frozen-base candidate 与外部 Review 已完成；candidate=329 canonical / 409 mappings；order-only resume 已成功、hard gate=0，待记录人工审核并 finalize；15 为 MVP 固定终点） |
 
 ## 当前例外
 
@@ -49,9 +49,10 @@ requirement → 独立 JD 统计 → 原文证据追溯 → Markdown 市场分�
 3. frozen-base 离线 apply 已直接继承正式 12 JD final result（IDs 1～300、
    241 canonical / 300 mappings、结果指纹 `47591259…e052f`），并应用 23 组已批准
    增量裁决；15 JD candidate 为 329 canonical / 409 mappings、结果指纹
-   `17d087e8…172c2`，冻结分区零差异，且已通过外部 Review；order-only resume 已实现并
-   通过定向验证。下一步经显式付费授权只重试固定种子的 order transformation（预计 1 次、
-   最多 3 次），不重跑三个 independent runs；原 hard gate=1 在成功重试前仍阻止 finalize；
+   `17d087e8…172c2`，冻结分区零差异，且已通过外部 Review；order-only resume 已付费
+   执行成功，新 order result 为 317 canonical / 409 mappings、coverage=100%、结构违规=0，
+   acceptance hard gate=0，三个 independent runs 未重跑。下一步记录现有人工审核字段并
+   执行正式 finalize；
 4. 新增 JD 必须全部走现行正式主线，禁止使用例外 1 豁免。
 
 边界与硬依赖见 `AGENTS.md`（不维护旧版本兼容、付费调用必须

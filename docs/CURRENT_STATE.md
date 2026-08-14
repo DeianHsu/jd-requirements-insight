@@ -420,7 +420,13 @@ updated_at: 2026-08-14
   且新 report/raw 不得覆盖原产物。execution/coverage/结构失败仍为 hard gate，低
   Jaccard 仍只作 warning；真实 15 JD 原产物的只读身份预检已通过，但本轮未执行模型；
 - 现有 `manual_cluster_review` 字段足以绑定 reviewer、审核时间、批准 run、批准结果
-  fingerprint、结论与备注，无需扩展数据模型。
+  fingerprint、结论与备注，无需扩展数据模型；
+- 经显式付费授权执行 order-only resume 成功：新 order result 为 317 canonical /
+  409 mappings，coverage=100%、结构违规=0、exact identity 通过，结果指纹
+  `22066a2e…284c1`；order vs run0 Jaccard=28.85%，按合同只记 warning，新的
+  acceptance hard gate=0。三个 independent runs 逐项未变，原 report/raw 未覆盖；
+  新 report/raw 分别为 `reports/P0-4/15jd-acceptance-order-retry-report.json` 与
+  `data/private/experiments/P0-4/15jd-acceptance-order-retry-raw.json`。
 
 ## 是否达到进入 P0-4 的条件
 
@@ -434,9 +440,9 @@ hard gate=0）与 P0-3B（JD 1/2/3 累计 hard gate=0、人工审计无阻塞
    人工审核和正式定稿；15 JD consolidation acceptance、增量候选审核、frozen-base
    离线 apply 与 candidate 外部 Review 已完成。当前 candidate 为 329 canonical /
    409 mappings；
-2. order-only resume 入口与定向验证已完成，下一步经显式付费授权后只重试 order
-   transformation（预计 1 次、最多 3 次），不重跑三个 independent runs。当前原
-   acceptance 的 hard gate=1 仍阻止 finalize；不豁免、不绕过。15 JD 为 MVP 固定终点，
+2. order-only resume 已付费执行成功，新的 acceptance hard gate=0，三个 independent
+   runs 未重跑。下一步把已完成的外部 Review 写入新 report 的现有
+   `manual_cluster_review` 字段，再按正式主线 finalize；15 JD 为 MVP 固定终点，
    不扩展到 20；
 3. 每批只执行现有正式主线；付费调用前汇报模型、本批 JD 数量与 ID、
    调用目的、预计命令，等待授权后执行。
