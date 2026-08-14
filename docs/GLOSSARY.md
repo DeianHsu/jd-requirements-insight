@@ -1,4 +1,4 @@
-# JD Skill Insight 核心术语
+# JD Requirements Insight 核心术语
 
 本文是项目术语含义的唯一信息源。代码、测试、计划和 README 必须使用下列
 标准术语；发现新术语、同词异义或定义冲突时先更新本文，再同步受影响内容。

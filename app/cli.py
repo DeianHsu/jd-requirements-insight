@@ -52,7 +52,7 @@ from sqlalchemy import inspect, select
 from sqlalchemy.engine import make_url
 from app.ingestion import import_directory, list_jobs
 
-cli = typer.Typer(no_args_is_help=True, help="JD Skill Insight 本地数据工具")
+cli = typer.Typer(no_args_is_help=True, help="JD Requirements Insight 本地数据工具")
 console = Console()
 
 

@@ -1,5 +1,5 @@
 [project]
-name = "jd-skill-insight"
+name = "jd-requirements-insight"
 version = "0.1.0"
 description = "把真实 JD 转化为可统计、可追溯的市场要求分析（本地 CLI：导入、抽取、归并、统计、报告）"
 readme = "README.md"

@@ -1,1 +1,1 @@
-"""该包集中存放JD Skill Insight的全部应用功能代码。"""
+"""该包集中存放 JD Requirements Insight 的全部应用功能代码。"""

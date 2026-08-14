@@ -140,7 +140,7 @@ wheels = [
 ]
 
 [[package]]
-name = "jd-skill-insight"
+name = "jd-requirements-insight"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

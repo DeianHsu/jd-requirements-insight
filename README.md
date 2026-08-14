@@ -1,4 +1,4 @@
-# JD Skill Insight
+# JD Requirements Insight
 
 把非结构化招聘 JD 转化为**可统计、可审核、可追溯到原文证据的岗位要求市场报告**。
 项目关注的不是“让模型总结几份 JD”，而是如何把随机的 LLM 输出收口成具有明确身份、

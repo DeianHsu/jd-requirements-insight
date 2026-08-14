@@ -1,4 +1,4 @@
-# JD Skill Insight 仓库约束
+# JD Requirements Insight 仓库约束
 
 ## 当前唯一主线
 
