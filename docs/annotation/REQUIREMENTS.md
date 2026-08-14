@@ -122,7 +122,8 @@
 行业经验）归 `experience`，不得降为 `other`；纯技能名称本身（如
 “语言甲”）按技术类别归类。
 
-Embedding 和 Vector Database 与 RAG 相关，但类别是 `retrieval`，不能全部压成 `rag`。category 枚举是 AI/LLM/Agent/RAG 岗位领域配置，不是领域无关核心规则（见 `docs/annotation/README.md`）。
+Embedding 和 Vector Database 与 RAG 相关，但类别是 `retrieval`，不能全部压成 `rag`。
+category 枚举是 AI/LLM/Agent/RAG 岗位领域配置，不是领域无关核心规则。
 
 ## FIELD-02 importance
 

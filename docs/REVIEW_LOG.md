@@ -4,20 +4,19 @@
 只保留最新一轮；历史由 Git 保存。项目状态以 `docs/CURRENT_STATE.md` /
 `docs/PROJECT_PLAN.md` 为准。
 
-## 最近一轮：15 JD P0-8 正式收口（2026-08-14）
+## 最近一轮：v0.1 MVP portfolio package（2026-08-14）
 
-- 在 order-retry acceptance report 的现有 `manual_cluster_review` 字段记录外部 Review：
-  批准 run1，source fingerprint `387405b7…e9748`；未新增字段、未修改 final candidate、
-  review-decisions、Prompt 或 Schema，未调用 LLM。
-- 使用已审核 candidate 与 review-decisions 离线 finalize，正式生成 consolidation #5：
-  JD1～15、409 requirement instances、329 canonical / 409 mappings，final fingerprint
-  `17d087e8…172c2`、review-decisions fingerprint `165be7ba…c46e8`。
-- `audit-consolidation` 通过且 `reportable=True`；`validate-consolidation` 为
-  coverage=100%、结构违规=0；相同 finalize 命令复跑命中批次 #5 并幂等跳过。
-- extraction provenance 为 JD1～3 `unverified`、JD4～15 `fully_bound`。最终报告门禁
-  正确读取 P0-7 historical waiver，并在报告中保留“豁免不等于 fully_bound”及可追溯性
-  风险提示。
-- 最终私有报告为 `data/private/artifacts/15jd-batch/market-report-5.md`：15 JD、
-  409 instances、329 canonical；43 个跨 JD 共同要求、286 个单 JD 长尾；覆盖最高为
-  团队协作能力（9/15 JD，10 instances）。P0-8 已正式关闭；本轮未创建 portfolio
-  package，也未创建 v0.1 tag。
+- 从首次访问仓库的招聘方视角重排 README：先说明项目价值和 v0.1 MVP 结果，再展示
+  完整 pipeline、工程亮点、公开 sample、正式入口、评测/回归、仓库结构、隐私边界与
+  已知限制；明确 15 JD / 409 instances / 329 canonical、43 个跨 JD 共同要求和
+  286 个长尾要求均来自已关闭批次，不能外推为行业结论。
+- README 突出候选/正式数据隔离、evidence 追溯、fingerprint、人工裁决、metamorphic /
+  stability 验收、frozen baseline、原子 finalize 与幂等复跑等工程闭环；所有公开文档
+  入口改为可点击相对链接，旧固定 consolidation ID 改为通用入口说明。
+- 公开 `examples/market-report-sample.md` 使用虚构公司和岗位，通过项目现有生成器在临时
+  SQLite 中复现；重新生成 SHA-256 与仓库版本一致，不调用 LLM、不读取私有数据。
+- 修正公开状态中的正式归并批次数量（5 份）、当前可报告批次（#5）、P0-8 Jaccard
+  最低观察值，以及 annotation 中指向不存在文件的说明。
+- 验证：Markdown 相对链接全部存在；README/docs/examples 未发现真实公司名；CLI help
+  可运行；`git diff --check` 通过。仅修改文档，按要求未跑全量 pytest；未修改算法、
+  正式数据或 sample 内容，未调用 LLM，未创建 v0.1 tag。当前无 portfolio blocker。

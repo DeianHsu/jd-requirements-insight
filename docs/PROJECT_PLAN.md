@@ -35,7 +35,7 @@ requirement → 独立 JD 统计 → 原文证据追溯 → Markdown 市场分�
 | # | 所属阶段 | 例外内容 | 是否阻塞关闭 | 处置状态 |
 |---|---|---|---|---|
 | 1 | P0-3B / P0-7 | JD 1/2/3 正式抽取记录缺新定稿合同字段（机器分类 `unverified`，保留 legacy 人工审计结论；JD 4～15 为 `fully_bound`） | 不阻塞（2026-08-07 已批准结构化历史豁免，P0-7 关闭条件满足） | **✅ 已豁免**：`reports/P0-7/legacy-extraction-waiver.json`（批准人 project-owner，2026-08-07）。仅限 JD 1/2/3 历史记录、仅供当前 MVP 归并/统计/报告；新增 JD 禁止使用；不重新验收、不回填指纹；分类保持 `unverified`；报告 provenance 风险提示保留 |
-| 2 | P0-4 / P0-8 | 归并稳定性 positive-pair Jaccard 39~67%（诊断指标）未达标，正式结果靠人工裁决兜底 | 不阻塞（P0-4 关闭时已明确判定 P0-4B 不阻塞） | 扩样 8→12→15 时逐批测量新增不稳定对与裁决量，有数据后再定是否调整 Prompt / 引入确定性归一化 |
+| 2 | P0-4 / P0-8 | 归并稳定性 positive-pair Jaccard 最低观察到 28.85%（诊断指标）未达标，正式结果靠人工裁决兜底 | 不阻塞（P0-4 关闭时已明确判定 P0-4B 不阻塞） | 8→12→15 扩样已逐批测量并完成裁决；若未来扩大样本，再评估 Prompt 或确定性归一化 |
 | 3 | P0-7 | 抽取来源状态 `reviewed_unbound` 命名过乐观（八个绑定字段任一存在即标记） | 不阻塞（纯命名待办） | 非阻塞待办：细分 `fully_bound` / `reviewed_legacy` / `partially_bound` / `unverified` |
 
 ## 当前下一步

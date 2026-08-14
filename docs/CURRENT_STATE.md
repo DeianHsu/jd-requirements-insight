@@ -41,7 +41,7 @@ updated_at: 2026-08-14
   为 `fully_bound`，JD 1～3 保持历史 `unverified`；JD 13/14/15 按人工
   审核批准的 run 0/0/1 定稿，正式 extraction ID 为 13/14/15，结果、
   report 与 raw 指纹绑定完整，重复 finalize 幂等）；
-- **已持久化正式归并批次：4 份**：
+- **已持久化正式归并批次：5 份**：
   - 批次 #1（job_ids=1,2,3，83 条精确覆盖，来源 run-1 + 人工审核决定，
     审核指纹 `51cebada…`、结果指纹 `c5be704e…`，旧候选批次已按
     "不维护旧派生结果"原则删除重建，身份见
@@ -58,6 +58,10 @@ updated_at: 2026-08-14
     `prompt:4.3|schema:3.0`，来源 run-2 + 12 JD 人工裁决，审核指纹
     `7170abe0…`、结果指纹 `47591259…`、**241 canonical**；12 JD 报告
     `data/private/artifacts/12jd-batch/market-report-4.md`）；
+  - 批次 #5（job_ids=1～15，409 条精确覆盖，deepseek-v4-flash
+    `prompt:4.3|schema:3.0`，来源 run-1 + frozen-base 增量人工裁决，审核指纹
+    `165be7ba…`、结果指纹 `17d087e8…`、**329 canonical**；15 JD 报告
+    `data/private/artifacts/15jd-batch/market-report-5.md`）。
 - 真实 JD 原文属于私有输入（Git 忽略；重新克隆仓库的环境不会包含
   这些私有文件）。
 
@@ -72,9 +76,9 @@ updated_at: 2026-08-14
   集中执行审核身份、输入/结果指纹、精确覆盖、幂等冲突和原子写入门禁；
 - `generate-report` 要求归并批次至少绑定审核决定指纹和来源运行标识；结构
   合法但未经定稿的批次拒绝生成报告；
-- 当前批次 #3 的脱敏身份检查通过：job_ids=1～8、211 mappings、174
-  canonical、结果指纹 `d6e80729…`、审核决定指纹 `f93b9394…`、来源
-  run-2，属于可报告正式批次；
+- 当前批次 #5 的脱敏身份检查通过：job_ids=1～15、409 mappings、329
+  canonical、结果指纹 `17d087e8…`、审核决定指纹 `165be7ba…`、来源
+  run-1，属于可报告正式批次；
 - 当前正式抽取来源绑定离线分类：JD 4～15 为 `fully_bound`；JD 1/2/3 的
   数据库记录没有当前定稿合同所需的验收/审核/文件指纹，机器分类为
   `unverified`，继续使用既有历史豁免（见下方 P0-7 关闭记录）。文档保留
