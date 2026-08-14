@@ -399,7 +399,20 @@ updated_at: 2026-08-14
 - 真实只读校验确认 frozen artifact 指纹为 `47591259…e052f`，精确覆盖 IDs
   1～300、241 canonical / 300 mappings；当前数据库 12 JD 子范围 fingerprint 与
   artifact 一致，加入 IDs 301～409 后基底为 350 canonical / 409 mappings，冻结
-  partition 未变化；尚未创建或应用 15 JD review-decisions，未生成 final candidate。
+  partition 未变化；
+- 外部 Reviewer 批准的 23 组增量裁决已写入私有
+  `review-decisions-15jd.json`：45 条 decisions（19 must-link / 26 cannot-link）和
+  1 条“上下文管理”名称 override；66 条审核清单原子候选关系全部显式覆盖为
+  23 must-link / 43 cannot-link，遗漏=0、冲突=0；review-decisions fingerprint 为
+  `165be7ba…c46e8`；
+- 使用 frozen 12 JD final artifact + 15 JD raw run1 离线 apply，生成私有
+  `final-consolidation-15jd-candidate.json` 与脱敏 summary；candidate 为
+  **329 canonical / 409 mappings**，coverage=100%、结构违规=0、最终结果指纹
+  `17d087e8…172c2`；source run1 指纹 `387405b7…e9748` 绑定正确；
+- 独立验证确认 IDs 1～409 精确覆盖，冻结 IDs 1～300 的 partition、canonical ID、
+  canonical name 逐项零差异；45 条裁决全部成立，明确要求独立的 14 个新增项均为
+  singleton；数据库 21 个 any_of 组无错误归并，canonical name / mapping / identity
+  合同全部通过。尚未 finalize，等待外部 Review。
 
 ## 是否达到进入 P0-4 的条件
 
@@ -410,9 +423,9 @@ hard gate=0）与 P0-3B（JD 1/2/3 累计 hard gate=0、人工审计无阻塞
 ## 下一步
 
 1. **8 JD 与 12 JD 批次均已正式关闭**；JD 13～15 extraction 也已完成验收、
-   人工审核和正式定稿，15 JD consolidation acceptance 与增量候选审核已完成。
-   下一步把已批准的增量语义裁决写成 15 JD review-decisions，使用 frozen 12 JD
-   final result + run1 的新增成员离线生成 candidate；IDs 1～300 必须保持不变；
+   人工审核和正式定稿；15 JD consolidation acceptance、增量候选审核和 frozen-base
+   离线 apply 已完成。当前 candidate 为 329 canonical / 409 mappings，等待外部
+   Reviewer 对 decisions、指纹和最终 partition 做正式收口前复核；
 2. order transformation hard gate=1 仍是 finalize 前的独立 blocker；本轮没有处理、
    豁免或绕过。15 JD 为 MVP 固定终点，不扩展到 20；
 3. 每批只执行现有正式主线；付费调用前汇报模型、本批 JD 数量与 ID、
