@@ -218,22 +218,13 @@ def _write_inputs(tmp_path: Path, database_path: Path) -> tuple[Path, Path]:
 
 
 def _run_finalize(monkeypatch, tmp_path, report_path, raw_path, db_path) -> int:
-    import scripts.experiments.p0_4.finalize_consolidation as finalize
+    from app.consolidation_finalization import finalize_consolidation
 
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "finalize_consolidation",
-            "--report",
-            str(report_path),
-            "--raw-output",
-            str(raw_path),
-            "--database-url",
-            f"sqlite:///{db_path.as_posix()}",
-        ],
+    return finalize_consolidation(
+        report_path=report_path,
+        raw_output_path=raw_path,
+        database_url=f"sqlite:///{db_path.as_posix()}",
     )
-    return finalize.main()
 
 
 def test_finalize_persists_reviewed_run(monkeypatch, tmp_path) -> None:
@@ -1110,26 +1101,15 @@ def _run_finalize_with_review(
     monkeypatch, tmp_path, report_path, raw_path, db_path, final_path,
     decisions_path,
 ) -> int:
-    import scripts.experiments.p0_4.finalize_consolidation as finalize
+    from app.consolidation_finalization import finalize_consolidation
 
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "finalize_consolidation",
-            "--report",
-            str(report_path),
-            "--raw-output",
-            str(raw_path),
-            "--final-result",
-            str(final_path),
-            "--review-decisions",
-            str(decisions_path),
-            "--database-url",
-            f"sqlite:///{db_path.as_posix()}",
-        ],
+    return finalize_consolidation(
+        report_path=report_path,
+        raw_output_path=raw_path,
+        final_result_path=final_path,
+        review_decisions_path=decisions_path,
+        database_url=f"sqlite:///{db_path.as_posix()}",
     )
-    return finalize.main()
 
 
 def _decisions_file(tmp_path: Path, fingerprint: str) -> Path:

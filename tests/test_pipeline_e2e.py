@@ -726,7 +726,6 @@ def test_documented_commands_and_paths_exist() -> None:
         "scripts.experiments.p0_3.run_acceptance",
         "scripts.experiments.p0_3.run_real_jd_acceptance",
         "scripts.experiments.p0_4.run_acceptance",
-        "scripts.experiments.p0_4.run_small_scale_precheck",
     ):
         importlib.import_module(module_name)
 

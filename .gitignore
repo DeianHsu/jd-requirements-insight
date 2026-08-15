@@ -40,7 +40,6 @@ dist/
 data/raw_jds/*
 !data/raw_jds/.gitkeep
 data/golden/jd_extractions/*
-!data/golden/jd_extractions/.gitkeep
 data/private/
 
 # 本地生成的分析报告不默认上传（正式对外报告如需入库另行单独放开）。

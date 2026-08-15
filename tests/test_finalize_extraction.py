@@ -14,7 +14,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from datetime import date
 from pathlib import Path
 
@@ -197,24 +196,15 @@ def _write_acceptance(
 def _run_finalize(
     monkeypatch, tmp_path, report_path, raw_path, db_path, job_id="1"
 ) -> int:
-    import scripts.experiments.p0_3.finalize_extraction as finalize
+    from app.extraction_finalization import finalize_extraction
 
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "finalize_extraction",
-            "--report",
-            str(report_path),
-            "--raw-output",
-            str(raw_path),
-            "--job-id",
-            str(job_id),
-            "--database-url",
-            f"sqlite:///{db_path.as_posix()}",
-        ],
+    return finalize_extraction(
+        report_path=report_path,
+        raw_output_path=raw_path,
+        job_id=int(job_id),
+        run_index=0,
+        database_url=f"sqlite:///{db_path.as_posix()}",
     )
-    return finalize.main()
 
 
 def test_finalize_persists_approved_run(monkeypatch, tmp_path) -> None:
@@ -693,7 +683,7 @@ def test_finalize_rolls_back_on_readback_mismatch(monkeypatch, tmp_path) -> None
     job_id = _seed_job(db_path)
     report_path, raw_path = _write_acceptance(tmp_path, db_path, job_id)
 
-    import scripts.experiments.p0_3.finalize_extraction as finalize
+    import app.extraction_finalization as finalize
 
     def wrong_rebuild(extraction):
         # 模拟回读结果与批准结果不一致（requirements 为空）。
@@ -710,22 +700,9 @@ def test_finalize_rolls_back_on_readback_mismatch(monkeypatch, tmp_path) -> None
         )
 
     monkeypatch.setattr(finalize, "rebuild_extraction_result", wrong_rebuild)
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "finalize_extraction",
-            "--report",
-            str(report_path),
-            "--raw-output",
-            str(raw_path),
-            "--job-id",
-            str(job_id),
-            "--database-url",
-            f"sqlite:///{db_path.as_posix()}",
-        ],
-    )
-    assert finalize.main() == 1
+    assert _run_finalize(
+        monkeypatch, tmp_path, report_path, raw_path, db_path, job_id
+    ) == 1
 
     engine = create_database_engine(f"sqlite:///{db_path.as_posix()}")
     try:
@@ -759,7 +736,7 @@ def test_finalize_does_not_initialize_llm(monkeypatch, tmp_path) -> None:
     """定稿机制不引用任何 LLM 客户端或配置加载。"""
     import inspect
 
-    import scripts.experiments.p0_3.finalize_extraction as finalize
+    import app.extraction_finalization as finalize
 
     source = inspect.getsource(finalize)
     assert "OpenAI" not in source
@@ -769,22 +746,9 @@ def test_finalize_does_not_initialize_llm(monkeypatch, tmp_path) -> None:
     db_path = tmp_path / "finalize.db"
     job_id = _seed_job(db_path)
     report_path, raw_path = _write_acceptance(tmp_path, db_path, job_id)
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "finalize_extraction",
-            "--report",
-            str(report_path),
-            "--raw-output",
-            str(raw_path),
-            "--job-id",
-            str(job_id),
-            "--database-url",
-            f"sqlite:///{db_path.as_posix()}",
-        ],
-    )
-    assert finalize.main() == 0
+    assert _run_finalize(
+        monkeypatch, tmp_path, report_path, raw_path, db_path, job_id
+    ) == 0
 
 
 def test_extraction_source_audit_classifies_bound_and_unverified(

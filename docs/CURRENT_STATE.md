@@ -1,465 +1,115 @@
 # 当前状态
 
-updated_at: 2026-08-14
+updated_at: 2026-08-15
 
-## 当前可运行功能
+## 当前范围
 
-| 命令 | 功能 |
+JD Requirements Insight 是本地 CLI 数据分析流水线，唯一主线为：
+
+```text
+JD 导入
+→ v0.10 + Schema V3 两段式抽取与质量验证
+→ 人工审核后定稿 requirement instances
+→ requirement instances 归并为 canonical requirements
+→ 稳定性分析与人工裁决
+→ 归并定稿
+→ 独立 JD 统计、原文证据追溯与 Markdown 报告
+```
+
+项目不提供 Web UI、在线服务、简历匹配、ATS、Agent 编排或 RAG 服务，不维护旧抽取
+版本、旧 Schema、旧数据库结构和已删除的层级关系。
+
+## 当前可运行入口
+
+| 命令 | 当前职责 |
 |---|---|
-| `python -m app.cli import-jds <目录> --use-project-database` | 显式选择项目库并导入 Markdown JD |
-| `python -m app.cli extract-jds ... --candidate-output <私有JSON> --execute` | 付费生成 v0.10 + Schema V3 抽取候选，不写正式抽取表 |
-| `python -m app.cli finalize-extraction ...` | 从已审核验收产物离线定稿正式抽取 |
-| `python -m app.cli consolidate-requirements ... --candidate-output <私有JSON> --execute` | 付费生成归并候选，不写正式归并表 |
-| `python -m app.cli finalize-consolidation ...` | 从已审核验收/裁决产物离线定稿正式归并 |
-| `python -m app.cli list-* ...` | 列出显式数据库目标中的正式记录 |
-| `python -m app.cli audit-extraction-sources ...` | 离线分类正式抽取来源绑定状态 |
-| `python -m app.cli audit-consolidation --consolidation-id N ...` | 显示批次脱敏身份和可报告状态 |
+| `python -m app.cli import-jds <目录> ...` | 显式选择数据库并导入 Markdown JD |
+| `python -m app.cli extract-jds ... --candidate-output <私有JSON> --execute` | 付费生成单次抽取候选，不写正式抽取表 |
+| `python -m scripts.experiments.p0_3.run_acceptance --execute` | 运行规则场景与确定性变形验收 |
+| `python -m scripts.experiments.p0_3.run_real_jd_acceptance ... --execute` | 对真实 JD 运行多次抽取验收 |
+| `python -m app.cli finalize-extraction ...` | 从完整验收产物离线定稿正式抽取 |
+| `python -m app.cli consolidate-requirements ... --candidate-output <私有JSON> --execute` | 付费生成单次归并候选，不写正式归并表 |
+| `python -m scripts.experiments.p0_4.run_acceptance ... --execute` | 运行多次归并、顺序变形和稳定性验收 |
+| `python -m scripts.experiments.p0_4.analyze_stability ...` | 离线生成跨运行稳定性与人工审核材料 |
+| `python -m scripts.experiments.p0_4.apply_review_decisions ...` | 离线应用 must-link、cannot-link、名称 override 与 frozen-base |
+| `python -m app.cli finalize-consolidation ...` | 从已审核裁决产物离线定稿正式归并 |
+| `python -m app.cli audit-extraction-sources ...` | 只读分类正式抽取来源绑定状态 |
+| `python -m app.cli audit-consolidation --consolidation-id N ...` | 只读显示归并批次身份与可报告状态 |
 | `python -m app.cli validate-consolidation --consolidation-id N ...` | 离线验证真实输入覆盖与持久化一致性 |
-| `python -m app.cli generate-report --consolidation-id N ...` | 仅从完成定稿的批次生成 Markdown 报告 |
-| `app/market_analysis.py` | 市场统计（实例数、独立 JD 数、importance 分布、来源证据、稳定排序），供下一阶段 `generate-report` 消费 |
+| `python -m app.cli generate-report --consolidation-id N ...` | 从完整定稿批次生成确定性 Markdown 报告 |
 
-验证脚本（均需 `--execute` 才调用付费模型，`--dry-run` 预检不付费）：
+所有数据库命令必须且只能显式选择 `--database-url` 或 `--use-project-database`；
+付费模型调用必须显式提供 `--execute`。候选 JSON 不属于正式数据，正式业务表只允许
+`finalize-extraction` 和 `finalize-consolidation` 写入。
 
-- P0-3A 规则场景：`python -m scripts.experiments.p0_3.run_acceptance --execute`
-- P0-3B 真实 JD：`python -m scripts.experiments.p0_3.run_real_jd_acceptance --use-project-database --all --execute`
-- P0-4 归并验收：`python -m scripts.experiments.p0_4.run_acceptance
-  --database-url <实验数据库> --raw-output <私有JSON> --execute`
-  （缺省自动选择所选 JD 的唯一共同 v0.10 + Schema V3 抽取版本；查询前
-  验证数据库结构；顺序变形合同违规计入 hard gate）
-- P0-4 小规模预检：`python -m scripts.experiments.p0_4.run_small_scale_precheck
-  --database-url <实验数据库> --execute`
+## 当前正式数据
 
-## 当前数据状态（本地私有，不入库提交）
+本地私有数据库 `data/jd_skill_insight.db` 使用现行六表 Schema，包含 15 份真实 JD。
+真实 JD、数据库、模型原始响应、人工裁决和真实报告均不提交 Git。
 
-- 数据库已使用现行 Schema 创建（六张业务表，无旧表）；
-- 15 份真实 JD 已导入 `data/jd_skill_insight.db`（JD 1～15，重复导入幂等跳过）；
-- JD 9～15 已按现行 Markdown/frontmatter 格式保存并导入，均已完成付费抽取
-  验收、人工审核和正式定稿；
-- **已持久化正式抽取结果：JD 1～15**（deepseek-v4-flash、
-  `prompt:0.10|schema:3.0`，要求数
-  37/30/16/27/26/12/43/20/36/8/24/21/31/64/14，合计 409；JD 4～15
-  为 `fully_bound`，JD 1～3 保持历史 `unverified`；JD 13/14/15 按人工
-  审核批准的 run 0/0/1 定稿，正式 extraction ID 为 13/14/15，结果、
-  report 与 raw 指纹绑定完整，重复 finalize 幂等）；
-- **已持久化正式归并批次：5 份**：
-  - 批次 #1（job_ids=1,2,3，83 条精确覆盖，来源 run-1 + 人工审核决定，
-    审核指纹 `51cebada…`、结果指纹 `c5be704e…`，旧候选批次已按
-    "不维护旧派生结果"原则删除重建，身份见
-    `reports/P0-4/previous-batch-note.json`）；
-  - 批次 #2（job_ids=1,2,3,4,5，136 条精确覆盖，deepseek-v4-flash
-    `prompt:4.3|schema:3.0`，来源 run-0 + 5 JD 审核决定，审核指纹
-    `d7a6942c…`、结果指纹 `edfe2c1a…`；中间候选批次 2（unresolved
-    旧语义）身份见 `reports/P0-4/previous-batch-2-note.json`）；
-  - 批次 #3（job_ids=1,2,3,4,5,6,7,8，211 条精确覆盖，deepseek-v4-flash
-    `prompt:4.3|schema:3.0`，来源 run-2 + 8 JD 人工裁决，审核指纹
-    `f93b9394…`、结果指纹 `d6e80729…`、**174 canonical**；8 JD 报告
-    `data/private/artifacts/8jd-batch/market-report-3.md`）；
-  - 批次 #4（job_ids=1～12，300 条精确覆盖，deepseek-v4-flash
-    `prompt:4.3|schema:3.0`，来源 run-2 + 12 JD 人工裁决，审核指纹
-    `7170abe0…`、结果指纹 `47591259…`、**241 canonical**；12 JD 报告
-    `data/private/artifacts/12jd-batch/market-report-4.md`）；
-  - 批次 #5（job_ids=1～15，409 条精确覆盖，deepseek-v4-flash
-    `prompt:4.3|schema:3.0`，来源 run-1 + frozen-base 增量人工裁决，审核指纹
-    `165be7ba…`、结果指纹 `17d087e8…`、**329 canonical**；15 JD 报告
-    `data/private/artifacts/15jd-batch/market-report-5.md`）。
-- 真实 JD 原文属于私有输入（Git 忽略；重新克隆仓库的环境不会包含
-  这些私有文件）。
+### 抽取
 
-## 正式生产主线
+- JD 1～15 均有 v0.10 + Schema V3 正式抽取；
+- requirement instances 数依次为
+  37/30/16/27/26/12/43/20/36/8/24/21/31/64/14，合计 409；
+- JD 4～15 的验收、审核、批准运行、结果指纹及 report/raw 文件指纹绑定完整，
+  来源状态为 `fully_bound`；
+- JD 1～3 产生于现行绑定合同建立前，机器状态保持 `unverified`，不回填、不重跑，
+  仅由 P0-7 waiver 限域供当前 MVP 消费。
 
-- 所有 CLI 数据库操作必须显式选择 `--database-url` 或
-  `--use-project-database`，二者必须且只能选择一个；只读入口不创建缺失的
-  SQLite 文件；
-- `extract-jds` 与 `consolidate-requirements` 只生成显式私有候选 JSON，
-  不写正式抽取或归并表；
-- `app/extraction_finalization.py` 与 `app/consolidation_finalization.py`
-  集中执行审核身份、输入/结果指纹、精确覆盖、幂等冲突和原子写入门禁；
-- `generate-report` 要求归并批次至少绑定审核决定指纹和来源运行标识；结构
-  合法但未经定稿的批次拒绝生成报告；
-- 当前批次 #5 的脱敏身份检查通过：job_ids=1～15、409 mappings、329
-  canonical、结果指纹 `17d087e8…`、审核决定指纹 `165be7ba…`、来源
-  run-1，属于可报告正式批次；
-- 当前正式抽取来源绑定离线分类：JD 4～15 为 `fully_bound`；JD 1/2/3 的
-  数据库记录没有当前定稿合同所需的验收/审核/文件指纹，机器分类为
-  `unverified`，继续使用既有历史豁免（见下方 P0-7 关闭记录）。文档保留
-  其既有人工审计结论；不回填、不重跑、不将其宣称为 `fully_bound`；
-- **P0-7 已关闭（2026-08-07）**：正式生产机制全部完成；JD 1/2/3 按
-  项目级历史风险接受记录豁免——`reports/P0-7/legacy-extraction-waiver.json`
-  （批准人 project-owner；仅限 JD 1/2/3 历史记录、仅供当前 MVP 归并/
-  统计/报告；新增 JD 禁止使用）。**例外不等于完整来源绑定**：JD 1/2/3
-  分类保持 `unverified`，报告生成继续显式标注 provenance 风险，不因
-  豁免记录隐藏或删除；新增 JD 必须全部走现行正式主线；
-- 合成端到端测试覆盖：模型候选不进入正式表，审核定稿后正式抽取/归并
-  才出现，并可进入市场统计和报告门禁；
-- **接口收口（2026-08-07）**：
-  - 验收产物合同统一（两轮）：run_real_jd_acceptance 的 report/raw
-    共用单一 identity（run_identifier/model/prompt_version/schema_version/
-    job_ids/jd_set_fingerprint/runs/max_attempts）；finalize-extraction
-    校验定稿 JD ∈ 整轮 job_ids 且 report/raw 的 JD 集合、runs、
-    max_attempts、jd_set_fingerprint 一致，批量验收产物可逐 JD 定稿；
-    verify_extraction_source 对新格式同合同（旧格式向后兼容）；
-  - 候选产物定位明确为**单次预检产物**：extract-jds / consolidate-
-    requirements 候选不进入正式链路，finalize 只消费完整验收产物；
-    README/ARCHITECTURE 已同步；
-  - 归并定稿门禁加强：正式归并必须带完整 7 字段审核元数据（审核人/
-    时间/批准运行/批准结果指纹/审核决定指纹/最终结果指纹），
-    final_result_fingerprint 必须与当前持久化结果一致；旧批次 #1/#2
-    已用 backfill_consolidation_metadata.py 离线补齐（不改结果）；
-  - 报告门禁检查上游 provenance：存在 unverified/reviewed_unbound 时实际
-    读取并校验 `reports/P0-7/legacy-extraction-waiver.json` 的结构、
-    `generate-report` 用途和适用 job_ids；只有明确覆盖的 JD 1/2/3 历史
-    记录可继续生成并保留风险标注，waiver 缺失、非法或出现范围外未绑定
-    JD 均拒绝生成；audit-consolidation 输出 extraction_source_status；
-  - E2E 真实化：test_pipeline_e2e 调用 run_real_jd_acceptance /
-    run_acceptance / apply_review_decisions 真实链路（仅人工审核步骤
-    模拟），终点为真实 generate-report 生成 Markdown 报告；不再手工
-    构造中间 JSON；候选命令断言为预检落盘。
+### 归并与报告
 
-## P0-4 要求归并定稿（2026-08-05，离线完成）
+当前最终批次为 consolidation #5：
 
-- **Prompt 基线冻结为 4.3**：比较 4.2（Jaccard 64/50/73/78）与 4.3
-  （60/70/58/43）；4.3 明确修复两个重要错误（56/74 AI/LLM 落地经验
-  漏并、71/72 LangChain/AutoGen 错误合并），因此保留 4.3，不再继续
-  调整 Prompt；
-- **验收**（3 次独立运行 + 顺序变形）：coverage=100%、结构违规=0；
-- **业务影响稳定性分析**（`analyze_stability.py`，4 个观察 = 3 独立
-  + 成功顺序变形）：基于每个观察的完整 canonical 分区（含与核心
-  成员同簇的全部实例），稳定对 5 个（4/4 同簇）、不稳定对 9 个；
-  **市场影响 canonical 1 个**：团队协作族（23/81 核心）完整成员在
-  各观察为 [23,81]→2 JD、[23,53,81]→3、[23,27,81]→2、[23,27,53,81]→3，
-  distinct job count 2↔3 漂移（旧口径只统计核心成员会漏报）；
-  公共报告 `reports/P0-4/stability-report.json`（脱敏）、私有分析
-  `data/private/experiments/P0-4/stability-analysis.json`（含名称/
-  evidence）；
-- **人工裁决**：`data/private/experiments/P0-4/review-decisions.json`
-  （私有，与输入指纹绑定）——must-link 5 组（5-46、11-43、
-  23-27-53-81、17-45、**56-74**），cannot-link 1 组（71-72）；
-  覆盖全部 8 个 unstable 跨 JD 对（56-74 为新口径下确认的漏裁决：
-  4 观察中 3 次合并、仅顺序变形漏并，属模型漏归并）；团队协作
-  canonical 的 JD 覆盖数由裁决确定为 3，不再依赖随机运行；
-- **确定性应用**：`apply_review_decisions.py` 从验收运行 run-1 生成
-  最终结果（canonical=72、mappings=83、coverage=1.0、结构违规=0），
-  记录来源运行指纹与审核决定文件指纹；cannot-link 拆分使用对应
-  requirement 的原始名称，不生成"（拆分）实例N"占位名；
-- **定稿安全门**：`finalize_consolidation.py` 核对报告↔raw 全部身份
-  （input_fingerprint/extractor/model/prompt/schema/selected_job_ids/
-  run_count）、审核绑定（approved_run_index + approved_result_fingerprint
-  + reviewed_at 格式）、精确 ID 覆盖（数量相同但 ID 被替换也拒绝）、
-  占位名称检测、**幂等安全门**（已有批次只有在最终结果指纹、审核
-  决定指纹、来源运行标识全部一致时才允许复用，否则明确拒绝且不修改
-  已有批次；缺审核元数据的旧格式批次拒绝无依据宣称一致）；
-- **离线归并验证**：持久化批次精确 ID 一致性检查通过（83 条全覆盖、
-  无缺失/多余/重复归属/归属冲突）；重复定稿幂等（仅 1 份批次）；
-- **大模块 2（要求归并质量闭环）已关闭**：稳定性分析使用完整
-  canonical 成员、顺序变形纳入业务分析、稳定性判定按实际观察总数；
-  相同身份但不同最终结果会被明确拒绝、真正相同的最终结果保持幂等；
-  cannot-link 不产生占位名称；审核身份与结果链条完整可追溯；尚未
-  进入报告生成模块；
-- **范围声明**：当前证明 5 份 JD（136 条实例）范围的归并质量与
-  3→5 增量稳定性（旧 83 条回归全部保持）；15～20 份 JD 扩展仍需
-  分阶段验证（新增 JD 会引入新的边界对，需重新走稳定性分析 +
-  人工裁决流程）。
+- selected job IDs：1～15；
+- extractor：`deepseek-v4-flash|prompt:0.10|schema:3.0`；
+- consolidator：`deepseek-v4-flash|prompt:4.3|schema:3.0`；
+- 409 requirement instances、329 canonical requirements、409 mappings；
+- coverage=100%，结构违规=0，`reportable=True`；
+- source run=`run-1`；
+- final result fingerprint=`17d087e8…172c2`；
+- review-decisions fingerprint=`165be7ba…c46e8`；
+- 43 个跨 JD 共同要求、286 个单 JD 长尾要求；
+- 覆盖最高为团队协作能力：9/15 JD、10 instances。
 
-## P0-5 市场报告闭环（2026-08-05，离线完成）
+批次 #5 使用已定稿 12 JD 批次作为 frozen base：旧范围 IDs 1～300 的 partition、
+canonical ID 和 canonical name 不允许被增量裁决改写；新增 IDs 301～409 经显式人工
+must-link / cannot-link 与名称 override 后定稿。最终私有报告位于
+`data/private/artifacts/15jd-batch/market-report-5.md`，可由同一批次确定性重建。
 
-- **统计内核**：`app/market_analysis.py` 以独立 JD 数为主口径，同一
-  JD 多实例只计一次 JD 覆盖；importance 双口径（实例级诊断 + JD 级
-  must > preferred > mentioned > unknown 归并）；排序稳定；每个
-  canonical 携带来源 requirement 与 evidence。本模块补充批次选定
-  JD 列表、JD 总数与来源 JD 摘要（报告身份与覆盖率分母）。
-- **报告生成**：`app/market_report.py` 纯函数渲染（无模型、无时间戳、
-  确定性输出，重复生成内容一致）；章节为样本限制声明 / 报告身份 /
-  总览 / 跨 JD 共同要求 / 单 JD 长尾要求 / 证据追溯 / 方法与限制。
-  样本限制声明由当前统计动态生成（不写死批次数字）；证据追溯中每个
-  来源实例形成独立 Markdown 块（主条目独占一行 + detail 缩进层级 +
-  多行 evidence 引用块），特殊字符与多行内容不破坏文档结构；
-- **完整性门禁**：生成前复用归并持久化验证（精确 ID 覆盖、mapping
-  与来源分区一致、occurrence_count、无重复 mapping、无空 canonical、
-  无未知引用——结构合同异常干净拒绝），并检查占位 canonical 名称、
-  requirement → extraction → JD 回查、canonical 记录数与有效统计项
-  一致、批次 selected_job_ids 全部存在、来源 JD 均在批次范围内；
-  任何失败拒绝生成且不覆盖已有报告文件；
-- **CLI**：`generate-report --consolidation-id <id> [--output <path>]`，
-  完全离线（不读 LLM 配置、无 --execute），默认输出
-  `reports/P0-5/market-report-<id>.md`；覆盖已有文件时明确提示。
-- **真实报告**：早期批次报告（批次 #1 的 3 JD 报告、批次 #2 的 5 JD
-  报告）为可再生派生产物，已随产物清理删除（`generate-report` 可随时
-  重建）；当前有效报告为批次 #3 的 8 JD 报告（8 JD、211 实例、
-  174 canonical、团队协作 5/8 JD），属私有材料，与验收/裁决产物一并
-  归档于 `data/private/artifacts/8jd-batch/`。
-- **公开样例**：`examples/market-report-sample.md`（合成数据，可提交），
-  由 `python -m scripts.make_sample_report` 用同一渲染逻辑生成；
-  测试断言样例不含真实 JD、密钥、私有路径与模型原始响应。
-- **大模块 3（市场统计、证据追溯与 Markdown 报告闭环）已关闭**；
-  尚未进入样本扩展阶段。
+## 正式安全门
 
-## 大模块 4：样本扩展（3 → 5）收口（2026-08-06，离线完成）
+- 抽取与归并候选只写显式私有 JSON，不写正式表；
+- extraction finalize 校验整轮 report/raw 身份、运行完整性、人工批准、结果及文件指纹，
+  回读不一致时回滚；
+- consolidation finalize 校验验收身份、批准 source run、审核决定、最终结果、当前数据库
+  输入 fingerprint、精确 requirement ID 覆盖和结构合同；
+- 重复 finalize 只有在身份、内容和审核绑定完全一致时才幂等跳过；
+- 报告入口重新验证归并定稿元数据、最终结果 fingerprint、mapping/partition 一致性、
+  requirement → extraction → JD 回查以及上游抽取 provenance；
+- P0-7 waiver 只允许
+  `reports/P0-7/legacy-extraction-waiver.json` 明确列出的 JD 1～3 用于当前 MVP
+  `generate-report` 链路；新增 JD 不得继承；
+- 旧版本、旧 Schema 或旧数据库结构不兼容、不迁移、不自动删除：备份原始 JD，删除旧
+  派生数据库并使用当前版本重新生成。
 
-- **JD 4、5 资格检查通过**（详细判断见私有记录
-  `data/private/module4-eligibility-check.json`，公共仅脱敏结论）：
-  均属当前目标岗位范围（AI 应用工程 / LLM 应用开发 / Agent 工程），
-  数据完整、要求充分、与 JD 1～3 不重复、构成有效增量样本；
-- **抽取定稿绑定完整验收实验**（`finalize_extraction.py`，无模型）：
-  report 顶层 passed=true 且顶层 hard gate 为空；expected_runs ==
-  successful_runs、failed_runs == 0、raw 中该 JD 运行记录数与
-  expected_runs 完全一致；report 与 raw 共享整轮 acceptance run
-  identity（run_identifier/model/prompt/schema/job_ids），局部运行名
-  跨实验不可混用；身份字段缺失明确拒绝（不填充默认值）；正式抽取
-  记录绑定来源 report/raw 文件指纹（sha256）与整轮验收身份；事务
-  原子性：写入并 flush → 回读重建 → 比较完整结果指纹 → 校验审核
-  元数据 → commit，任何失败 rollback 保持定稿前状态；幂等安全门
-  要求结果、批准运行、来源实验、审核身份与文件指纹全部一致；
-  14 项测试覆盖；
-- **JD 4/5 离线来源复核**：现有正式抽取（ID 4/5）与验收报告、raw
-  逐项核对通过（结果指纹一致、审核元数据完整、文件指纹可复算）；
-- **归并预检分层采样**（`run_small_scale_precheck`）：按 JD 分层配额
-  （每 JD 至少 1 条、其余按实例数比例分配），保证 JD 4、5 进入预检，
-  输出可审计选样摘要；
-- **增量比较以正式批次为真值**（`compare_incremental.py`）：旧范围
-  唯一真值 = 正式批次 #1 的 expected requirement IDs（外部 ID 文件
-  仅作校验输入，不等即拒绝）；新 raw 校验 selected_job_ids、输入
-  指纹、抽取器版本与数据库当前输入一致；每个观察（3 独立 + 顺序
-  变形）执行完整合同 + 精确 ID 校验（coverage=100%、结构违规=0、
-  精确覆盖全部 136 条），任一不合格拒绝分析不静默跳过；singleton
-  吸收统计不依赖实例 ID 大小；私有分析含完整成员、raw_name、来源
-  JD、evidence、pair 保持率、distinct job count、命中旧裁决与变化
-  类型；
-- **unresolved 确定性语义**：unresolved 不再默认拆成全部 singleton，
-  必须显式提供目标分组（`groups`：组内合并、组间拆开）或
-  `preserve_source=true`（保留来源分区），结构不完整拒绝应用；
-- **5 JD 完整归并验收**（136 实例，3 独立 + 顺序变形）：hard gate=0、
-  顺序变形合同通过；Jaccard 39~67% 为诊断指标；
-- **原始模型观察 vs 最终裁决分开比较**：
-  - 模型原始运行（3 独立 + 顺序变形）：旧 14 对中 9 对被拆开、
-    11 个旧 singleton 被吸收、10 个新合并对、5 次新增实例扩员、
-    must-link 破坏 8 个、cannot-link 破坏 0；
-  - 最终人工裁决结果限制到旧 83 条：**旧对 0 破坏、旧 must-link
-    0 破坏、旧 cannot-link 0 破坏、无未授权合并**；10 个新增合并
-    对全部有裁决记录（62-64/65-67/75-77 与 19-20 为同句 any_of
-    等价替代重新分类为 must-link，19-20 由第二轮回归发现补裁决）；
-  - 审核决定 `review-decisions-5jd.json`（指纹 `d7a6942c…`）：旧
-    裁决全部维持，新增 must-link 12 组（含 3 个 any_of 等价替代组
-    与 19-20）；
-- **最终正式批次**：**id=2**（job_ids=1,2,3,4,5、136 条精确覆盖、
-  **97 canonical**、结果指纹 `edfe2c1a…`、审核指纹 `d7a6942c…`、
-  来源 run-0）；与旧批次 id=1 并存（增量基线）；离线一致性验证
-  NONE、重复定稿幂等；中间候选批次（unresolved 旧语义，103
-  canonical、指纹 b87d2563…）已按"不维护错误派生数据"原则保存
-  身份后删除；
-- **5 JD 报告**：批次 #2 报告（5 JD、136 实例、97 canonical、团队
-  协作 4/5 JD、跨 JD 共同 19、长尾 78）为可再生派生产物，已随产物
-  清理删除（`generate-report --consolidation-id 2` 可重建）；
-- **3→5 对比摘要** `reports/P0-4/module4-3to5-comparison.json`：
-  共同要求 9→19、长尾 63→78、团队协作 3/3→4/5；只描述扩展影响，
-  不解释为市场趋势；
-- **是否进入 6～8 JD**：新增抽取无系统性缺陷、验收可原样定稿、
-  归并合同通过、旧核心关系经裁决保持稳定、新增边界可人工审核、
-  输入 136 条成本可接受、报告无结构问题——满足进入条件，但按模块
-  边界**不自动扩展**，等待下一模块指令。
+## 验证与公开复现
 
-## P0-3A 规则场景验收（2026-08-04，已授权付费）
+- 自动化测试使用 fake 客户端、临时数据库和临时文件，不调用付费模型；
+- 正式 CLI E2E 覆盖导入、完整抽取验收、人工审核模拟、抽取定稿、完整归并验收、裁决、
+  归并定稿、统计和报告；
+- `scripts.make_sample_report` 使用虚构数据与正式统计/渲染代码生成
+  `examples/market-report-sample.md`，不读取私有数据；
+- 真实 15 JD 因隐私不公开，公开 clone 不能逐字复算真实报告，但可以复现 Schema、合同、
+  安全门、合成 E2E 和报告形态。
 
-- 环境：deepseek-v4-flash、**Prompt 0.10**、schema 3.0、max_attempts=2、
-  13 场景 × base+transformed 各 1 次；
-- **hard_gate_failures = 0，warnings = 0**，通过；
-- 报告：`reports/P0-3/acceptance-20260804-172141-report.json`（脱敏）；
-- 原始响应：`data/private/experiments/p0_3/acceptance-20260804-172141-raw.json`
-  （私有，仅本地分析）。
+## 已知限制与当前边界
 
-## P0-3B 真实 JD 验收（2026-08-04，已授权付费）
-
-- JD 1（3 次独立抽取，37/39/37 条）：
-  `reports/P0-3/real-jd-acceptance-20260804-174748-report.json`
-- JD 2、3（各 3 次，30/30/28、18/14/14 条）：
-  `reports/P0-3/real-jd-acceptance-20260804-175840-report.json`
-- 三份 JD 累计：**所有运行完整、hard gate = 0**；
-- 人工语义审计：无 evidence 幻觉、无职责泄漏、无隐含技能补出；
-  importance/proficiency 三次运行稳定；any_of 组（"或"替代关系）
-  判定正确；
-- 非阻塞 warning（已分类，不影响 canonical 归并）：
-  1. raw_name 表述漂移（同证据不同命名，如"需求理解"vs"需求理解
-     能力"）→ 归并阶段归一，不影响统计结论；
-  2. 拆分粒度漂移（±2~4 条 instance，如"乐于沉淀规范、模板和可复用
-     能力"1 vs 3 条）→ 影响 instance_count 噪声，canonical 集合不变；
-  3. any_of 组成员漂移（任务调度/流程引擎/规则引擎等）→ 影响 group
-     统计，P0-4 重点观察；
-  4. 边缘 category 漂移（Workflow agent_capability/agent_framework、
-     算法功底 software_engineering/other 等）→ 轻微影响 category 分布。
-
-## JD 9～12 抽取验收与定稿（2026-08-09）
-
-- 配置：deepseek-v4-flash、Prompt 0.10、Schema 3.0、每 JD 3 runs、
-  每阶段 max_attempts=2；12/12 个 run 成功，hard gate=0，验收通过；
-- 各 run 要求数：JD 9 为 36/36/32，JD 10 为 8/8/8，JD 11 为
-  23/24/24，JD 12 为 25/21/19；
-- 6 条非阻塞稳定性 warning：JD 9 三组 run 对分别有 6/4/4 个未匹配项，
-  JD 11 两组为 5/3，JD 12 一组为 12；需在人工审核时重点检查拆分粒度、
-  category 和证据归属，尤其是 JD 12；
-- 验收报告：`reports/P0-3/jd9-12-acceptance-report.json`（本地忽略的脱敏
-  产物）；原始响应：`data/private/experiments/p0_3/real_jd/
-  jd9-12-acceptance-raw.json`（私有）；
-- 验收脚本未记录逐阶段实际尝试次数，因此只能确认理论调用范围为
-  24～48 次，不能从产物精确复算实际请求数；
-- 人工审核批准 JD 9/10/11/12 的 run 0/0/1/1，对应结果指纹
-  `709a21a0…` / `a5627243…` / `bcaed1ce…` / `7ed33394…`；现有
-  `manual_review` 字段记录 project-owner、审核时间和简短结论；
-- 离线 finalize 生成 extraction ID 9/10/11/12，要求数 36/8/24/21，新增
-  89 条，JD 1～12 正式 requirement instances 合计 300；四份来源均为
-  `fully_bound`，批准 run、结果指纹及 report/raw 文件指纹核对通过；
-- 重复 finalize 全部幂等跳过写入；`audit-extraction-sources` 显示 JD 4～12
-  为 `fully_bound`，JD 1～3 按既有历史豁免保持 `unverified`；未执行归并。
-
-## 12 JD 全量归并验收（2026-08-09，已授权付费）
-
-- 输入身份：JD 1～12、300 条正式 requirement instances、抽取版本
-  `deepseek-v4-flash|prompt:0.10|schema:3.0`；归并模型
-  deepseek-v4-flash、Prompt 4.3、Schema 3.0；
-- 3 次独立运行 + 1 次顺序变形全部完成，实际 attempts 为 1/2/1/2，合计
-  6 次模型请求；所有结果 coverage=100%、300 mappings、结构违规=0，
-  hard gate=0；
-- 独立运行 canonical 数为 183/211/209；positive-pair Jaccard 为
-  run0-1 51.41%、run0-2 52.84%、run1-2 85.12%；顺序变形 canonical=238，
-  与 run0 Jaccard=32.30%；3 条稳定性 warning 均需后续分析和人工裁决；
-- 脱敏报告 `reports/P0-4/12jd-acceptance-report.json`，私有原始结果
-  `data/private/experiments/P0-4/12jd-acceptance-raw.json`；报告/raw SHA-256
-  为 `72ce842d…` / `6fd66310…`；
-- 验收未写正式归并表：当前仍只有批次 #1～#3，尚未执行人工裁决或
-  finalize consolidation。
-
-## 12 JD 离线稳定性分析（2026-08-10）
-
-- 使用现有 `analyze_stability.py`，输入为 12 JD acceptance raw 与当前正式
-  项目数据库；selected_job_ids 精确为 1～12、requirement instances=300，
-  raw/数据库 input fingerprint 均为 `51928ae4…d52989b`；
-- 覆盖全部 4 个实际观察（3 independent + 1 successful order
-  transformation）：稳定对 63、不稳定对 230、不稳定跨 JD 对 151；
-- 形成 27 个稳定跨 JD 核心簇，其中 14 个 market-impact canonical 的
-  distinct job count 会漂移，13 个 edge-only canonical 的 job count 稳定；
-- 最大市场影响边界：沟通能力 3～8 JD、问题分析 2～7、团队协作 4～8、
-  问题解决 3～7、大模型应用开发 2～4；这些边界可能改变共同要求覆盖率及
-  排名，人工审核优先级最高；
-- 8 JD 历史 11 条 adjudication 中，6 条在至少一个原始观察被破坏：17/45
-  must-link（4/4）、56/74 must-link（3/4）、团队协作族
-  23/27/53/81/110/154（3/4）、3/38 cannot-link（3/4）、25/142
-  must-link（1/4）、22/153 与 105 分组（1/4）；仅分析风险，未修改历史决定；
-- public report：`reports/P0-4/12jd-stability-report.json`；private analysis：
-  `data/private/experiments/P0-4/12jd-stability-analysis.json`（包含名称、
-  raw_name、evidence 和逐观察成员）；两者均为本地 Git 忽略产物；
-- 正式数据库仍只有 consolidation #1～#3；未选择 source run，未生成或应用
-  裁决，未执行 finalize consolidation。身份、观察和产物均完整，不阻止进入
-  外部人工语义 Review。
-
-## 12 JD 正式归并与报告（2026-08-14，已关闭）
-
-- 外部语义 Review 选择 independent run2（`run_index=2`，结果指纹
-  `e091f2cc…ec6a5`）并批准 241 canonical 的 final candidate；当前 12 JD
-  私有 `review-decisions-12jd.json` 指纹为 `7170abe0…8c2a6`；
-- `apply_review_decisions.py` 新增最小的 `canonical_name_overrides` 合同：在
-  所有分区决定完成后，以最终 canonical 的完整 requirement IDs 精确定位并
-  改名，不改变 partition；非法、重复或无法定位的 override 明确失败，最终
-  canonical 名称唯一性仍由原合同强制；
-- 9 个冻结名称 override 消除了 Python/C++/Java/LangChain 同名冲突；审核后的
-  candidate 已通过正式 `finalize-consolidation` 定稿为 **批次 #4**，范围
-  JD1～12、300 instances、241 canonical、300 mappings，最终结果指纹
-  `47591259…e052f`；重复 finalize 幂等跳过；
-- `audit-consolidation` 显示 source run、review-decisions 和 final result 指纹
-  完整绑定且 `reportable=True`；`validate-consolidation` 为 coverage=100%、
-  结构违规=0、300 requirement IDs 精确覆盖；
-- 抽取 provenance 保持 JD1～3=`unverified`、JD4～12=`fully_bound`；
-  `generate-report` 实际校验 P0-7 waiver 后生成私有报告
-  `data/private/artifacts/12jd-batch/market-report-4.md`，保留历史风险提示；
-- 报告身份为 12 JD / 300 instances / 241 canonical；31 个跨 JD 共同要求、
-  210 个单 JD 长尾；最高频为团队协作能力（8/12 JD、9 instances）。
-
-## JD 13～15 抽取验收与定稿（2026-08-14）
-
-- 配置：deepseek-v4-flash、Prompt 0.10、Schema 3.0、每 JD 3 runs、每阶段
-  max_attempts=2；9/9 runs 成功，hard gate=0；
-- 外部人工 Review 批准 JD 13/14/15 的 run 0/0/1，对应结果指纹
-  `7860dbe1…` / `3dcbcfd9…` / `13c2ece5…`；
-- 离线 finalize 生成 extraction ID 13/14/15，要求数 31/64/14，新增 109 条；
-  JD 1～15 正式 requirement instances 合计 409；
-- 三份来源均为 `fully_bound`，批准 run、结果指纹、report/raw 文件指纹、
-  Prompt/Schema/model 均核对通过；重复 finalize 全部幂等跳过写入；
-  `audit-extraction-sources` 与逐 JD `verify_extraction_source` 均通过；
-- 本批未调用额外模型、未启动 15 JD consolidation。
-
-## 15 JD frozen-base 审核与正式收口（2026-08-14）
-
-- 15 JD consolidation acceptance 已完成 3 个 independent runs；人工选择
-  run1 作为 source candidate，但其 IDs 1～300 投影只有 229 个 cluster，不能
-  代替已经关闭的 12 JD final partition（241 canonical / 300 mappings），因此正式
-  candidate 使用 frozen-base 增量 apply，禁止重新改写旧分区；
-- `apply_review_decisions.py` 增加可选 `--frozen-base`：直接继承较小范围的完整
-  final consolidation，把其余 requirement 初始化为增量 singleton，再复用现有
-  must-link / cannot-link / canonical name override；不重放旧 review decisions；
-- frozen base 必须由当前 review-decisions 显式绑定 input/result/review-decisions
-  fingerprints、selected job IDs、精确 requirement IDs、canonical/mapping 数量；
-  同时校验完整 final metadata、内容 fingerprint、当前数据库子范围 fingerprint、
-  exact identity、coverage 与结构合同。不完整或身份不匹配均拒绝；
-- 增量裁决不得包含两个 frozen requirement、不得提交 pure old↔old decision，运行时
-  也拒绝通过共享新成员间接合并两个 frozen canonicals。最终逐 canonical 校验冻结
-  成员、owner、ID 与名称完全不变，最终名称唯一性及现有结果合同仍严格执行；
-- 真实只读校验确认 frozen artifact 指纹为 `47591259…e052f`，精确覆盖 IDs
-  1～300、241 canonical / 300 mappings；当前数据库 12 JD 子范围 fingerprint 与
-  artifact 一致，加入 IDs 301～409 后基底为 350 canonical / 409 mappings，冻结
-  partition 未变化；
-- 外部 Reviewer 批准的 23 组增量裁决已写入私有
-  `review-decisions-15jd.json`：45 条 decisions（19 must-link / 26 cannot-link）和
-  1 条“上下文管理”名称 override；66 条审核清单原子候选关系全部显式覆盖为
-  23 must-link / 43 cannot-link，遗漏=0、冲突=0；review-decisions fingerprint 为
-  `165be7ba…c46e8`；
-- 使用 frozen 12 JD final artifact + 15 JD raw run1 离线 apply，生成私有
-  `final-consolidation-15jd-candidate.json` 与脱敏 summary；candidate 为
-  **329 canonical / 409 mappings**，coverage=100%、结构违规=0、最终结果指纹
-  `17d087e8…172c2`；source run1 指纹 `387405b7…e9748` 绑定正确；
-- 独立验证确认 IDs 1～409 精确覆盖，冻结 IDs 1～300 的 partition、canonical ID、
-  canonical name 逐项零差异；45 条裁决全部成立，明确要求独立的 14 个新增项均为
-  singleton；数据库 21 个 any_of 组无错误归并，canonical name / mapping / identity
-  合同全部通过；candidate 已通过外部 Review；
-- `run_acceptance.py` 已增加 order-only resume：复用原 acceptance report/raw 中的三个
-  successful independent runs，只重试固定种子 `20260803` 的 order transformation。
-  入口在创建模型客户端前强校验当前数据库输入身份、JD 范围、模型/Prompt/Schema、
-  source run 结果与指纹、精确覆盖及结构合同；仅接受单一 order execution hard gate，
-  且新 report/raw 不得覆盖原产物。execution/coverage/结构失败仍为 hard gate，低
-  Jaccard 仍只作 warning；真实 15 JD 原产物身份校验与正式重试均已通过；
-- 现有 `manual_cluster_review` 字段足以绑定 reviewer、审核时间、批准 run、批准结果
-  fingerprint、结论与备注，无需扩展数据模型；
-- 经显式付费授权执行 order-only resume 成功：新 order result 为 317 canonical /
-  409 mappings，coverage=100%、结构违规=0、exact identity 通过，结果指纹
-  `22066a2e…284c1`；order vs run0 Jaccard=28.85%，按合同只记 warning，新的
-  acceptance hard gate=0。三个 independent runs 逐项未变，原 report/raw 未覆盖；
-  新 report/raw 分别为 `reports/P0-4/15jd-acceptance-order-retry-report.json` 与
-  `data/private/experiments/P0-4/15jd-acceptance-order-retry-raw.json`；
-- 外部 Review 已写入新 report 的现有人工审核字段，批准 run1（source fingerprint
-  `387405b7…e9748`）；已审核 final candidate 未修改。正式 `finalize-consolidation`
-  生成 **批次 #5**：JD1～15、409 instances、329 canonical / 409 mappings，final
-  fingerprint `17d087e8…172c2`、review-decisions fingerprint `165be7ba…c46e8`；
-- `audit-consolidation` 为 `reportable=True`，`validate-consolidation` 为 coverage=100%、
-  结构违规=0；相同 finalize 命令复跑命中 #5 并幂等跳过；
-- `generate-report` 经 P0-7 waiver 门禁生成私有报告
-  `data/private/artifacts/15jd-batch/market-report-5.md`，并保留 JD1～3 `unverified`、
-  “豁免不等于 fully_bound”及可追溯性限制提示。报告统计为 15 JD、409 instances、
-  329 canonical、43 个跨 JD 共同要求、286 个单 JD 长尾；团队协作能力覆盖最高
-  （9/15 JD，10 instances）。**P0-8 已正式关闭。**
-
-## 是否达到进入 P0-4 的条件
-
-**是。** Prompt 0.10 + Schema V3 的抽取结果已通过 P0-3A（13 场景
-hard gate=0）与 P0-3B（JD 1/2/3 累计 hard gate=0、人工审计无阻塞
-问题），正式抽取数据已持久化且幂等。剩余非阻塞漂移作为 P0-4 观察点。
-
-## 下一步
-
-1. **P0-8 已正式关闭**：8 JD、12 JD 与最终 15 JD 批次均完成抽取、验收、人工审核、
-   正式定稿和报告；最终批次为 consolidation #5（329 canonical / 409 mappings）。
-2. v0.1 MVP portfolio package 已通过 Review；版本号为 `0.1.0`，发布标记为
-   annotated tag `v0.1.0-mvp`。15 JD 是 MVP 固定终点，不扩展到 20。
-3. v0.1.0-mvp 已收口，当前没有获授权的后续实施阶段；新增工作须单独确认范围。
-
-## 付费与私有数据依赖
-
-- 付费：抽取（v0.10 两段式）与归并（单次 LLM 聚类）调用 LLM，必须
-  显式 `--execute`；`validate-consolidation`、合同检查、变形测试不付费。
-- 私有：真实 JD（`data/raw_jds/`）、数据库、原始模型响应
-  （`data/private/`）与验收原始结果不提交 Git。
+- 15 JD 只证明 MVP 工程闭环，不代表行业排名或完整市场结论；
+- 归并 positive-pair Jaccard 最低观察到 28.85%，属于诊断指标；正式结果依靠人工裁决和
+  frozen-base 保证，不应把单次模型运行直接解释为市场事实；
+- JD 1～3 缺少现行机器可验证 provenance，waiver 不等于 `fully_bound`，报告必须保留
+  风险提示；
+- 来源状态 `reviewed_unbound` 的命名仍偏宽，只是非阻塞展示问题；
+- 15 JD 是 v0.1 MVP 固定终点，版本为 `0.1.0`，release tag 为 `v0.1.0-mvp`；
+- 当前没有获授权的后续实施阶段。新增工作应单独确认范围，新 JD 必须全部走现行正式主线。
