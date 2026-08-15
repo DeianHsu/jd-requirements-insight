@@ -4,13 +4,21 @@
 
 ```text
 JD 导入
-→ v0.10 + Schema V3 结构化抽取
-→ 抽取质量验证
-→ requirement instance 归并为 canonical requirement
+→ v0.10 + Schema V3 抽取 acceptance（多次运行 + 合同检查）
+→ 人工审核 → finalize-extraction
+→ requirement instance 归并 acceptance（多次运行 + 稳定性分析）
+→ 人工裁决 → finalize-consolidation
 → 独立 JD 统计
 → 原文证据追溯
 → Markdown 市场分析报告
 ```
+
+`extract-jds --candidate-output` 与 `consolidate-requirements
+--candidate-output` 只生成可选的单次私有预检，不是正式链必经步骤，产物
+不作为 finalize 输入，也不得写入正式抽取/归并表。
+
+v0.1 已完成并冻结。默认只维护当前闭环、修复明确缺陷并保持可复现性；
+未经用户明确授权，不扩充样本、不新增功能、不进入下一实施阶段。
 
 不维护已淘汰、冻结或不服务当前 MVP 的功能；不维护旧方案与历史兼容
 （旧抽取版本、旧 Schema、旧数据库结构、层级关系）。历史由 Git 保存。
@@ -20,10 +28,9 @@ JD 导入
 ```text
 AGENTS.md
 → README.md
-→ docs/PROJECT_PLAN.md
-→ docs/ARCHITECTURE.md
 → docs/CURRENT_STATE.md
-→ 根据任务读取 GLOSSARY、annotation 或对应代码
+→ docs/ARCHITECTURE.md
+→ 根据任务读取 PROJECT_PLAN、GLOSSARY、annotation 或对应代码
 ```
 
 涉及完整项目检查、生产验收、模块关闭、正式数据发布时，必须按
@@ -32,8 +39,9 @@ AGENTS.md「生产验收协议」小节选择审计等级执行（普通提交�
 ## 事实优先级
 
 1. 当前代码、测试、数据结构和 Git 状态；
-2. `docs/CURRENT_STATE.md` 与 `docs/PROJECT_PLAN.md` 的当前状态；
-3. 聊天记忆只作辅助，不得覆盖正式文件。
+2. `docs/CURRENT_STATE.md` 的当前项目事实；
+3. `docs/PROJECT_PLAN.md` 的 v0.1 阶段关闭决策；
+4. 聊天记忆只作辅助，不得覆盖正式文件。
 
 ## 变更约束
 
@@ -45,9 +53,10 @@ AGENTS.md「生产验收协议」小节选择审计等级执行（普通提交�
 4. 文档只保存当前有效事实，不记录迭代过程；不新增 DEC/历史归档来
    记录清理，不用 deprecated/legacy/experimental 标记代替删除。
 
-## MVP 轻量开发原则
+## v0.1 冻结维护原则
 
-1. 当前以完成可演示、可评测的 MVP 闭环为最高优先级。
+1. v0.1 MVP 闭环已经完成；当前默认目标是保持其正确、可演示、可评测和
+   可复现，不把维护任务解释为继续建设产品。
 2. 默认采用满足当前需求的最小实现，不提前建设通用框架。
 3. 一次任务可以处理一组紧密相关的问题，但不得扩展到无直接关系的邻近问题。
 4. 只有真实数据、现有测试或明确需求证明必要时，才新增抽象、兼容逻辑、配置、脚本或验证规则。
