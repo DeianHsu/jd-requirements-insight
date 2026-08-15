@@ -739,8 +739,9 @@ def test_documented_commands_and_paths_exist() -> None:
     assert Path("docs/ARCHITECTURE.md").exists()
     assert Path("docs/CURRENT_STATE.md").exists()
     assert Path("docs/GLOSSARY.md").exists()
-    assert Path("docs/annotation/REQUIREMENTS.md").exists()
-    assert Path("docs/annotation/VALIDATION.md").exists()
+    assert Path("docs/EXTRACTION_RULES.md").exists()
+    assert Path("docs/VALIDATION.md").exists()
+    assert not Path("docs/annotation").exists()
 
     # 关键示例命令包含脚本要求的必要参数（文档合同）。
     readme = Path("README.md").read_text(encoding="utf-8")
@@ -773,8 +774,6 @@ def test_documented_commands_and_paths_exist() -> None:
     current_state = Path("docs/CURRENT_STATE.md").read_text(encoding="utf-8")
     assert "单次" in current_state
     assert "不作为 finalize" in current_state
-    validation = Path("docs/annotation/VALIDATION.md").read_text(
-        encoding="utf-8"
-    )
+    validation = Path("docs/VALIDATION.md").read_text(encoding="utf-8")
     assert "--use-project-database" in validation
     assert "--database-url" in validation

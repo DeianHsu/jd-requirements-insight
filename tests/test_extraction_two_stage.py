@@ -146,7 +146,9 @@ def test_judge_prompt_uses_three_level_proficiency() -> None:
 
 
 def test_judge_prompt_references_stable_rule_ids() -> None:
-    """判断段 Prompt 引用 P0-1 稳定规则 ID，便于测试与审计追溯。"""
+    """判断段 Prompt 引用当前稳定规则 ID 与文档，便于测试和审计追溯。"""
+    assert "docs/EXTRACTION_RULES.md" in JUDGE_SYSTEM_PROMPT
+    assert "docs/VALIDATION.md" in JUDGE_SYSTEM_PROMPT
     for rule_id in (
         "RESP-01",
         "RESP-02",

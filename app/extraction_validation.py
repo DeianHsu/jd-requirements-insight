@@ -1,4 +1,4 @@
-"""抽取验证模块：确定性合同检查、运行间比较与验收报告（验证协议见 docs/annotation/VALIDATION.md）。
+"""抽取验证模块：确定性合同检查、运行间比较与验收报告（协议见 docs/VALIDATION.md）。
 
 本模块只做离线、确定性验证和运行间比较，不调用外部模型，也不读取人工
 完整答案决定通过或失败。规则判定复用 `app/extraction_two_stage.py` 与

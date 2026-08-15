@@ -170,6 +170,5 @@ uv run ruff check app scripts tests
 | [CURRENT_STATE](docs/CURRENT_STATE.md) | 当前软件基线、安全门和公开/私有边界 |
 | [ARCHITECTURE](docs/ARCHITECTURE.md) | 正式链、可选预检、模块边界和设计理由 |
 | [GLOSSARY](docs/GLOSSARY.md) | 核心业务术语与流水线不变量 |
-| [REQUIREMENTS](docs/annotation/REQUIREMENTS.md) | 岗位要求、逻辑组和字段规则 |
-| [RESPONSIBILITIES](docs/annotation/RESPONSIBILITIES.md) | 职责边界规则 |
-| [VALIDATION](docs/annotation/VALIDATION.md) | 证据、覆盖、抽取与归并验证合同 |
+| [EXTRACTION_RULES](docs/EXTRACTION_RULES.md) | 职责边界、岗位要求、逻辑组和字段规则 |
+| [VALIDATION](docs/VALIDATION.md) | 证据、覆盖、抽取与归并验收合同 |

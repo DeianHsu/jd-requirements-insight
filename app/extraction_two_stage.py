@@ -48,7 +48,7 @@ DISCOVERY_SYSTEM_PROMPT = """你是招聘JD结构化分析的第一阶段：全�
 5. 严格按照用户提供的JSON结构输出一个JSON对象，不要输出Markdown代码块或额外说明。"""
 
 # 判断段 Prompt：只做局部语义判断，直接输出当前完整抽取数据合同。
-JUDGE_SYSTEM_PROMPT = """你是招聘JD结构化分析的第二阶段：精细判断。输入是第一阶段的候选块列表（每个块含原文连续证据与归属），请对每个候选块做以下判断并输出完整抽取数据合同JSON。规则编号与 P0-1 语义决策规则对应（docs/annotation/）。
+JUDGE_SYSTEM_PROMPT = """你是招聘JD结构化分析的第二阶段：精细判断。输入是第一阶段的候选块列表（每个块含原文连续证据与归属），请对每个候选块做以下判断并输出完整抽取数据合同JSON。规则编号与当前抽取和验证合同对应（docs/EXTRACTION_RULES.md、docs/VALIDATION.md）。
 
 【职责边界（RESP-01～RESP-02）】
 1. RESP-01：responsibility 块中的工作内容不是岗位要求，不得从 responsibility 块抽取 requirement；职责中出现的技术只在JD明确要求候选人掌握时才成为要求（否则至多mentioned）。

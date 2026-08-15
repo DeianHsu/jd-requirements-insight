@@ -1,7 +1,20 @@
-# 岗位要求规则（REQ / GROUP / FIELD）
+# 岗位要求抽取规则（RESP / REQ / GROUP / FIELD）
 
-> 只在标注候选人条件、检查要求原子化或解释抽取数据合同 V3 字段时读取本文。
-> 规则 ID：`REQ-01`～`REQ-08`、`GROUP-01`～`GROUP-03`、`FIELD-01`～`FIELD-05`。修改规则语义必须同步更新本文件、Prompt 引用和测试。
+> 只在区分职责与候选人条件、检查要求原子化或解释抽取数据合同 V3 字段时读取本文。
+> 规则 ID：`RESP-01`～`RESP-02`、`REQ-01`～`REQ-08`、
+> `GROUP-01`～`GROUP-03`、`FIELD-01`～`FIELD-05`。修改规则语义必须同步更新
+> 本文件、Prompt 引用和测试。
+
+## RESP-01 职责不是岗位要求
+
+responsibility 块中的工作内容是候选人入职后需要完成的工作，不是岗位要求：不得从
+responsibility 块抽取 requirement。职责中出现的技术只在 JD 明确要求候选人掌握时
+才成为要求（否则至多 `mentioned`）。
+
+## RESP-02 mixed 块分离
+
+mixed 块先分离工作部分与条件部分，只把候选人条件部分抽取为 requirement，工作内容
+不进入 requirement。
 
 ## REQ-01 要求边界
 
@@ -163,4 +176,4 @@ category 枚举是 AI/LLM/Agent/RAG 岗位领域配置，不是领域无关核�
 
 不确定的字段使用 `unknown` 或 `null`，不得猜测。
 
-证据与验证协议规则见 [VALIDATION.md](VALIDATION.md)，职责边界见 [RESPONSIBILITIES.md](RESPONSIBILITIES.md)。
+证据、覆盖与验收规则见 [VALIDATION.md](VALIDATION.md)。

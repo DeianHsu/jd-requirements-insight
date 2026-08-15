@@ -77,4 +77,5 @@ LLM 抽取与归并仍存在随机性，正式结果必须经过验收和人工�
 - 归并验收与裁决：`scripts.experiments.p0_4.run_acceptance`、
   `analyze_stability`、`apply_review_decisions`；
 - 模块边界：[ARCHITECTURE.md](ARCHITECTURE.md)；
-- 验证合同：[annotation/VALIDATION.md](annotation/VALIDATION.md)。
+- 抽取规则：[EXTRACTION_RULES.md](EXTRACTION_RULES.md)；
+- 验证合同：[VALIDATION.md](VALIDATION.md)。

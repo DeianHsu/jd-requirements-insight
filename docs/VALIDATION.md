@@ -51,24 +51,24 @@ RAG       → 有RAG项目经验者优先
 | 多次运行稳定性 | 相同输入独立运行多次，以候选块为锚点报告块对齐与漂移；只作 warning | 正式（warning） | 验证脚本 |
 | 人工规则审计 | 人工按规则 ID 检查输出是否违反规则、证据是否支持结论，记录 `rule_id`/`violation`/`severity`/`evidence_reference`/`reason`/`recommended_action` | 正式（人工职责） | 审计报告 |
 
-## 4. 抽取验证入口
+## 4. 抽取 acceptance
 
-- **P0-3A 规则场景验证**（`scripts/experiments/p0_3/run_acceptance.py`）：
+- **规则场景 acceptance**（`scripts/experiments/p0_3/run_acceptance.py`）：
   所有场景的 base 与 transformed 各运行一次；少量高风险场景可用
   `--scenarios` 子集与 `--runs` 显式重复；不建立复杂批准逻辑。
   报告保留：model、prompt_version、schema_version、scenario fingerprint、
   run count、contract failures、transformation failures、stability
   warnings、manual review notes。
-- **P0-3B 真实 JD 验证**（`scripts/experiments/p0_3/run_real_jd_acceptance.py`）：
+- **真实 JD acceptance**（`scripts/experiments/p0_3/run_real_jd_acceptance.py`）：
   显式选择数据库（`--use-project-database` 或 `--database-url`）与 JD、
   每份 JD 支持重复运行、Schema/coverage/evidence/逻辑组合同检查、项目
   数量与字段漂移、异常项索引供人工复核。
   人工直接根据验证报告判断当前抽取方案是否可以进入下游，不开发额外
   批准系统。
 
-## 5. P0-4 归并验证
+## 5. 归并 acceptance
 
-P0-4 只表达 requirement instance → canonical requirement → unique mapping。
+归并 acceptance 只处理 requirement instance → canonical requirement → unique mapping。
 归并模型一次输出 canonical requirements 和来源实例分区（模型只负责决定
 cluster）；mappings 由确定性代码从来源分区生成并持久化。
 保留真正影响统计可信度的检查：
@@ -89,8 +89,7 @@ order transformation result、manual cluster review notes。顺序变形的
 合同违规（coverage/结构违规）与聚类失败计入 hard gate；jaccard 低于
 阈值只作 warning。
 
-## 6. 非当前数据处理
+## 6. 当前合同适用范围
 
-当前只支持 v0.10 + Schema V3 与现行数据库结构。检测到非当前版本或结构时
-明确拒绝：备份原始 JD，删除旧派生数据库并按当前流程重新生成。不迁移、
-不兼容，也不保留已删除功能的入口。
+仅接受 v0.10 + Schema V3 与现行数据库结构；其他版本或结构明确拒绝，不迁移、
+不兼容。

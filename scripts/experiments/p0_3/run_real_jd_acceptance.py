@@ -1,4 +1,4 @@
-"""P0-3 真实 JD 验证脚本（Track B；协议见 docs/annotation/VALIDATION.md）。
+"""P0-3 真实 JD 验证脚本（Track B；协议见 docs/VALIDATION.md）。
 
 与 Track A（`run_acceptance.py`，合成规则场景）分离的两条独立轨道。
 抽取配置为当前唯一方案 v0.10 + Schema V3（三级熟练度）。默认不调用

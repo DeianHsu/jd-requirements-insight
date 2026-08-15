@@ -1,4 +1,4 @@
-"""验证规则场景数据文件与确定性变换（协议见 docs/annotation/VALIDATION.md）。
+"""验证规则场景数据文件与确定性变换（协议见 docs/VALIDATION.md）。
 
 场景文件不保存完整 expected extraction；base_input 必须领域中性，不得
 包含真实 JD 内容或具体领域技术词（CASE-006 防泄漏规则）。变换返回
