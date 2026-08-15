@@ -1,14 +1,14 @@
 # app 目录说明
 
 该目录保存应用的功能代码，当前主线为：
-JD 导入 → v0.10 + Schema V3 结构化抽取 → 抽取质量验证 → 要求事实归并 →
-市场统计 → 证据追溯 → Markdown 报告。
+JD 导入 → 抽取 acceptance/review/finalize → 归并 acceptance/review/finalize →
+市场统计 → 证据追溯 → Markdown 报告。单次 candidate 是可选预检，不进入正式链。
 
 | 文件 | 职责 |
 |---|---|
 | `cli.py` | 显式数据库目标的候选、定稿、审计、验证与报告 CLI |
 | `config.py` | 从环境变量或 `.env` 读取并校验 LLM 配置 |
-| `candidates.py` | 生成抽取/归并单次预检候选 JSON（不进入正式定稿链路，不写正式业务表） |
+| `candidates.py` | 生成可选的抽取/归并单次预检 JSON；不作为 finalize 输入，不写正式业务表 |
 | `ingestion.py` | 解析 Markdown + front matter，按内容哈希去重并逐文件事务导入 |
 | `schemas.py` | Pydantic 定义 JD 输入与抽取数据合同（Schema V3 三级熟练度） |
 | `extraction.py` | 结构化抽取、证据校验与有限重试；不写正式业务表 |

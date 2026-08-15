@@ -1,15 +1,16 @@
 # scripts 目录说明
 
-该目录保存开发期实验编排和维护脚本。正式候选生成、定稿合同、审计和报告
-入口位于 `app/`；本目录负责多次运行、变形比较、稳定性分析和人工审核材料
-准备，不直接定义正式数据语义。
+正式数据语义、candidate 生成、finalize、审计和报告入口位于 `app/`。本目录只保留
+v0.1 当前验收/裁决编排与公开 sample 生成器。
 
-## 目录职责
+| 脚本 | 职责 | 数据库与付费边界 |
+|---|---|---|
+| `experiments/p0_3/run_acceptance.py` | 规则场景与确定性变形验收 | 无数据库；真实模型运行需 `--execute` |
+| `experiments/p0_3/run_real_jd_acceptance.py` | 真实 JD 多次抽取验收 | 必选 `--use-project-database` 或 `--database-url`，必选范围；付费运行需 `--execute`，raw 写私有目录 |
+| `experiments/p0_4/run_acceptance.py` | 归并多次运行、顺序变形与验收报告 | 必填 `--database-url`；付费运行需 `--execute` 和 `--raw-output`；不传 `--job-ids` 即全部 |
+| `experiments/p0_4/analyze_stability.py` | 离线生成稳定性与人工审核材料 | 必填 `--database-url`、raw/report/analysis 输出；不调用模型 |
+| `experiments/p0_4/apply_review_decisions.py` | 离线应用 must-link、cannot-link、名称 override 与 frozen base | 必填 `--database-url`、审核输入与输出；不调用模型 |
+| `make_sample_report.py` | 用虚构数据生成公开 Markdown sample | 临时 SQLite；不调用模型、不读取私有数据 |
 
-| 路径 | 职责 |
-|---|---|
-| `__init__.py` | 标记维护脚本包，导入时不执行操作。 |
-| `experiments/` | 按 P0 功能点保存可复现的验收、稳定性和裁决编排脚本。 |
-
-所有访问数据库的脚本必须显式传入 `--database-url`；所有付费调用必须同时
-显式传入 `--execute` 和私有原始结果输出路径。
+P0-4 脚本只接受显式数据库 URL，实验时优先使用正式数据库的临时副本。任何含完整 JD、
+evidence 或模型响应的 raw 产物必须写入 Git 忽略的私有路径。

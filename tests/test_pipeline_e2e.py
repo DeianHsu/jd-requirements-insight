@@ -758,11 +758,19 @@ def test_documented_commands_and_paths_exist() -> None:
         "run_real_jd_acceptance --use-project-database --all --execute"
         in normalized_readme
     )
-    current_state = Path("docs/CURRENT_STATE.md").read_text(encoding="utf-8")
     assert (
-        "run_real_jd_acceptance --use-project-database --all --execute"
-        in current_state
+        "scripts.experiments.p0_4.run_acceptance --database-url"
+        in normalized_readme
     )
+    assert "--raw-output data/private/consolidation-acceptance-raw.json" in (
+        normalized_readme
+    )
+    assert "run_acceptance --use-project-database --all --execute" not in (
+        normalized_readme
+    )
+    current_state = Path("docs/CURRENT_STATE.md").read_text(encoding="utf-8")
+    assert "单次" in current_state
+    assert "不作为 finalize" in current_state
     validation = Path("docs/annotation/VALIDATION.md").read_text(
         encoding="utf-8"
     )
