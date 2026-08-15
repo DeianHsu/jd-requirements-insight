@@ -29,6 +29,15 @@ JD 导入
 - 自动化测试使用 fake 客户端、临时文件和临时数据库，不调用付费模型；
 - 公开 sample 使用虚构数据与正式统计、渲染代码生成。
 
+### 匿名工程验收事实
+
+- 私有验收范围为 15 份真实 JD；
+- 正式结果包含 409 requirement instances 和 329 canonical requirements；
+- consolidation coverage 为 100%，structural violations 为 0，最终结果满足报告门禁；
+- 正式归并经过人工 must-link/cannot-link 与名称裁决，并使用 frozen-base 约束；
+- 跨运行 positive-pair Jaccard 最低观察值为 28.85%。该值是实际稳定性 limitation，
+  也是诊断指标而非结构 hard gate；不能据此把单次模型归并解释为市场事实。
+
 ## 当前安全门
 
 - 付费调用必须显式 `--execute`；数据库目标必须显式选择；
@@ -53,7 +62,8 @@ JD 导入
 
 - 真实 JD、公司信息和个人筛选材料；
 - 模型原始响应、acceptance 产物、人工裁决与范围受限 waiver；
-- 精确批次规模、统计指标、稳定性观察值和市场结论；
+- 逐记录来源状态、具体 waiver 内容、artifact 路径与身份指纹；
+- 岗位要求排行、共同要求、长尾分布等具体市场结论；
 - 正式数据库、真实报告及其发布清单。
 
 公开仓库只证明代码合同、测试覆盖和合成 sample 的可复现性，不声称公开复现私人批次。

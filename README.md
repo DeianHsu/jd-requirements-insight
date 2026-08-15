@@ -11,10 +11,23 @@
 ## v0.1 状态
 
 v0.1 已完成并冻结，正式链已经在本地私有数据集上完成端到端验收。真实 JD、公司信息、
-模型原始响应、人工裁决、精确批次指标和市场结论均不属于公开项目说明，不提交 Git。
+模型原始响应、人工裁决文件和市场结论不提交 Git。
 
 公开仓库保留完整代码、自动化测试和虚构 sample，用于说明系统如何约束模型输出、验证
 正式化身份、计算统计并渲染报告；它们不声称复现私人数据结论。
+
+## v0.1 匿名验收摘要
+
+v0.1 已在 15 份真实 JD 上完成私有端到端验收：
+
+- 409 requirement instances；
+- 329 canonical requirements；
+- consolidation coverage 100%；
+- structural violations 0；
+- 最终结果经过人工裁决并满足报告门禁。
+
+这些数字只证明当前工程闭环已经在真实数据上运行，不构成岗位市场结论。真实 JD、原始
+模型响应、人工裁决内容和具体市场发现仍保持私有。
 
 ## 正式 Pipeline
 
@@ -105,10 +118,14 @@ uv run python -m app.cli finalize-consolidation `
   --use-project-database
 
 # 6. 只读审计、验证和报告
+$consolidationId = Read-Host "Consolidation ID"
 uv run python -m app.cli audit-extraction-sources --use-project-database
-uv run python -m app.cli audit-consolidation --consolidation-id 1 --use-project-database
-uv run python -m app.cli validate-consolidation --consolidation-id 1 --use-project-database
-uv run python -m app.cli generate-report --consolidation-id 1 --use-project-database
+uv run python -m app.cli audit-consolidation `
+  --consolidation-id $consolidationId --use-project-database
+uv run python -m app.cli validate-consolidation `
+  --consolidation-id $consolidationId --use-project-database
+uv run python -m app.cli generate-report `
+  --consolidation-id $consolidationId --use-project-database
 ```
 
 归并验收脚本只接受 `--database-url`；实验时优先使用正式数据库的临时副本。完整脚本
@@ -143,7 +160,7 @@ uv run ruff check app scripts tests
 - LLM 抽取与归并存在随机性，正式结果仍需要人工审核与裁决；
 - 若既有正式抽取缺少现行机器可验证 provenance，报告只在私有、范围受限的结构化
   waiver 明确覆盖时放行，并必须披露风险；新增数据不得继承例外；
-- 私有批次的精确指标和市场结论不能从公开 clone 逐字复算；
+- 匿名工程验收摘要可以公开，但市场结论和私有批次明细不能从公开 clone 逐字复算；
 - 项目不提供 Web UI、在线服务、简历匹配、ATS 或自动投递 Agent。
 
 ## 文档导航

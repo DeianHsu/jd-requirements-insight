@@ -752,6 +752,9 @@ def test_documented_commands_and_paths_exist() -> None:
     assert "consolidate-requirements --all --candidate-output" in normalized_readme
     assert "finalize-extraction --report" in normalized_readme
     assert "finalize-consolidation --report" in normalized_readme
+    assert '$consolidationId = Read-Host "Consolidation ID"' in readme
+    assert "--consolidation-id $consolidationId" in normalized_readme
+    assert "--consolidation-id 1" not in normalized_readme
     assert "--use-project-database" in normalized_readme
     assert (
         "run_real_jd_acceptance --use-project-database --all --execute"
