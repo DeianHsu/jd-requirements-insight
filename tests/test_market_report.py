@@ -322,6 +322,12 @@ def _write_valid_waiver(path: Path) -> None:
     )
 
 
+def test_default_waiver_path_is_private() -> None:
+    from app.finalization import LEGACY_EXTRACTION_WAIVER_PATH
+
+    assert LEGACY_EXTRACTION_WAIVER_PATH.parts[:2] == ("data", "private")
+
+
 def _bind_extractions(database_path: Path, job_ids: set[int] | None = None) -> None:
     """把测试夹具中的指定抽取标为 fully_bound。"""
     from app.finalization import EXTRACTION_FINALIZATION_FIELDS

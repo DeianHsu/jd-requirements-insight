@@ -482,7 +482,7 @@ def generate_report_cmd(
             raise typer.Exit(code=1)
 
         # 上游 provenance 检查（只读）：批次来源抽取未 fully_bound 时，
-        # 仅允许 P0-7 文件明确覆盖的历史 JD 继续生成，并保留风险标注。
+        # 仅允许私有 waiver 明确覆盖的历史 JD 继续生成，并保留风险标注。
         with session_factory() as session:
             record = session.scalar(
                 select(JobConsolidation).where(
@@ -514,7 +514,7 @@ def generate_report_cmd(
             )
             provenance_note = (
                 f"批次来源 JD {sorted(unbound)} 的正式抽取未 fully_bound"
-                f"（{detail}）；该批记录按 P0-7 项目级历史风险豁免"
+                f"（{detail}）；该批记录按私有、范围受限的历史风险豁免"
                 f"（{LEGACY_EXTRACTION_WAIVER_PATH.as_posix()}）仅供当前"
                 f"MVP 的归并、统计和报告消费，豁免不等于 fully_bound；"
                 f"报告结论的可追溯性仍受此限制。"

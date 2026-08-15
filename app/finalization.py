@@ -45,7 +45,7 @@ CONSOLIDATION_FINALIZATION_FIELDS = (
 )
 
 LEGACY_EXTRACTION_WAIVER_PATH = Path(
-    "reports/P0-7/legacy-extraction-waiver.json"
+    "data/private/legacy-extraction-waiver.json"
 )
 
 
@@ -71,17 +71,19 @@ def validate_legacy_extraction_waiver(
     path: Path,
     unbound_job_ids: set[int],
 ) -> dict[str, Any]:
-    """校验 P0-7 历史抽取豁免是否明确覆盖待报告的未绑定 JD。"""
+    """校验私有历史抽取豁免是否明确覆盖待报告的未绑定 JD。"""
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
-        raise ValueError(f"P0-7 historical waiver 不存在：{path}") from exc
+        raise ValueError(f"private historical waiver 不存在：{path}") from exc
     except (OSError, json.JSONDecodeError) as exc:
-        raise ValueError(f"P0-7 historical waiver 无法读取或不是合法 JSON：{path}") from exc
+        raise ValueError(
+            f"private historical waiver 无法读取或不是合法 JSON：{path}"
+        ) from exc
 
     failures: list[str] = []
     if not isinstance(payload, dict):
-        raise ValueError("P0-7 historical waiver 顶层必须是 JSON object")
+        raise ValueError("private historical waiver 顶层必须是 JSON object")
     if payload.get("record_type") != "legacy_extraction_waiver":
         failures.append("record_type 必须为 legacy_extraction_waiver")
     if payload.get("schema_version") != 1:
@@ -127,7 +129,9 @@ def validate_legacy_extraction_waiver(
             failures.append(f"未覆盖 non-fully-bound 来源 JD：{uncovered}")
 
     if failures:
-        raise ValueError("P0-7 historical waiver 无效：" + "；".join(failures))
+        raise ValueError(
+            "private historical waiver 无效：" + "；".join(failures)
+        )
     return payload
 
 
