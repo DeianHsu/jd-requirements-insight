@@ -81,8 +81,9 @@ Prompt、Schema、运行和结果指纹；人工审核绑定批准运行；final
 跳过，失败不得留下部分正式数据。
 
 报告入口还会回查归并定稿身份、mapping/partition、requirement → extraction → JD 链和
-上游 provenance。当前正式数据中的例外状态见 [CURRENT_STATE.md](CURRENT_STATE.md)，
-关闭决策见 [PROJECT_PLAN.md](PROJECT_PLAN.md)。
+上游 provenance。缺少现行机器绑定的历史来源只有在私有、范围受限的结构化 waiver
+明确覆盖时才能继续生成报告，风险提示仍写入报告；当前公开边界见
+[CURRENT_STATE.md](CURRENT_STATE.md)。
 
 ### 显式数据库目标
 

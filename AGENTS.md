@@ -31,7 +31,7 @@ AGENTS.md
 → README.md
 → docs/CURRENT_STATE.md
 → docs/ARCHITECTURE.md
-→ 根据任务读取 PROJECT_PLAN、GLOSSARY、annotation 或对应代码
+→ 根据任务读取 GLOSSARY、annotation 或对应代码
 ```
 
 涉及完整项目检查、生产验收、模块关闭、正式数据发布时，必须按
@@ -41,13 +41,12 @@ AGENTS.md「生产验收协议」小节选择审计等级执行（普通提交�
 
 1. 当前代码、测试、数据结构和 Git 状态；
 2. `docs/CURRENT_STATE.md` 的当前项目事实；
-3. `docs/PROJECT_PLAN.md` 的 v0.1 阶段关闭决策；
-4. 聊天记忆只作辅助，不得覆盖正式文件。
+3. 聊天记忆只作辅助，不得覆盖正式文件。
 
 ## 变更约束
 
 1. 不得静默改变公共接口、Schema、数据语义、功能范围；重要变化更新
-   对应文档（PROJECT_PLAN / ARCHITECTURE / GLOSSARY / annotation）。
+   对应文档（CURRENT_STATE / ARCHITECTURE / GLOSSARY / annotation）。
 2. 不得覆盖、删除或重置用户已有改动；提交时使用路径级暂存。
 3. 真实 JD、数据库、密钥和原始模型响应不得提交；私有材料只存在于
    `data/private/`、`data/raw_jds/` 与本地数据库。

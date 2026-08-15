@@ -738,7 +738,6 @@ def test_documented_commands_and_paths_exist() -> None:
     assert Path("data/rule_scenarios/extraction_metamorphic_cases.json").exists()
     assert Path("docs/ARCHITECTURE.md").exists()
     assert Path("docs/CURRENT_STATE.md").exists()
-    assert Path("docs/PROJECT_PLAN.md").exists()
     assert Path("docs/GLOSSARY.md").exists()
     assert Path("docs/annotation/REQUIREMENTS.md").exists()
     assert Path("docs/annotation/VALIDATION.md").exists()

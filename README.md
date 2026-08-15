@@ -8,22 +8,13 @@
 [查看当前状态](docs/CURRENT_STATE.md) ·
 [查看架构](docs/ARCHITECTURE.md)
 
-## v0.1 结果
+## v0.1 状态
 
-v0.1 已完成并冻结。当前正式私有批次包含：
+v0.1 已完成并冻结，正式链已经在本地私有数据集上完成端到端验收。真实 JD、公司信息、
+模型原始响应、人工裁决、精确批次指标和市场结论均不属于公开项目说明，不提交 Git。
 
-| 指标 | 结果 |
-|---|---:|
-| JD | 15 |
-| Requirement instances | 409 |
-| Canonical requirements | 329 |
-| 跨 JD 共同要求 | 43 |
-| 单 JD 长尾要求 | 286 |
-| 覆盖最高的要求 | 团队协作能力（9/15 JD） |
-| 归并质量门禁 | Coverage 100%，结构违规 0，reportable=True |
-
-这些数字只描述当前小样本，不代表行业排名或完整市场结论。真实 JD、公司信息、模型原始
-响应和真实报告保存在私有目录；公开仓库提供使用同一统计与渲染代码生成的合成报告。
+公开仓库保留完整代码、自动化测试和虚构 sample，用于说明系统如何约束模型输出、验证
+正式化身份、计算统计并渲染报告；它们不声称复现私人数据结论。
 
 ## 正式 Pipeline
 
@@ -115,12 +106,12 @@ uv run python -m app.cli finalize-consolidation `
 
 # 6. 只读审计、验证和报告
 uv run python -m app.cli audit-extraction-sources --use-project-database
-uv run python -m app.cli audit-consolidation --consolidation-id 5 --use-project-database
-uv run python -m app.cli validate-consolidation --consolidation-id 5 --use-project-database
-uv run python -m app.cli generate-report --consolidation-id 5 --use-project-database
+uv run python -m app.cli audit-consolidation --consolidation-id 1 --use-project-database
+uv run python -m app.cli validate-consolidation --consolidation-id 1 --use-project-database
+uv run python -m app.cli generate-report --consolidation-id 1 --use-project-database
 ```
 
-P0-4 验收脚本只接受 `--database-url`；实验时优先使用正式数据库的临时副本。完整脚本
+归并验收脚本只接受 `--database-url`；实验时优先使用正式数据库的临时副本。完整脚本
 导航和参数边界见 [scripts/README.md](scripts/README.md)。
 
 可选单次预检命令：
@@ -149,20 +140,18 @@ uv run ruff check app scripts tests
 
 - 真实 JD、数据库、密钥和原始模型响应属于私有材料，不提交 Git；
 - 当前只支持 v0.10 + Schema V3 和现行数据库结构，不兼容或迁移旧派生数据；
-- 当前样本只有 15 份 JD，结论不能外推为完整市场排名；
 - LLM 抽取与归并存在随机性，正式结果仍需要人工审核与裁决；
-- JD1～3 的正式抽取缺少现行机器可验证 provenance，仅在范围受限 waiver 下供当前
-  MVP 报告消费；详见 [CURRENT_STATE](docs/CURRENT_STATE.md)；
-- 真实批次因隐私不能在公开 clone 中逐字复算；
+- 若既有正式抽取缺少现行机器可验证 provenance，报告只在私有、范围受限的结构化
+  waiver 明确覆盖时放行，并必须披露风险；新增数据不得继承例外；
+- 私有批次的精确指标和市场结论不能从公开 clone 逐字复算；
 - 项目不提供 Web UI、在线服务、简历匹配、ATS 或自动投递 Agent。
 
 ## 文档导航
 
 | 文档 | 职责 |
 |---|---|
-| [CURRENT_STATE](docs/CURRENT_STATE.md) | 当前正式数据、安全门、例外和限制 |
+| [CURRENT_STATE](docs/CURRENT_STATE.md) | 当前软件基线、安全门和公开/私有边界 |
 | [ARCHITECTURE](docs/ARCHITECTURE.md) | 正式链、可选预检、模块边界和设计理由 |
-| [PROJECT_PLAN](docs/PROJECT_PLAN.md) | v0.1 关闭决策和当前维护边界 |
 | [GLOSSARY](docs/GLOSSARY.md) | 核心业务术语与流水线不变量 |
 | [REQUIREMENTS](docs/annotation/REQUIREMENTS.md) | 岗位要求、逻辑组和字段规则 |
 | [RESPONSIBILITIES](docs/annotation/RESPONSIBILITIES.md) | 职责边界规则 |
