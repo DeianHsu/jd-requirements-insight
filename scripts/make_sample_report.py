@@ -40,19 +40,73 @@ from app.requirement_consolidation import (
 # 虚构岗位数据：公司、岗位与要求均为合成，不代表任何真实招聘信息。
 _SAMPLE_JOBS = (
     ("示例科技", "大模型应用工程师", "北京", (
-        ("编程语言", "must", "1. 熟悉主流编程语言。"),
-        ("大模型应用开发经验", "must", "2. 有 LLM 应用落地经验。"),
-        ("数据分析经验", "preferred", "3. 有数据分析经验者优先。"),
+        (
+            "编程语言",
+            "programming_language",
+            "must",
+            "basic",
+            "1. 熟悉主流编程语言。",
+        ),
+        (
+            "大模型应用开发经验",
+            "experience",
+            "must",
+            "unknown",
+            "2. 有 LLM 应用落地经验。",
+        ),
+        (
+            "数据分析经验",
+            "experience",
+            "preferred",
+            "unknown",
+            "3. 有数据分析经验者优先。",
+        ),
     )),
     ("示例智能", "Agent 开发工程师", "上海", (
-        ("编程语言", "must", "1. 掌握常用编程语言。"),
-        ("大模型应用开发经验", "preferred", "2. 具备大模型应用开发经验者加分。"),
-        ("团队协作能力", "must", "3. 具备跨团队协作能力。"),
+        (
+            "编程语言",
+            "programming_language",
+            "must",
+            "advanced",
+            "1. 掌握常用编程语言。",
+        ),
+        (
+            "大模型应用开发经验",
+            "experience",
+            "preferred",
+            "unknown",
+            "2. 具备大模型应用开发经验者加分。",
+        ),
+        (
+            "团队协作能力",
+            "soft_skill",
+            "must",
+            "unknown",
+            "3. 具备跨团队协作能力。",
+        ),
     )),
     ("示例数据", "RAG 平台工程师", "深圳", (
-        ("编程语言", "preferred", "1. 熟悉编程语言者加分。"),
-        ("RAG 应用开发", "must", "2. 熟悉 RAG 应用开发。"),
-        ("本科及以上学历", "unknown", "3. 本科及以上学历。"),
+        (
+            "编程语言",
+            "programming_language",
+            "preferred",
+            "basic",
+            "1. 熟悉编程语言者加分。",
+        ),
+        (
+            "RAG 应用开发",
+            "rag",
+            "must",
+            "basic",
+            "2. 熟悉 RAG 应用开发。",
+        ),
+        (
+            "本科及以上学历",
+            "education",
+            "must",
+            "unknown",
+            "3. 本科及以上学历。",
+        ),
     )),
 )
 
@@ -107,13 +161,19 @@ def main(argv: list[str] | None = None) -> int:
                     )
                     session.add(extraction)
                     session.flush()
-                    for raw_name, importance, evidence in requirements:
+                    for (
+                        raw_name,
+                        category,
+                        importance,
+                        proficiency,
+                        evidence,
+                    ) in requirements:
                         requirement = JobRequirement(
                             extraction_id=extraction.id,
                             raw_name=raw_name,
-                            category="other",
+                            category=category,
                             importance=importance,
-                            proficiency="basic",
+                            proficiency=proficiency,
                             group_id=None,
                             group_logic="standalone",
                             min_years=None,

@@ -1082,6 +1082,11 @@ def test_sample_report_does_not_leak_real_batch_numbers(tmp_path) -> None:
     assert "72 个" not in content
     # 证据块结构在样例中同样成立。
     assert "    > " in content
+    # 合成字段遵守当前 FIELD 合同，不用 other/basic 占位覆盖所有类型。
+    assert "category=programming\\_language / proficiency=advanced" in content
+    assert "category=experience / proficiency=unknown" in content
+    assert "category=education / proficiency=unknown" in content
+    assert "category=soft\\_skill / proficiency=unknown" in content
 
 
 def test_sample_report_is_public_safe(tmp_path) -> None:

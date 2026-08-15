@@ -7,7 +7,7 @@
 - canonical requirement 数：6
 - 抽取器版本：test-model|prompt:0.10|schema:3.0
 - 归并器版本：test-model|prompt:4.3|schema:3.0
-- 输入身份：1bd8f59c1e16…
+- 输入身份：2abe835c4790…
 - 来源 JD：1、2、3
 ### 来源 JD 摘要
 - JD 1：示例科技｜大模型应用工程师｜北京
@@ -34,58 +34,58 @@
 | RAG 应用开发 | 1 | 33% | 1 | must 1 |
 | 团队协作能力 | 1 | 33% | 1 | must 1 |
 | 数据分析经验 | 1 | 33% | 1 | preferred 1 |
-| 本科及以上学历 | 1 | 33% | 1 | unknown 1 |
+| 本科及以上学历 | 1 | 33% | 1 | must 1 |
 
 ## 证据追溯
 ### 编程语言
 来源：3 份 JD（JD 1、JD 2、JD 3），3 个实例；JD 级 importance：must 2 / preferred 1
 - JD 1｜实例 1：**编程语言**
-  - importance=must / category=other / proficiency=basic
+  - importance=must / category=programming\_language / proficiency=basic
   - 证据：
     > 1. 熟悉主流编程语言。
 
 - JD 2｜实例 4：**编程语言**
-  - importance=must / category=other / proficiency=basic
+  - importance=must / category=programming\_language / proficiency=advanced
   - 证据：
     > 1. 掌握常用编程语言。
 
 - JD 3｜实例 7：**编程语言**
-  - importance=preferred / category=other / proficiency=basic
+  - importance=preferred / category=programming\_language / proficiency=basic
   - 证据：
     > 1. 熟悉编程语言者加分。
 ### 大模型应用开发经验
 来源：2 份 JD（JD 1、JD 2），2 个实例；JD 级 importance：must 1 / preferred 1
 - JD 1｜实例 2：**大模型应用开发经验**
-  - importance=must / category=other / proficiency=basic
+  - importance=must / category=experience / proficiency=unknown
   - 证据：
     > 2. 有 LLM 应用落地经验。
 
 - JD 2｜实例 5：**大模型应用开发经验**
-  - importance=preferred / category=other / proficiency=basic
+  - importance=preferred / category=experience / proficiency=unknown
   - 证据：
     > 2. 具备大模型应用开发经验者加分。
 ### RAG 应用开发
 来源：1 份 JD（JD 3），1 个实例；JD 级 importance：must 1
 - JD 3｜实例 8：**RAG 应用开发**
-  - importance=must / category=other / proficiency=basic
+  - importance=must / category=rag / proficiency=basic
   - 证据：
     > 2. 熟悉 RAG 应用开发。
 ### 团队协作能力
 来源：1 份 JD（JD 2），1 个实例；JD 级 importance：must 1
 - JD 2｜实例 6：**团队协作能力**
-  - importance=must / category=other / proficiency=basic
+  - importance=must / category=soft\_skill / proficiency=unknown
   - 证据：
     > 3. 具备跨团队协作能力。
 ### 数据分析经验
 来源：1 份 JD（JD 1），1 个实例；JD 级 importance：preferred 1
 - JD 1｜实例 3：**数据分析经验**
-  - importance=preferred / category=other / proficiency=basic
+  - importance=preferred / category=experience / proficiency=unknown
   - 证据：
     > 3. 有数据分析经验者优先。
 ### 本科及以上学历
-来源：1 份 JD（JD 3），1 个实例；JD 级 importance：unknown 1
+来源：1 份 JD（JD 3），1 个实例；JD 级 importance：must 1
 - JD 3｜实例 9：**本科及以上学历**
-  - importance=unknown / category=other / proficiency=basic
+  - importance=must / category=education / proficiency=unknown
   - 证据：
     > 3. 本科及以上学历。
 ## 方法与限制
