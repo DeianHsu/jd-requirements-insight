@@ -1,4 +1,4 @@
-"""验证P0-4归并LLM客户端、Prompt v4.1、单次聚类解析与有限重试闭环。"""
+"""验证P0-4归并LLM客户端、当前 Prompt、单次聚类解析与有限重试闭环。"""
 
 import json
 
@@ -110,7 +110,7 @@ def valid_result_payload() -> dict[str, object]:
 
 
 def test_prompt_v41_is_domain_agnostic() -> None:
-    """验证Prompt v4.1不绑定任何具体领域技能，只描述单次聚类任务。"""
+    """验证当前 Prompt 不绑定任何具体领域技能，只描述单次聚类任务。"""
     assert CONSOLIDATION_PROMPT_VERSION == "4.3"
     assert CONSOLIDATION_SCHEMA_VERSION == "3.0"
     for domain_word in ("Python", "RAG", "LangChain", "Agent", "大模型", "AI"):

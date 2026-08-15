@@ -281,7 +281,7 @@ def test_build_market_report_renders_provenance_note(tmp_path) -> None:
 
 
 def test_report_rejects_incomplete_consolidation_finalization(tmp_path) -> None:
-    """旧格式批次（仅 2 个定稿字段）被报告门禁拒绝（完整审核元数据必需）。"""
+    """定稿元数据不完整的批次被报告门禁拒绝。"""
     db_path = tmp_path / "market.db"
     _seed_market_db(db_path)
     engine = create_database_engine(f"sqlite:///{db_path.as_posix()}")

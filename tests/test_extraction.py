@@ -1,4 +1,4 @@
-"""该模块验证LLM结构化抽取、证据约束、有限重试和幂等持久化。"""
+"""验证 LLM 结构化抽取、证据约束与有限重试。"""
 
 import json
 from datetime import date

@@ -1,4 +1,4 @@
-"""该模块调用OpenAI兼容LLM抽取JD结构，并校验证据、重试和幂等持久化。"""
+"""调用 OpenAI 兼容 LLM 抽取 JD 结构，并完成证据校验与有限重试。"""
 
 from __future__ import annotations
 
@@ -18,8 +18,7 @@ from app.models import JobDescription, JobExtraction
 from app.schemas import JobExtractionResult
 
 # 当前唯一抽取配置：v0.10 + Schema V3（两段式，三级熟练度）。
-# 旧 Prompt（V2.3.1、v0.6、v0.7）与旧 Schema V2 不再维护，历史由 Git 与
-# 已有报告保存。PROMPT_VERSION / SCHEMA_VERSION 必须与
+# PROMPT_VERSION / SCHEMA_VERSION 必须与
 # extraction_two_stage.py 的 TWO_STAGE_PROMPT_VERSION /
 # TWO_STAGE_SCHEMA_VERSION 保持同步。
 PROMPT_VERSION = "0.10"

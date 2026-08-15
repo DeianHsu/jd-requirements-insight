@@ -33,20 +33,15 @@ from app.requirement_consolidation import RequirementConsolidationResult
 
 
 def _raw_identity(raw: dict) -> dict[str, object]:
-    runs = raw.get("runs") or []
-    metadata = runs[0].get("metadata") or {} if runs else {}
+    """读取当前验收 raw 的顶层身份合同，不推断或回退。"""
     return {
         "input_fingerprint": raw.get("input_fingerprint"),
         "extractor_version": raw.get("extractor_version"),
         "selected_job_ids": sorted(raw.get("selected_job_ids") or []),
-        "model": raw.get("model") or metadata.get("model"),
-        "prompt_version": raw.get("prompt_version")
-        or metadata.get("prompt_version"),
-        "schema_version": raw.get("schema_version")
-        or metadata.get("schema_version"),
-        "run_count": raw.get("run_count")
-        if raw.get("run_count") is not None
-        else len(runs),
+        "model": raw.get("model"),
+        "prompt_version": raw.get("prompt_version"),
+        "schema_version": raw.get("schema_version"),
+        "run_count": raw.get("run_count"),
     }
 
 

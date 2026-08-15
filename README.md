@@ -124,6 +124,10 @@ uv run python -m app.cli generate-report --consolidation-id <id> --use-project-d
 uv run python -m app.cli --help
 uv run pytest
 uv run ruff check app scripts tests
+
+# 以下两项调用付费模型，须显式选择正式数据库与完整 JD 范围
+uv run python -m scripts.experiments.p0_3.run_real_jd_acceptance --use-project-database --all --execute
+uv run python -m scripts.experiments.p0_4.run_acceptance --use-project-database --all --execute
 ```
 
 - P0-3A：领域中性规则场景 + 确定性变换，检查 evidence、职责边界和 Schema 合同。

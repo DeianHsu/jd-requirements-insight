@@ -110,8 +110,7 @@ class ProficiencyLevel(StrEnum):
 
     原始程度词保留在 evidence 与 raw_name，枚举只表达粗粒度岗位门槛；
     `none`（完全不会）属于未来候选人个人能力层，不属于岗位要求。
-    旧 Schema V2 五级值（understand/familiar/proficient/expert）不再兼容，
-    读取时明确拒绝并要求用 v0.9 重新抽取。
+    非当前枚举值读取时明确拒绝，并要求用 v0.10 重新抽取。
     """
 
     UNKNOWN = "unknown"
@@ -146,11 +145,9 @@ class RequirementItem(BaseModel):
     @field_validator("proficiency", mode="before")
     @classmethod
     def coerce_proficiency(cls, value: object) -> object:
-        """只接受 Schema V3 三级值；旧 V2 五级值明确拒绝并提示重新抽取。
+        """只接受 Schema V3 三级值；其他值明确拒绝并提示重新抽取。
 
-        旧数据库与历史 raw_response 视为历史派生数据，不再兼容映射；
-        当前流程发现旧 Schema 数据时拒绝使用，避免旧数据混入 P0-4 与
-        后续统计。
+        当前流程不做枚举映射，避免非当前数据混入归并与后续统计。
         """
         if isinstance(value, ProficiencyLevel):
             return value
@@ -160,7 +157,7 @@ class RequirementItem(BaseModel):
             except ValueError as exc:
                 raise ValueError(
                     f"熟练度 {value!r} 不是 Schema V3 三级值（unknown/basic/"
-                    "advanced）；旧 Schema V2 五级值不再兼容，请用 v0.9 重新抽取"
+                    "advanced）；请用当前 v0.10 + Schema V3 抽取器重新抽取"
                 ) from exc
         raise ValueError(f"熟练度必须是字符串或 ProficiencyLevel：{value!r}")
 

@@ -114,7 +114,7 @@ def test_three_level_values_are_accepted() -> None:
 
 
 def test_legacy_five_level_values_are_rejected() -> None:
-    """旧 Schema V2 五级值明确拒绝，不再兼容映射，提示重新抽取。"""
+    """非当前五级值明确拒绝，不做兼容映射，并提示重新抽取。"""
     for old_value in ("understand", "familiar", "proficient", "expert"):
         with pytest.raises(ValidationError, match="重新抽取"):
             RequirementItem.model_validate(

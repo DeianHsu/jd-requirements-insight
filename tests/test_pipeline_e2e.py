@@ -745,14 +745,18 @@ def test_documented_commands_and_paths_exist() -> None:
 
     # 关键示例命令包含脚本要求的必要参数（文档合同）。
     readme = Path("README.md").read_text(encoding="utf-8")
-    assert "extract-jds --all --candidate-output" in readme
-    assert "consolidate-requirements --all --candidate-output" in readme
-    assert "finalize-extraction --report" in readme
-    assert "finalize-consolidation --report" in readme
-    assert "--use-project-database" in readme
+    normalized_readme = " ".join(
+        line.strip().removesuffix("`").strip() for line in readme.splitlines()
+    )
+    normalized_readme = " ".join(normalized_readme.split())
+    assert "extract-jds --all --candidate-output" in normalized_readme
+    assert "consolidate-requirements --all --candidate-output" in normalized_readme
+    assert "finalize-extraction --report" in normalized_readme
+    assert "finalize-consolidation --report" in normalized_readme
+    assert "--use-project-database" in normalized_readme
     assert (
         "run_real_jd_acceptance --use-project-database --all --execute"
-        in readme
+        in normalized_readme
     )
     current_state = Path("docs/CURRENT_STATE.md").read_text(encoding="utf-8")
     assert (

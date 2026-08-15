@@ -133,6 +133,31 @@ def _valid_result() -> RequirementConsolidationResult:
     )
 
 
+def test_raw_identity_does_not_fallback_to_run_metadata() -> None:
+    """定稿与裁决只接受当前 raw 顶层身份合同。"""
+    from app.consolidation_finalization import _raw_identity as finalize_identity
+    from scripts.experiments.p0_4.apply_review_decisions import (
+        _raw_identity as review_identity,
+    )
+
+    raw = {
+        "runs": [
+            {
+                "metadata": {
+                    "model": "nested-model",
+                    "prompt_version": CONSOLIDATION_PROMPT_VERSION,
+                    "schema_version": CONSOLIDATION_SCHEMA_VERSION,
+                }
+            }
+        ]
+    }
+
+    for identity in (finalize_identity(raw), review_identity(raw)):
+        assert identity["model"] is None
+        assert identity["prompt_version"] is None
+        assert identity["schema_version"] is None
+
+
 def _write_inputs(tmp_path: Path, database_path: Path) -> tuple[Path, Path]:
     """写验收报告与私有原始结果，返回（report_path, raw_path）。"""
     from app.consolidation import load_consolidation_selection

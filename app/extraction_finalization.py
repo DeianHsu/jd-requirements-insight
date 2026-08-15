@@ -54,8 +54,7 @@ def _identity_failures(
     report_identity = report.get("identity") or {}
     raw_identity = raw.get("identity") or {}
     # 完整身份合同（硬要求）：report 与 raw 必须同时具备全部 8 个整轮
-    # 身份字段且完全一致。历史旧格式产物不兼容（AGENTS.md：不维护旧
-    # 方案与历史兼容）。
+    # report/raw 必须同时包含当前身份字段且完全一致；缺失即拒绝。
     identity_fields = (
         "run_identifier",
         "model",

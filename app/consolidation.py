@@ -10,9 +10,9 @@
     → validate_canonical_partition 立即验证完整唯一分区
     → build_mappings_from_canonical_partition 确定性生成 mappings
     → validate_requirement_coverage 最终合同
-    → 持久化
+    → 返回规范化候选结果
 
-模型只负责决定 cluster；mappings 由确定性代码展开并持久化。
+模型只负责决定 cluster；mappings 由确定性代码展开。正式持久化只由定稿入口执行。
 """
 
 from __future__ import annotations
@@ -49,15 +49,14 @@ from app.requirement_consolidation import (
 )
 from app.schemas import RequirementItem
 
-# 归并合同 v4.1 / Schema 3.0：单次聚类输出 canonical + 来源分区，
-# mappings 由确定性代码生成。旧归并版本（prompt:4.0/schema:2.0 等）
-# 不再兼容，新旧批次按 consolidator_version 区分。
+# 当前归并合同 v4.3 / Schema 3.0：单次聚类输出 canonical + 来源分区，
+# mappings 由确定性代码生成。
 CONSOLIDATION_PROMPT_VERSION = "4.3"
 CONSOLIDATION_SCHEMA_VERSION = "3.0"
 CONSOLIDATION_READ_TIMEOUT_SECONDS = 900.0
 
 
-# Prompt v4.1：单次聚类，只输出 canonical requirements 与来源分区；
+# Prompt v4.3：单次聚类，只输出 canonical requirements 与来源分区；
 # 不输出 mappings、不输出任何关系或层级结构。
 CONSOLIDATION_SYSTEM_PROMPT = """你是跨JD岗位要求归并器。输入是一批来自不同JD的原子要求实例，你需要判断哪些实例指向同一招聘条件，输出标准要求项（canonical requirements）。只能依据每个实例提供的原始名称和证据上下文判断，不得补充任何领域知识或行业常识。
 

@@ -1,4 +1,4 @@
-"""两段式抽取实验：发现段与判断段分离，验证跨任务干扰假设（P0-3恢复）。
+"""当前两段式抽取实现：发现段与判断段分离。
 
 第一段（发现）只做全局扫描：分句归属（职责/要求/混合/排除）与岗位信息，
 不输出任何原子项；第二段（判断）只做局部语义判断：对候选块执行职责拆分、
@@ -24,7 +24,6 @@ from app.models import JobDescription
 from app.schemas import JobExtractionResult, RoleFamily, Seniority
 
 # 当前唯一抽取配置：v0.10 + Schema V3（两段式，三级熟练度）。
-# 旧 Prompt（V2.3.1、v0.6、v0.7）不再维护，历史由 Git 与已有报告保存。
 # 必须与 app/extraction.py 的 PROMPT_VERSION / SCHEMA_VERSION 保持同步。
 TWO_STAGE_PROMPT_VERSION = "0.10"
 TWO_STAGE_SCHEMA_VERSION = "3.0"
@@ -48,11 +47,7 @@ DISCOVERY_SYSTEM_PROMPT = """你是招聘JD结构化分析的第一阶段：全�
 4. 不要输出responsibilities或requirements明细，本阶段只发现候选块。
 5. 严格按照用户提供的JSON结构输出一个JSON对象，不要输出Markdown代码块或额外说明。"""
 
-# 判断段Prompt：只做局部语义判断，直接输出完整抽取数据合同。
-# v0.8：基于 v0.7 规则化 Prompt（规则 ID 引用），FIELD-03 熟练度收缩为
-# 三级枚举（unknown/basic/advanced），删除旧五级输出说明。
-# v0.9：统一 any_of 规则——"优先"只决定 preferred，"和/与/并且"默认
-# standalone，仅明确替代关系（至少一种/任一/任选/之一/或）才建 any_of。
+# 判断段 Prompt：只做局部语义判断，直接输出当前完整抽取数据合同。
 JUDGE_SYSTEM_PROMPT = """你是招聘JD结构化分析的第二阶段：精细判断。输入是第一阶段的候选块列表（每个块含原文连续证据与归属），请对每个候选块做以下判断并输出完整抽取数据合同JSON。规则编号与 P0-1 语义决策规则对应（docs/annotation/）。
 
 【职责边界（RESP-01～RESP-02）】

@@ -256,8 +256,8 @@ def check_payload_schema(
 ) -> tuple[bool, list[str], list[str]]:
     """检查模型原始输出是否符合抽取数据合同，返回（合法、全部错误、逻辑组错误）。
 
-    旧 Schema V2 五级 proficiency 值会被 RequirementItem 校验器明确拒绝，
-    并提示用 v0.9 重新抽取。
+    非当前 Schema V3 的 proficiency 值会被 RequirementItem 校验器明确拒绝，
+    并提示用 v0.10 重新抽取。
     """
     try:
         JobExtractionResult.model_validate(payload)

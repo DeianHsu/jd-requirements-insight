@@ -383,18 +383,14 @@ def _apply_decisions(
 
 
 def _raw_identity(raw: dict) -> dict[str, object]:
-    """raw 顶层身份字段；旧格式缺省时回退到首个运行的 metadata。"""
-    runs = raw.get("runs") or []
-    meta = runs[0].get("metadata") or {} if runs else {}
+    """读取当前验收 raw 的顶层身份合同，不推断或回退。"""
     return {
         "input_fingerprint": raw.get("input_fingerprint"),
         "extractor_version": raw.get("extractor_version"),
         "selected_job_ids": sorted(raw.get("selected_job_ids") or []),
-        "model": raw.get("model") or meta.get("model"),
-        "prompt_version": raw.get("prompt_version")
-        or meta.get("prompt_version"),
-        "schema_version": raw.get("schema_version")
-        or meta.get("schema_version"),
+        "model": raw.get("model"),
+        "prompt_version": raw.get("prompt_version"),
+        "schema_version": raw.get("schema_version"),
     }
 
 
@@ -422,6 +418,19 @@ def main() -> int:
 
     # 审核决定文件与 raw 的身份一致。
     raw_identity = _raw_identity(raw)
+    for field in (
+        "input_fingerprint",
+        "extractor_version",
+        "model",
+        "prompt_version",
+        "schema_version",
+    ):
+        if raw_identity[field] in (None, ""):
+            print(f"raw 缺少身份字段（{field}），拒绝应用。")
+            return 1
+    if not raw_identity["selected_job_ids"]:
+        print("raw selected_job_ids 为空，拒绝应用。")
+        return 1
     identity_checks = [
         ("input_fingerprint", decisions_payload.get("input_fingerprint"),
          raw_identity["input_fingerprint"]),

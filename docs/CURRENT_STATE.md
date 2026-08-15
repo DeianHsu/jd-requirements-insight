@@ -26,10 +26,10 @@ JD 导入
 | `python -m app.cli import-jds <目录> ...` | 显式选择数据库并导入 Markdown JD |
 | `python -m app.cli extract-jds ... --candidate-output <私有JSON> --execute` | 付费生成单次抽取候选，不写正式抽取表 |
 | `python -m scripts.experiments.p0_3.run_acceptance --execute` | 运行规则场景与确定性变形验收 |
-| `python -m scripts.experiments.p0_3.run_real_jd_acceptance ... --execute` | 对真实 JD 运行多次抽取验收 |
+| `python -m scripts.experiments.p0_3.run_real_jd_acceptance --use-project-database --all --execute` | 对真实 JD 运行多次抽取验收 |
 | `python -m app.cli finalize-extraction ...` | 从完整验收产物离线定稿正式抽取 |
 | `python -m app.cli consolidate-requirements ... --candidate-output <私有JSON> --execute` | 付费生成单次归并候选，不写正式归并表 |
-| `python -m scripts.experiments.p0_4.run_acceptance ... --execute` | 运行多次归并、顺序变形和稳定性验收 |
+| `python -m scripts.experiments.p0_4.run_acceptance --use-project-database --all --execute` | 运行多次归并、顺序变形和稳定性验收 |
 | `python -m scripts.experiments.p0_4.analyze_stability ...` | 离线生成跨运行稳定性与人工审核材料 |
 | `python -m scripts.experiments.p0_4.apply_review_decisions ...` | 离线应用 must-link、cannot-link、名称 override 与 frozen-base |
 | `python -m app.cli finalize-consolidation ...` | 从已审核裁决产物离线定稿正式归并 |
