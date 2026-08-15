@@ -39,8 +39,8 @@ JD 导入
 | `python -m app.cli generate-report --consolidation-id N ...` | 从完整定稿批次生成确定性 Markdown 报告 |
 
 所有数据库命令必须且只能显式选择 `--database-url` 或 `--use-project-database`；
-付费模型调用必须显式提供 `--execute`。候选 JSON 不属于正式数据，正式业务表只允许
-`finalize-extraction` 和 `finalize-consolidation` 写入。
+付费模型调用必须显式提供 `--execute`。候选 JSON 不属于正式数据；模型生成的正式抽取与
+归并数据只允许由 `finalize-extraction` 和 `finalize-consolidation` 写入。
 
 ## 当前正式数据
 
