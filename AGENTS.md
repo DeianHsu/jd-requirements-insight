@@ -13,8 +13,9 @@ JD 导入
 → Markdown 市场分析报告
 ```
 
-`extract-jds --candidate-output` 与 `consolidate-requirements
---candidate-output` 只生成可选的单次私有预检，不是正式链必经步骤，产物
+`extract-jds --candidate-output` 与
+`consolidate-requirements --candidate-output` 只生成可选的单次私有预检，
+不是正式链必经步骤，产物
 不作为 finalize 输入，也不得写入正式抽取/归并表。
 
 v0.1 已完成并冻结。默认只维护当前闭环、修复明确缺陷并保持可复现性；
