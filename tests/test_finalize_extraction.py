@@ -371,33 +371,48 @@ def test_finalize_rejects_existing_different_result(monkeypatch, tmp_path) -> No
 def test_finalize_rejects_existing_without_review_metadata(
     monkeypatch, tmp_path
 ) -> None:
-    """旧格式正式抽取缺少审核元数据时，不得无依据宣称已审核。"""
+    """已有正式抽取缺少审核元数据时，不得无依据宣称已审核。"""
     db_path = tmp_path / "finalize.db"
     job_id = _seed_job(db_path)
     report_path, raw_path = _write_acceptance(tmp_path, db_path, job_id)
     report = json.loads(report_path.read_text(encoding="utf-8"))
     report["jobs"][0]["manual_review"]["approved_run_index"] = None
     report_path.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
-    # 直接以生产入口语义写入一份无审核元数据的正式抽取。
+    # 直接构造一份损坏的正式记录，验证 finalize 的拒绝路径。
     engine = create_database_engine(f"sqlite:///{db_path.as_posix()}")
     try:
         session_factory = create_session_factory(engine)
         with session_factory() as session:
-            from app.extraction import ExtractorMetadata, persist_extraction
-
             job = session.query(JobDescription).one()
-            metadata = ExtractorMetadata(
+            result = _make_result()
+            extraction = JobExtraction(
+                job_id=job.id,
+                extractor_version="test-model|prompt:0.10|schema:3.0",
                 model_name="test-model",
                 prompt_version="0.10",
                 schema_version="3.0",
+                role_family=result.role_family.value,
+                seniority=result.seniority.value,
+                raw_response={"model_response": {"requirements": []}},
             )
-            persist_extraction(
-                session,
-                job,
-                _make_result(),
-                {"model_response": {"requirements": []}},
-                metadata,
+            extraction.requirements.extend(
+                JobRequirement(
+                    raw_name=item.raw_name,
+                    category=item.category.value,
+                    importance=item.importance.value,
+                    proficiency=item.proficiency.value,
+                    group_id=item.group_id,
+                    group_logic=item.group_logic.value,
+                    min_years=item.min_years,
+                    max_years=item.max_years,
+                    years_text=item.years_text,
+                    evidence=item.evidence,
+                    confidence=item.confidence,
+                )
+                for item in result.requirements
             )
+            session.add(extraction)
+            session.commit()
     finally:
         engine.dispose()
 

@@ -2,23 +2,16 @@
 
 import json
 from datetime import date
-from pathlib import Path
-
 import pytest
-from sqlalchemy import func, select
 
-from app.database import create_database_engine, create_session_factory, initialize_database
 from app.extraction import (
     ExtractionError,
-    ExtractorMetadata,
     build_user_prompt,
     compact_json_schema,
     extract_job,
-    extract_jobs,
-    persist_extraction,
     validate_evidence,
 )
-from app.models import JobDescription, JobExtraction, JobRequirement
+from app.models import JobDescription
 from app.schemas import JobExtractionResult
 
 
@@ -160,14 +153,6 @@ def make_job() -> JobDescription:
     )
 
 
-def make_database(tmp_path: Path):
-    """创建包含全部抽取数据表的临时SQLite数据库。"""
-    database_path = tmp_path / "extraction.db"
-    engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
-    initialize_database(engine)
-    return engine, create_session_factory(engine)
-
-
 def test_build_user_prompt_contains_schema_v3_and_retry_feedback() -> None:
     """验证用户Prompt携带V2字段、JD原文和上一轮错误以支持定向修正。"""
     prompt = build_user_prompt(make_job(), "any_of组至少需要两个成员")
@@ -225,71 +210,3 @@ def test_validate_evidence_rejects_hallucinated_quote() -> None:
 
     with pytest.raises(ExtractionError, match="证据不在JD原文中"):
         validate_evidence(result, make_job().raw_text)
-
-
-def test_persist_extraction_is_idempotent(tmp_path: Path) -> None:
-    """验证同一JD和抽取器版本重复保存时不会产生第二套结果。"""
-    engine, session_factory = make_database(tmp_path)
-    job = make_job()
-    job.id = None
-    with session_factory() as session:
-        session.add(job)
-        session.commit()
-        job_id = job.id
-
-    result = JobExtractionResult.model_validate(valid_payload())
-    metadata = ExtractorMetadata(model_name="fake-model")
-    with session_factory() as session:
-        saved_job = session.get(JobDescription, job_id)
-        assert saved_job is not None
-        first, first_created = persist_extraction(
-            session, saved_job, result, result.model_dump(mode="json"), metadata
-        )
-        second, second_created = persist_extraction(
-            session, saved_job, result, result.model_dump(mode="json"), metadata
-        )
-
-    with session_factory() as session:
-        extraction_count = session.scalar(select(func.count()).select_from(JobExtraction))
-        requirement_count = session.scalar(select(func.count()).select_from(JobRequirement))
-
-    assert first.id == second.id
-    assert first_created is True
-    assert second_created is False
-    assert extraction_count == 1
-    assert requirement_count == 2
-    engine.dispose()
-
-
-def test_extract_jobs_limits_development_batch(tmp_path: Path) -> None:
-    """验证开发批次限制只调用指定数量的JD，避免Prompt调试默认全量请求。"""
-    engine, session_factory = make_database(tmp_path)
-    with session_factory() as session:
-        for index in range(3):
-            job = make_job()
-            job.id = None
-            job.source_hash = f"{index + 1:064x}"
-            job.source_file = f"sample-{index + 1}.md"
-            session.add(job)
-        session.commit()
-
-    client = FakeTwoStageExtractionClient(
-        [
-            discovery_payload(),
-            valid_payload(),
-            discovery_payload(),
-            valid_payload(),
-        ]
-    )
-    summary = extract_jobs(
-        session_factory,
-        client,
-        ExtractorMetadata(model_name="fake-model"),
-        limit=2,
-    )
-
-    assert summary.discovered == 2
-    assert summary.extracted == 2
-    assert summary.failed == 0
-    assert client.calls == 4
-    engine.dispose()

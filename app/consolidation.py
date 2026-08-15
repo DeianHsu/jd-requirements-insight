@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable, Protocol, TypeVar
 
 import httpx
@@ -535,33 +535,6 @@ def consolidate_with_correction(
     return result, raw_response
 
 
-@dataclass
-class ConsolidationFailure:
-    """记录一次跨JD归并在装配或模型调用阶段的失败原因。"""
-
-    scope: str
-    message: str
-
-
-@dataclass
-class ConsolidationSummary:
-    """汇总一次跨JD归并的发现、成功、跳过和失败数量。"""
-
-    discovered: int = 0
-    consolidated: int = 0
-    canonical_count: int = 0
-    skipped: int = 0
-    consolidation_id: int | None = None
-    input_fingerprint: str | None = None
-    extractor_version: str | None = None
-    errors: list[ConsolidationFailure] = field(default_factory=list)
-
-    @property
-    def failed(self) -> int:
-        """返回失败的归并次数。"""
-        return len(self.errors)
-
-
 def scope_key_for(job_ids: set[int] | None) -> str:
     """生成幂等范围键：全部JD为all，指定JD为排序后的job_ids。"""
     if job_ids is None:
@@ -627,80 +600,6 @@ def persist_consolidation(
     )
     session.commit()
     return consolidation, True
-
-
-def consolidate_requirements(
-    session_factory: sessionmaker[Session],
-    client: ConsolidationClient,
-    metadata: ConsolidatorMetadata,
-    max_attempts: int = 2,
-    job_ids: set[int] | None = None,
-    extractor_version: str | None = None,
-) -> ConsolidationSummary:
-    """对选定JD范围执行一次跨JD归并并幂等持久化，失败隔离不中断。
-
-    模型调用为单次 canonical 聚类；mappings 由来源分区确定性生成。
-    合同通过后一次性原子持久化；失败不写入部分批次。同范围同归并器
-    版本同输入指纹已有结果时跳过模型调用并计入skipped。
-    """
-    scope = scope_key_for(job_ids)
-    summary = ConsolidationSummary()
-
-    try:
-        with session_factory() as session:
-            selection = load_consolidation_selection(
-                session,
-                job_ids=job_ids,
-                extractor_version=extractor_version,
-            )
-    except ValueError as exc:
-        summary.errors.append(ConsolidationFailure(scope, str(exc)))
-        return summary
-
-    pool = selection.consolidation_input
-    summary.discovered = len(pool.occurrences)
-    summary.input_fingerprint = selection.input_fingerprint
-    summary.extractor_version = selection.extractor_version
-
-    # 幂等：范围、归并器版本和实际输入指纹全部相同时才跳过模型。
-    with session_factory() as session:
-        existing_consolidation = session.scalar(
-            select(JobConsolidation).where(
-                JobConsolidation.scope_key == scope,
-                JobConsolidation.consolidator_version
-                == metadata.consolidator_version,
-                JobConsolidation.input_fingerprint
-                == selection.input_fingerprint,
-            )
-        )
-    if existing_consolidation is not None:
-        summary.consolidation_id = existing_consolidation.id
-        summary.skipped = summary.discovered
-        return summary
-
-    try:
-        result, raw_response = consolidate_with_correction(
-            pool,
-            client,
-            max_attempts=max_attempts,
-        )
-    except (ConsolidationError, ValueError) as exc:
-        summary.errors.append(ConsolidationFailure(scope, str(exc)))
-        return summary
-
-    # 模型调用结束后再开启写事务，避免网络等待期间长期占用数据库连接。
-    with session_factory() as session:
-        consolidation, created = persist_consolidation(
-            session, selection, result, raw_response, metadata, scope
-        )
-        summary.consolidation_id = consolidation.id
-        if not created:
-            summary.skipped = len(result.mappings)
-            return summary
-
-    summary.consolidated = len(result.mappings)
-    summary.canonical_count = len(result.canonical_requirements)
-    return summary
 
 
 def list_consolidations(
