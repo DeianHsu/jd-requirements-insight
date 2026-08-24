@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime
 import hashlib
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
 from sqlalchemy import select
@@ -23,6 +24,116 @@ from app.extraction_validation import compute_input_fingerprint
 from app.finalization import validate_extraction_finalization_metadata
 from app.models import JobDescription, JobExtraction, JobRequirement
 from app.schemas import JobExtractionResult
+
+
+@dataclass(frozen=True)
+class ApprovedExtraction:
+    """一份已通过上游策略批准、可进入正式表的抽取结果。"""
+
+    job_id: int
+    result: JobExtractionResult
+    metadata: ExtractorMetadata
+    finalization_metadata: dict[str, object]
+
+
+def persist_approved_extractions(
+    session,
+    approved_results: list[ApprovedExtraction],
+) -> list[tuple[JobExtraction, bool]]:
+    """在调用方事务中原子持久化一批已批准抽取，并逐份回读验证。
+
+    本函数不决定结果应由人工还是自动策略批准，也不自行提交事务。调用方
+    只有在整批全部通过后才能 commit；任何一份失败都应 rollback。
+    """
+    if not approved_results:
+        raise ValueError("没有可定稿的抽取结果")
+    job_ids = [item.job_id for item in approved_results]
+    if len(job_ids) != len(set(job_ids)):
+        raise ValueError("同一批定稿结果包含重复 JD")
+
+    persisted: list[tuple[JobExtraction, bool]] = []
+    for approved in approved_results:
+        missing = validate_extraction_finalization_metadata(
+            approved.finalization_metadata
+        )
+        if missing:
+            raise ValueError(f"定稿元数据不完整：{missing}")
+        job = session.get(JobDescription, approved.job_id)
+        if job is None:
+            raise ValueError(f"JD 不存在：{approved.job_id}")
+        approved_fingerprint = extraction_result_fingerprint(approved.result)
+        existing = session.scalar(
+            select(JobExtraction).where(
+                JobExtraction.job_id == approved.job_id,
+                JobExtraction.extractor_version
+                == approved.metadata.extractor_version,
+            )
+        )
+        if existing is not None:
+            existing_raw = existing.raw_response or {}
+            problems = [
+                field
+                for field in (
+                    "approved_run_index",
+                    "approved_result_fingerprint",
+                    "reviewed_by",
+                    "reviewed_at",
+                    "source_run_identifier",
+                    "acceptance_run_identifier",
+                    "report_fingerprint",
+                    "raw_fingerprint",
+                )
+                if existing_raw.get(field)
+                != approved.finalization_metadata.get(field)
+            ]
+            if extraction_result_fingerprint(
+                rebuild_extraction_result(existing)
+            ) != approved_fingerprint:
+                problems.append("result_fingerprint")
+            if problems:
+                raise ValueError(
+                    f"已有正式抽取与本次不同（JD {approved.job_id}）：{problems}"
+                )
+            persisted.append((existing, False))
+            continue
+
+        extraction = JobExtraction(
+            job_id=approved.job_id,
+            extractor_version=approved.metadata.extractor_version,
+            model_name=approved.metadata.model_name,
+            prompt_version=approved.metadata.prompt_version,
+            schema_version=approved.metadata.schema_version,
+            role_family=approved.result.role_family.value,
+            seniority=approved.result.seniority.value,
+            raw_response=approved.finalization_metadata,
+        )
+        session.add(extraction)
+        session.flush()
+        extraction.requirements.extend(
+            JobRequirement(
+                raw_name=item.raw_name,
+                category=item.category.value,
+                importance=item.importance.value,
+                proficiency=item.proficiency.value,
+                group_id=item.group_id,
+                group_logic=item.group_logic.value,
+                min_years=item.min_years,
+                max_years=item.max_years,
+                years_text=item.years_text,
+                evidence=item.evidence,
+                confidence=item.confidence,
+            )
+            for item in approved.result.requirements
+        )
+        session.flush()
+        if extraction_result_fingerprint(
+            rebuild_extraction_result(extraction)
+        ) != approved_fingerprint:
+            raise ValueError(
+                f"回读正式结果与批准结果不一致（JD {approved.job_id}）"
+            )
+        persisted.append((extraction, True))
+    return persisted
 
 
 def _identity_failures(
@@ -191,78 +302,31 @@ def finalize_extraction(
                     "raw_fingerprint": raw_fingerprint,
                 }
             )
-            missing = validate_extraction_finalization_metadata(final_raw)
-            if missing:
-                print(f"定稿元数据不完整：{missing}")
-                return 1
-
-            existing = session.scalar(
-                select(JobExtraction).where(
-                    JobExtraction.job_id == job.id,
-                    JobExtraction.extractor_version == metadata.extractor_version,
+            try:
+                persisted = persist_approved_extractions(
+                    session,
+                    [
+                        ApprovedExtraction(
+                            job_id=job.id,
+                            result=result,
+                            metadata=metadata,
+                            finalization_metadata=final_raw,
+                        )
+                    ],
                 )
-            )
-            if existing is not None:
-                existing_raw = existing.raw_response or {}
-                problems = [
-                    field
-                    for field in (
-                        "approved_run_index",
-                        "approved_result_fingerprint",
-                        "source_run_identifier",
-                        "acceptance_run_identifier",
-                        "report_fingerprint",
-                        "raw_fingerprint",
-                    )
-                    if existing_raw.get(field) != final_raw.get(field)
-                ]
-                if extraction_result_fingerprint(
-                    rebuild_extraction_result(existing)
-                ) != run_fingerprint:
-                    problems.append("result_fingerprint")
-                if problems:
-                    print(f"拒绝定稿：已有正式抽取与本次不同：{problems}")
-                    return 1
-                print(f"已有正式抽取（ID {existing.id}）与本次完全一致，幂等跳过写入。")
-                return 0
-
-            extraction = JobExtraction(
-                job_id=job.id,
-                extractor_version=metadata.extractor_version,
-                model_name=metadata.model_name,
-                prompt_version=metadata.prompt_version,
-                schema_version=metadata.schema_version,
-                role_family=result.role_family.value,
-                seniority=result.seniority.value,
-                raw_response=final_raw,
-            )
-            session.add(extraction)
-            session.flush()
-            extraction.requirements.extend(
-                JobRequirement(
-                    raw_name=item.raw_name,
-                    category=item.category.value,
-                    importance=item.importance.value,
-                    proficiency=item.proficiency.value,
-                    group_id=item.group_id,
-                    group_logic=item.group_logic.value,
-                    min_years=item.min_years,
-                    max_years=item.max_years,
-                    years_text=item.years_text,
-                    evidence=item.evidence,
-                    confidence=item.confidence,
-                )
-                for item in result.requirements
-            )
-            session.flush()
-            if extraction_result_fingerprint(
-                rebuild_extraction_result(extraction)
-            ) != run_fingerprint:
+                session.commit()
+            except ValueError as exc:
                 session.rollback()
-                print("回读正式结果与批准结果不一致，已回滚，拒绝定稿。")
+                print(f"拒绝定稿：{exc}")
                 return 1
-            session.commit()
-            print(f"正式抽取记录 ID：{extraction.id}（新建）")
+            extraction, created = persisted[0]
+            if created:
+                print(f"正式抽取记录 ID：{extraction.id}（新建）")
+            else:
+                print(
+                    f"已有正式抽取（ID {extraction.id}）与本次完全一致，"
+                    "幂等跳过写入。"
+                )
             return 0
     finally:
         engine.dispose()

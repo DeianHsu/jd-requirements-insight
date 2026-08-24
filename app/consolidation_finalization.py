@@ -10,6 +10,7 @@ from pathlib import Path
 from sqlalchemy import select
 
 from app.consolidation import (
+    ConsolidationSelection,
     ConsolidatorMetadata,
     load_consolidation_selection,
     persist_consolidation,
@@ -27,7 +28,11 @@ from app.database import (
     create_database_engine,
     create_session_factory,
 )
-from app.finalization import validate_consolidation_finalization
+from app.finalization import (
+    CONSOLIDATION_FINALIZATION_FIELDS,
+    missing_finalization_fields,
+    validate_consolidation_finalization,
+)
 from app.models import JobConsolidation
 from app.requirement_consolidation import RequirementConsolidationResult
 
@@ -43,6 +48,68 @@ def _raw_identity(raw: dict) -> dict[str, object]:
         "schema_version": raw.get("schema_version"),
         "run_count": raw.get("run_count"),
     }
+
+
+def persist_approved_consolidation(
+    session,
+    session_factory,
+    selection: ConsolidationSelection,
+    result: RequirementConsolidationResult,
+    raw_response: dict[str, object],
+    metadata: ConsolidatorMetadata,
+    scope_key: str,
+) -> tuple[JobConsolidation, bool]:
+    """校验并幂等持久化一个已由上游策略批准的归并结果。"""
+    missing = missing_finalization_fields(
+        raw_response, CONSOLIDATION_FINALIZATION_FIELDS
+    )
+    if missing:
+        raise ValueError(f"归并定稿元数据不完整：{missing}")
+    expected_ids = {
+        occurrence.requirement_id
+        for occurrence in selection.consolidation_input.occurrences
+    }
+    contract = validate_contract(result, expected_ids=expected_ids)
+    identity_failures = validate_exact_identity(result, expected_ids)
+    if contract.coverage != 1.0 or contract.structural_violation_count:
+        raise ValueError("归并合同未通过")
+    if identity_failures:
+        raise ValueError(f"精确 ID 覆盖未通过：{identity_failures}")
+    if any(
+        is_placeholder_canonical_name(item.canonical_name)
+        for item in result.canonical_requirements
+    ):
+        raise ValueError("最终结果包含占位名称")
+
+    existing = session.scalar(
+        select(JobConsolidation).where(
+            JobConsolidation.scope_key == scope_key,
+            JobConsolidation.consolidator_version
+            == metadata.consolidator_version,
+            JobConsolidation.input_fingerprint == selection.input_fingerprint,
+        )
+    )
+    if existing is not None:
+        persisted = load_persisted_consolidation_result(
+            session_factory, existing.id
+        )
+        failures = validate_consolidation_finalization(existing, persisted)
+        if result_fingerprint(persisted.result) != result_fingerprint(result):
+            failures.append("已有正式批次结果与本次不同")
+        for field in (
+            "review_decisions_fingerprint",
+            "source_run_identifier",
+            "approved_result_fingerprint",
+        ):
+            if (existing.raw_response or {}).get(field) != raw_response.get(field):
+                failures.append(f"已有正式批次 {field} 与本次不同")
+        if failures:
+            raise ValueError(f"已有正式归并与本次不同：{failures}")
+        return existing, False
+
+    return persist_consolidation(
+        session, selection, result, raw_response, metadata, scope_key
+    )
 
 
 def finalize_consolidation(
@@ -196,25 +263,6 @@ def finalize_consolidation(
             if selection.input_fingerprint != raw_identity["input_fingerprint"]:
                 print("当前数据库输入与验收输入不一致，拒绝定稿。")
                 return 1
-            expected_ids = {
-                occurrence.requirement_id
-                for occurrence in selection.consolidation_input.occurrences
-            }
-            contract = validate_contract(result, expected_ids=expected_ids)
-            identity_failures = validate_exact_identity(result, expected_ids)
-            if contract.coverage != 1.0 or contract.structural_violation_count:
-                print("归并合同未通过，拒绝定稿。")
-                return 1
-            if identity_failures:
-                print(f"精确 ID 覆盖未通过，拒绝定稿：{identity_failures}")
-                return 1
-            if any(
-                is_placeholder_canonical_name(item.canonical_name)
-                for item in result.canonical_requirements
-            ):
-                print("最终结果包含占位名称，拒绝定稿。")
-                return 1
-
             metadata = ConsolidatorMetadata(
                 model_name=str(raw_identity["model"]),
                 prompt_version=str(raw_identity["prompt_version"]),
@@ -234,39 +282,21 @@ def finalize_consolidation(
                     "approved_result_fingerprint": source_fingerprint,
                 }
             )
-            existing = session.scalar(
-                select(JobConsolidation).where(
-                    JobConsolidation.scope_key == scope_key,
-                    JobConsolidation.consolidator_version
-                    == metadata.consolidator_version,
-                    JobConsolidation.input_fingerprint
-                    == selection.input_fingerprint,
+            try:
+                batch, created = persist_approved_consolidation(
+                    session,
+                    session_factory,
+                    selection,
+                    result,
+                    final_raw,
+                    metadata,
+                    scope_key,
                 )
-            )
-            if existing is not None:
-                persisted = load_persisted_consolidation_result(
-                    session_factory, existing.id
-                )
-                failures = validate_consolidation_finalization(existing, persisted)
-                if result_fingerprint(persisted.result) != result_fingerprint(result):
-                    failures.append("已有正式批次结果与本次不同")
-                if (existing.raw_response or {}).get(
-                    "review_decisions_fingerprint"
-                ) != review_fingerprint:
-                    failures.append("已有正式批次审核决定与本次不同")
-                if (existing.raw_response or {}).get(
-                    "source_run_identifier"
-                ) != source_identifier:
-                    failures.append("已有正式批次来源运行与本次不同")
-                if failures:
-                    print(f"拒绝定稿：{failures}")
-                    return 1
-                print(f"归并批次 ID：{existing.id}（已存在，幂等跳过）")
-                return 0
-            batch, _ = persist_consolidation(
-                session, selection, result, final_raw, metadata, scope_key
-            )
-            print(f"归并批次 ID：{batch.id}（新建）")
+            except ValueError as exc:
+                print(f"拒绝定稿：{exc}")
+                return 1
+            state = "新建" if created else "已存在，幂等跳过"
+            print(f"归并批次 ID：{batch.id}（{state}）")
             return 0
     finally:
         engine.dispose()
