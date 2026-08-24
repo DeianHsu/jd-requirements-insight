@@ -1,25 +1,40 @@
 # 架构
 
-当前目标是把真实 JD 转化为可统计、可审核、可追溯原文证据的市场要求报告。
+当前目标是让使用者把 Markdown JD 目录交给一个命令，得到可统计、可追溯原文证据的
+MVP 市场要求报告。
 
-## 正式数据链
+## 使用者一键主线
 
 ```text
-JD 导入
-→ v0.10 + Schema V3 抽取 acceptance
-  （多次运行、合同检查、规则场景/真实 JD 验证）
-→ report/raw + 人工审核
-→ finalize-extraction 定稿 requirement instances
-→ 归并 acceptance
-  （多次运行、顺序变形、稳定性分析）
-→ report/raw + 人工 must-link / cannot-link / 名称裁决
-→ finalize-consolidation 定稿 canonical requirements 与唯一 mappings
+Markdown JD 目录
+→ 输入目录指纹 → data/private/runs/<fingerprint>/
+→ 导入隔离 SQLite 数据库
+→ v0.10 + Schema V3 两段式抽取（有限纠错）
+→ Schema / coverage / evidence existence / group contracts
+→ auto-v1 系统策略批准 → 共用抽取正式化核心
+→ 单次保守归并（有限纠错；不确定时 singleton）
+→ exact ID coverage / unique mapping / structural contracts
+→ auto-v1 系统策略批准 → 共用归并正式化核心
 → 独立 JD 统计
 → 原文 evidence 追溯
 → 确定性 Markdown 市场报告
 ```
 
-正式 finalize 只消费完整 acceptance 产物及其人工审核记录，不消费单次 candidate。
+抽取先收集整批结果，再在一个事务中正式化；任一 JD 失败时整批不写。归并失败时不产生
+正式批次或报告。运行摘要记录 completed/failed、停止阶段和输入身份；同一输入完整成功后
+直接复用。
+
+## 开发者高保证验证链
+
+```text
+规则场景 / 真实 JD 多次 acceptance
+→ 稳定性与变形分析
+→ 人工规则或 cluster 审计
+→ 文件型 finalize-extraction / finalize-consolidation
+```
+
+这条链用于开发者改变模型、Prompt、Schema 或规则后评估并校准自动边界，不是使用者每批
+JD 的运行步骤。文件型 finalize 与 `analyze-jds` 复用同一正式化写入核心。
 
 ## 可选单次预检支线
 
@@ -31,24 +46,25 @@ JD ─────────────────────────�
                          （快速检查后结束）
 ```
 
-candidate 不进入 acceptance，不作为 finalize 输入，不写正式抽取/归并表。它只用于在发起
-完整多次验收前快速观察一次模型输出，可以完全跳过。
+candidate 不进入一键主线或 acceptance，不作为文件型 finalize 输入，不写正式抽取/归并
+表。它只用于开发者快速观察一次模型输出，可以完全跳过。
 
 ## 模块边界
 
 | 模块 | 职责 |
 |---|---|
+| `app/auto_pipeline.py` | 私有指纹运行空间、一键编排、自动批准、失败摘要与完成结果复用 |
 | `app/ingestion.py` | Markdown JD 导入、输入校验与内容哈希去重 |
 | `app/extraction.py` / `app/extraction_two_stage.py` | 两段式抽取、证据校验与有限重试 |
 | `app/extraction_validation.py` | 抽取合同、规则场景、变形与漂移检查 |
 | `app/requirement_consolidation.py` / `app/consolidation.py` | 归并输入输出合同、单次聚类与确定性 mappings |
 | `app/consolidation_validation.py` | 覆盖、结构、顺序变形与稳定性检查 |
 | `app/candidates.py` | 可选单次 candidate JSON；不得写正式业务表 |
-| `app/extraction_finalization.py` | 抽取 acceptance 身份、人工批准、指纹和原子定稿 |
-| `app/consolidation_finalization.py` | 归并 acceptance、裁决绑定、精确覆盖和原子定稿 |
+| `app/extraction_finalization.py` | 人工/系统策略批准结果共用的幂等、回读校验与原子定稿 |
+| `app/consolidation_finalization.py` | 人工/系统策略批准结果共用的精确覆盖、身份绑定和定稿 |
 | `app/finalization.py` | 正式结果共同门禁、身份审计与抽取来源状态分类 |
 | `app/market_analysis.py` / `app/market_report.py` | 独立 JD 统计、证据追溯、报告门禁与 Markdown 渲染 |
-| `app/cli.py` | 显式数据库目标的预检、定稿、审计、验证和报告入口 |
+| `app/cli.py` | 一键分析及显式数据库目标的开发者预检、定稿、审计、验证和报告入口 |
 | `app/models.py` / `app/database.py` | 关系模型、数据库初始化与当前结构门禁 |
 
 实验脚本只负责编排多次运行、稳定性分析和人工裁决材料；正式数据语义与写入门禁位于
@@ -64,8 +80,9 @@ responsibility 块产出候选人要求。
 
 ### 原文 evidence
 
-每条要求携带 JD 中连续出现的原文证据。自动门禁验证证据存在性，人工审核验证证据是否
-足以支持名称、importance、proficiency 和年限判断。报告可逐项回查来源 JD 与 evidence。
+每条要求携带 JD 中连续出现的原文证据。自动门禁验证证据存在性；开发者 acceptance
+抽查证据是否足以支持名称、importance、proficiency 和年限判断。报告可逐项回查来源
+JD 与 evidence。
 
 ### requirement instance 与 canonical requirement 分层
 
@@ -75,10 +92,14 @@ requirement。每个实例必须且只能映射到一个 canonical，模型输�
 
 ### 身份与正式化
 
-模型运行具有随机性，单次结构合法不等于正式结果。acceptance 记录输入范围、模型、
-Prompt、Schema、运行和结果指纹；人工审核绑定批准运行；finalize 重新核对这些身份后才
-原子写入模型生成的正式抽取或归并数据。重复 finalize 只有在身份和内容完全一致时才幂等
-跳过，失败不得留下部分正式数据。
+模型运行具有随机性，生成函数不能直接写正式表。一键主线以 `auto-v1` 记录输入范围、
+模型、Prompt、Schema、策略版本、批准运行和结果指纹，通过机器硬门后调用共用正式化
+核心；开发者高保证链则由 acceptance 与人工审核提供批准身份。两者都必须在身份和内容
+完全一致时才幂等复用，失败不得留下部分正式数据。
+
+自动硬门能够证明结构合法、覆盖完整、证据文本存在和映射一致，但不能证明每个语义判断
+都正确。因此一键报告是 MVP 分析结果；人工语义审计被移到开发者评测周期，而不是伪装成
+已经自动解决的问题。
 
 报告入口还会回查归并定稿身份、mapping/partition、requirement → extraction → JD 链和
 上游 provenance。缺少现行机器绑定的历史来源只有在私有、范围受限的结构化 waiver
@@ -87,9 +108,9 @@ Prompt、Schema、运行和结果指纹；人工审核绑定批准运行；final
 
 ### 显式数据库目标
 
-所有数据库入口必须显式选择项目数据库或数据库 URL，不能依赖隐式默认值。只读入口不会
-创建不存在的 SQLite 文件；P0-4 实验脚本只接受显式 `--database-url`，便于优先使用
-临时副本。
+一键入口按输入指纹确定私有隔离数据库，不读取或写入隐式项目数据库。其他数据库入口
+必须显式选择项目数据库或数据库 URL；只读入口不会创建不存在的 SQLite 文件。P0-4
+实验脚本只接受显式 `--database-url`，便于优先使用临时副本。
 
 ### 统计口径
 

@@ -1,7 +1,8 @@
 """正式结果定稿合同与来源审计。
 
-模型候选本身不是正式结果。只有带有完整审核绑定的记录才允许被正式
-消费；本模块集中定义该边界，供 finalize、报告和审计入口复用。
+模型生成本身不是正式结果。只有带有完整批准策略与来源身份绑定的记录才允许被正式
+消费；批准可以来自一键系统策略或开发者人工验收。本模块集中定义该边界，供正式化、
+报告和审计入口复用。
 """
 
 from __future__ import annotations
@@ -61,7 +62,7 @@ def missing_finalization_fields(
 def validate_extraction_finalization_metadata(
     raw_response: dict[str, Any] | None,
 ) -> list[str]:
-    """验证正式抽取是否绑定完整验收、审核和来源身份。"""
+    """验证正式抽取是否绑定完整批准策略与来源身份。"""
     return missing_finalization_fields(
         raw_response, EXTRACTION_FINALIZATION_FIELDS
     )
@@ -139,10 +140,10 @@ def validate_consolidation_finalization(
     record: JobConsolidation,
     persisted: PersistedConsolidationResult,
 ) -> list[str]:
-    """验证正式归并的完整审核绑定及持久化结果指纹。
+    """验证正式归并的完整批准绑定及持久化结果指纹。
 
-    报告门禁与审计共用：批次必须带完整人工审核元数据（审核人/时间/
-    批准运行/批准结果指纹/审核决定指纹）与最终结果指纹，缺任一字段
+    报告门禁与审计共用：批次必须带完整批准元数据（批准主体/时间/
+    批准运行/批准结果指纹/策略或审核决定指纹）与最终结果指纹，缺任一字段
     或指纹与当前持久化结果不一致都失败；reviewed_at 必须可解析。
     """
     raw_response = record.raw_response or {}

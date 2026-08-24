@@ -3,23 +3,24 @@
 ## 当前唯一主线
 
 ```text
-JD 导入
-→ v0.10 + Schema V3 抽取 acceptance（多次运行 + 合同检查）
-→ 人工审核 → finalize-extraction
-→ requirement instance 归并 acceptance（多次运行 + 稳定性分析）
-→ 人工裁决 → finalize-consolidation
+Markdown JD 目录 → analyze-jds --execute
+→ 私有指纹运行空间与数据库
+→ v0.10 + Schema V3 两段式抽取（有限纠错 + 自动硬门）
+→ 系统策略定稿 requirement instances
+→ 单次保守归并（有限纠错 + exact coverage / structural hard gates）
+→ 系统策略定稿 canonical requirements 与 mappings
 → 独立 JD 统计
 → 原文证据追溯
 → Markdown 市场分析报告
 ```
 
-`extract-jds --candidate-output` 与
-`consolidate-requirements --candidate-output` 只生成可选的单次私有预检，
-不是正式链必经步骤，产物
-不作为 finalize 输入，也不得写入正式抽取/归并表。
+`analyze-jds` 是使用者主线，不要求逐批人工审核。原有 acceptance、稳定性分析、
+人工审核和文件型 finalize 是开发者修改模型、Prompt 或规则时使用的离线评测与高保证
+工具，不是日常使用步骤。candidate 命令仍只生成可选私有预检，不写正式表。
 
-v0.1 已完成并冻结。默认只维护当前闭环、修复明确缺陷并保持可复现性；
-未经用户明确授权，不扩充样本、不新增功能、不进入下一实施阶段。
+v0.1 高保证验收基线已完成并冻结；现行 MVP 增加了获用户授权的一键自动主线。
+默认只维护当前闭环、修复明确缺陷并保持可复现性；未经用户明确授权，不扩充样本、
+不新增功能、不进入下一实施阶段。
 
 不维护已淘汰、冻结或不服务当前 MVP 的功能；不维护旧方案与历史兼容
 （旧抽取版本、旧 Schema、旧数据库结构、层级关系）。历史由 Git 保存。
@@ -87,9 +88,11 @@ AGENTS.md「生产验收协议」小节选择审计等级执行（普通提交�
 
 ## 评审日志（Review Log）
 
-- 每次任务完成时，将**给用户的简短总结回复**（任务做了什么、核实结论、
+- 完成开发、代码修改、文档修改或测试工作时，将**给用户的简短总结回复**（任务做了什么、核实结论、
   执行提交、验证结果、当前状态）**覆盖更新**到 `docs/REVIEW_LOG.md`——
   文档只保留最后一次任务的简短总结，不保留历史（历史由 Git 保存）；
+- 只进行讨论、分析或制定方案、未修改项目文件且未执行项目测试时，不同步
+  `docs/REVIEW_LOG.md`；
 - 定位：供外部 Reviewer（如 ChatGPT）读取的最近一轮执行摘要；外部评审
   文本由 Reviewer 自己持有，不复制评审全文；
 - Review Log 不记录提交是否已推送；远程状态以 Git/GitHub 为准；

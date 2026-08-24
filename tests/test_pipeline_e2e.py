@@ -743,37 +743,19 @@ def test_documented_commands_and_paths_exist() -> None:
     assert Path("docs/VALIDATION.md").exists()
     assert not Path("docs/annotation").exists()
 
-    # 关键示例命令包含脚本要求的必要参数（文档合同）。
+    # README 只把一键命令作为使用者主入口，开发者工具转由脚本导航维护。
     readme = Path("README.md").read_text(encoding="utf-8")
     normalized_readme = " ".join(
         line.strip().removesuffix("`").strip() for line in readme.splitlines()
     )
     normalized_readme = " ".join(normalized_readme.split())
-    assert "extract-jds --all --candidate-output" in normalized_readme
-    assert "consolidate-requirements --all --candidate-output" in normalized_readme
-    assert "finalize-extraction --report" in normalized_readme
-    assert "finalize-consolidation --report" in normalized_readme
-    assert '$consolidationId = Read-Host "Consolidation ID"' in readme
-    assert "--consolidation-id $consolidationId" in normalized_readme
-    assert "--consolidation-id 1" not in normalized_readme
-    assert "--use-project-database" in normalized_readme
-    assert (
-        "run_real_jd_acceptance --use-project-database --all --execute"
-        in normalized_readme
-    )
-    assert (
-        "scripts.experiments.p0_4.run_acceptance --database-url"
-        in normalized_readme
-    )
-    assert "--raw-output data/private/consolidation-acceptance-raw.json" in (
-        normalized_readme
-    )
-    assert "run_acceptance --use-project-database --all --execute" not in (
-        normalized_readme
-    )
+    assert "app.cli analyze-jds data/raw_jds --execute" in normalized_readme
+    assert "data/private/runs/<输入指纹>/" in normalized_readme
+    assert "不是使用者每批 JD 的必经路径" in normalized_readme
+    assert "scripts/README.md" in normalized_readme
     current_state = Path("docs/CURRENT_STATE.md").read_text(encoding="utf-8")
-    assert "单次" in current_state
-    assert "不作为 finalize" in current_state
+    assert "日常运行不需要人工审核" in current_state
+    assert "auto-v1" in current_state
     validation = Path("docs/VALIDATION.md").read_text(encoding="utf-8")
     assert "--use-project-database" in validation
     assert "--database-url" in validation

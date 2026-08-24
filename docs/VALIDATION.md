@@ -29,8 +29,8 @@ RAG       → 有RAG项目经验者优先
 只引用 `RAG` 不足以支持 `preferred` 判断。
 
 **证据存在性 ≠ 证据支持性（`EVID-04`）**：自动校验只能确认证据文本存在于
-原文（证据存在性）；证据是否确实足以支持名称和字段判断（证据支持性）仍需
-人工复核。
+原文（证据存在性）；证据是否确实足以支持名称和字段判断（证据支持性）由开发者
+acceptance 的人工抽查评估，不是每次一键运行的人工步骤。
 
 ## 2. 覆盖规则（COVER）
 
@@ -49,9 +49,20 @@ RAG       → 有RAG项目经验者优先
 | 规则场景 | 领域中性的基础输入 + 确定性变换 + 期望属性（不保存完整 expected extraction）；变换返回锚点映射与变化区域 | 正式 | `data/rule_scenarios/` |
 | 变形测试 | 对同一基础输入应用确定性变换后比较两次抽取，以 TransformationResult 锚点对齐（支持一句拆两句的一对多映射与重复句 occurrence） | 正式（hard gate 依据） | `data/rule_scenarios/` + 验证脚本 |
 | 多次运行稳定性 | 相同输入独立运行多次，以候选块为锚点报告块对齐与漂移；只作 warning | 正式（warning） | 验证脚本 |
-| 人工规则审计 | 人工按规则 ID 检查输出是否违反规则、证据是否支持结论，记录 `rule_id`/`violation`/`severity`/`evidence_reference`/`reason`/`recommended_action` | 正式（人工职责） | 审计报告 |
+| 人工规则审计 | 开发者按规则 ID 抽查输出是否违反规则、证据是否支持结论，记录 `rule_id`/`violation`/`severity`/`evidence_reference`/`reason`/`recommended_action` | 开发评测，不是逐批运行步骤 | 审计报告 |
 
-## 4. 抽取 acceptance
+## 4. 一键主线自动合同
+
+`analyze-jds` 对每批输入只执行一次抽取和一次归并，两阶段都允许现有有限纠错重试。
+抽取必须通过 Schema、发现段完整唯一覆盖、块处理、逻辑组和证据存在性合同；整批结果
+收齐后才原子正式化。归并必须通过完整唯一来源分区、exact requirement ID coverage、
+唯一 mapping、结构违规为零和非占位名称检查，失败不生成正式批次或报告。
+
+这些 hard gates 约束可机器证明的结构与身份，不证明 evidence 支持性或 cluster 语义必然
+正确。自动策略通过记录 `approval_mode=automatic`、`policy_version=auto-v1`、批准运行与
+输入/结果指纹明确这一边界。
+
+## 5. 开发者抽取 acceptance
 
 - **规则场景 acceptance**（`scripts/experiments/p0_3/run_acceptance.py`）：
   所有场景的 base 与 transformed 各运行一次；少量高风险场景可用
@@ -63,10 +74,10 @@ RAG       → 有RAG项目经验者优先
   显式选择数据库（`--use-project-database` 或 `--database-url`）与 JD、
   每份 JD 支持重复运行、Schema/coverage/evidence/逻辑组合同检查、项目
   数量与字段漂移、异常项索引供人工复核。
-  人工直接根据验证报告判断当前抽取方案是否可以进入下游，不开发额外
-  批准系统。
+  开发者根据验证报告与人工抽查判断当前自动抽取策略是否仍适合使用，不开发额外
+  在线批准系统。
 
-## 5. 归并 acceptance
+## 6. 开发者归并 acceptance
 
 归并 acceptance 只处理 requirement instance → canonical requirement → unique mapping。
 归并模型一次输出 canonical requirements 和来源实例分区（模型只负责决定
@@ -81,7 +92,7 @@ cluster）；mappings 由确定性代码从来源分区生成并持久化。
 - canonical 数量漂移；
 - singleton 比例漂移；
 - 输入顺序变形；
-- 人工检查所有多成员 cluster。
+- 开发评测时人工检查代表性多成员 cluster。
 
 输出结构：input fingerprint、run count、coverage、structural failures、
 positive-pair Jaccard、canonical count range、singleton ratio range、
@@ -89,7 +100,7 @@ order transformation result、manual cluster review notes。顺序变形的
 合同违规（coverage/结构违规）与聚类失败计入 hard gate；jaccard 低于
 阈值只作 warning。
 
-## 6. 当前合同适用范围
+## 7. 当前合同适用范围
 
 仅接受 v0.10 + Schema V3 与现行数据库结构；其他版本或结构明确拒绝，不迁移、
 不兼容。
