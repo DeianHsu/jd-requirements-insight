@@ -8,6 +8,11 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from app.auto_pipeline import (
+    AutoPipelineError,
+    input_directory_fingerprint,
+    run_auto_pipeline,
+)
 from app.config import load_llm_settings
 from app.candidates import (
     write_consolidation_candidate,
@@ -90,6 +95,60 @@ def database_resources(
             console.print("[red]数据库尚未初始化；只读命令不会创建业务表。[/red]")
             raise typer.Exit(code=1)
     return engine, create_session_factory(engine)
+
+
+@cli.command("analyze-jds")
+def analyze_jds(
+    directory: Path = typer.Argument(..., help="包含 Markdown JD 的目录"),
+    execute: bool = typer.Option(
+        False, "--execute", help="确认发起付费模型调用（必需）"
+    ),
+    max_attempts: int = typer.Option(2, min=1, max=5),
+    output: Path | None = typer.Option(
+        None,
+        "--output",
+        help="另存 Markdown 报告；默认保存在私有运行目录",
+    ),
+) -> None:
+    """一键导入 JD、自动硬门定稿抽取与归并，并生成私有报告。"""
+    try:
+        input_fingerprint = input_directory_fingerprint(directory)
+    except (FileNotFoundError, NotADirectoryError, ValueError, OSError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+    file_count = len(list(directory.glob("*.md")))
+    console.print(f"输入：[bold]{file_count}[/bold] 份 JD")
+    console.print(f"输入指纹：[bold]{input_fingerprint[:12]}…[/bold]")
+    console.print("策略：[bold]单次生成 + 当前合同硬门 + 自动正式化[/bold]")
+    if not execute:
+        console.print("[yellow]未执行：付费模型调用需要显式 --execute 确认。[/yellow]")
+        raise typer.Exit(code=2)
+
+    settings = load_llm_settings()
+    missing = settings.missing_fields()
+    if missing:
+        console.print(f"[red]缺少LLM配置：{', '.join(missing)}[/red]")
+        console.print("请复制 .env.example 为 .env，并填写真实配置。")
+        raise typer.Exit(code=1)
+    console.print(f"模型：[bold]{settings.model}[/bold]")
+    try:
+        result = run_auto_pipeline(
+            directory,
+            OpenAICompatibleExtractionClient(settings),
+            OpenAICompatibleConsolidationClient(settings),
+            ExtractorMetadata(model_name=settings.model),
+            ConsolidatorMetadata(model_name=settings.model),
+            max_attempts=max_attempts,
+            output=output,
+        )
+    except AutoPipelineError as exc:
+        console.print(f"[red]流水线在 {exc.stage} 阶段停止：{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+    state = "复用已完成结果" if result.reused else "完成"
+    console.print(f"[green]分析{state}。[/green]")
+    console.print(f"报告：[cyan]{result.report_path}[/cyan]")
+    console.print(f"私有运行目录：[cyan]{result.workspace}[/cyan]")
+    console.print(f"归并批次：[bold]{result.consolidation_id}[/bold]")
 
 
 @cli.command("import-jds")
