@@ -88,7 +88,9 @@ JD 与 evidence。
 
 抽取产生保留事实和证据的 requirement instance；归并只创建跨 JD 统计用的 canonical
 requirement。每个实例必须且只能映射到一个 canonical，模型输出来源分区，代码确定性
-生成 mappings。归并不得改写实例属性或证据。
+生成 mappings。归并调用通过 Responses API 传入与本地 Pydantic 复验同源的
+JSON Schema，未知字段、缺失字段、空来源与类型错误不是可兼容输出。
+归并不得改写实例属性或证据。
 
 ### 身份与正式化
 

@@ -1,19 +1,17 @@
 # 评审日志（Review Log）
 
-## 最近一轮：修复归并来源字段漂移（2026-09-21）
+## 最近一轮：归并改为 JSON Schema 结构化生成（2026-09-21）
 
-- 修复一键主线归并阶段因模型将 `source_requirement_ids` 误写为
-  `source_requirement_id` 而失败的问题。仅对列表型、无歧义的单复数字段漂移
-  进行无损纠正，不猜测或补造来源 ID。
-- 正确复数字段与冗余空单数字段同时出现时，忽略冗余字段；只有空单数
-  字段、单复数值冲突、标量别名或其他额外字段仍由严格 Schema 和完整分区
-  硬门拒绝，不会进入正式数据。
-- 归并 Prompt 升级为 4.4，明确要求复数字段、非空整数数组和禁止额外
-  字段；有限重试也会把同一组具体修正要求返馈给模型。
-- 增加回归覆盖：单数别名无损纠正、冗余空别名、冲突别名拒绝、截图中
-  空单数字段触发定向重试；同步当前验证合同。本轮未调用付费模型、
-  未修改私有 JD 或正式数据库。
-- 验证：项目虚拟环境执行全量测试，348 项全部通过；`uv run ruff check app scripts tests`
-  通过。`uv run pytest` 在当前 Windows 环境仍因 uv trampoline 路径标准化失败，
-  已用同一项目 `.venv` 的 `python -m pytest` 完成等价全量验证。
+- 删除上一轮对错误 `source_requirement_id` 的返回后别名兼容，不再接受或修补
+  任何非正式字段。正式合同只有必填、非空的 `source_requirement_ids`。
+- 归并客户端从 Chat Completions `json_object` 切换到 DeepSeek Responses API
+  `json_schema`，生成阶段直接使用与本地 Pydantic 复验同源的完整响应合同。
+  未知字段、缺失字段、空来源和类型错误由生成 Schema 阻止。
+- 本地仍在返回后执行同一 Pydantic 合同，并保留精确 ID 覆盖、唯一分区、
+  未知 ID 与确定性 mapping 等跨项语义硬门；归并 Prompt/执行身份升级为 4.5。
+- OpenAI SDK 最低版本调整为 2.0 并更新锁文件；同步架构、当前状态和
+  验证合同。本轮未调用付费模型，未修改私有 JD 或正式数据库。
+- 验证：项目 `.venv` 执行全量测试，346 项全部通过；
+  `uv run ruff check app scripts tests` 通过。`uv run pytest` 仍因当前 Windows 的 uv
+  trampoline 路径标准化失败，已用同一项目虚拟环境完成等价全量验证。
 - 用户已有未跟踪 `.idea/` 保持原状。

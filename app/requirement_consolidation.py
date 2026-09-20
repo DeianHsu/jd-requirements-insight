@@ -68,7 +68,7 @@ class CanonicalRequirement(BaseModel):
 
     canonical_requirement_id: str = Field(min_length=1, max_length=100)
     canonical_name: str = Field(min_length=1, max_length=255)
-    source_requirement_ids: list[int] = Field(default_factory=list)
+    source_requirement_ids: list[int] = Field(min_length=1)
     rationale: str = Field(min_length=1)
     confidence: float = Field(ge=0, le=1)
 
@@ -88,6 +88,14 @@ class CanonicalRequirement(BaseModel):
         if len(values) != len(set(values)):
             raise ValueError("标准要求项来源实例ID不能重复")
         return values
+
+
+class CanonicalRequirementsResponse(BaseModel):
+    """定义归并模型一次输出的完整结构化响应合同。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    canonical_requirements: list[CanonicalRequirement] = Field(min_length=1)
 
 
 class RequirementMapping(BaseModel):

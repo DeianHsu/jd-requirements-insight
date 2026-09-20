@@ -1,6 +1,8 @@
 """验证P0-4归并LLM客户端、当前 Prompt、单次聚类解析与有限重试闭环。"""
 
 import json
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -111,7 +113,7 @@ def valid_result_payload() -> dict[str, object]:
 
 def test_current_prompt_is_domain_agnostic() -> None:
     """验证当前 Prompt 不绑定任何具体领域技能，只描述单次聚类任务。"""
-    assert CONSOLIDATION_PROMPT_VERSION == "4.4"
+    assert CONSOLIDATION_PROMPT_VERSION == "4.5"
     assert CONSOLIDATION_SCHEMA_VERSION == "3.0"
     for domain_word in ("Python", "RAG", "LangChain", "Agent", "大模型", "AI"):
         assert domain_word not in CONSOLIDATION_SYSTEM_PROMPT
@@ -132,19 +134,39 @@ def test_metadata_combines_version_components() -> None:
     metadata = ConsolidatorMetadata(model_name="test-model")
 
     assert metadata.consolidator_version == (
-        "test-model|prompt:4.4|schema:3.0"
+        "test-model|prompt:4.5|schema:3.0"
     )
 
 
-def test_real_client_uses_explicit_full_batch_timeout_and_retry_policy() -> None:
-    """验证归并使用显式读取超时，并由项目层而非SDK隐式控制重试。"""
+def test_real_client_uses_responses_json_schema_and_explicit_retry_policy() -> None:
+    """验证生成阶段使用完整 JSON Schema，不再只请求合法 JSON。"""
     client = OpenAICompatibleConsolidationClient(
         LLMSettings(api_key="test-key", model="test-model")
     )
+    create = Mock(return_value=SimpleNamespace(output_text="{}"))
+    client._client.responses.create = create
+
+    assert client.complete("系统提示", "用户提示") == "{}"
 
     assert client._client.timeout.connect == 5.0
     assert client._client.timeout.read == CONSOLIDATION_READ_TIMEOUT_SECONDS
     assert client._client.max_retries == 0
+    request = create.call_args.kwargs
+    assert request["instructions"] == "系统提示"
+    assert request["input"] == "用户提示"
+    output_format = request["text"]["format"]
+    assert output_format["type"] == "json_schema"
+    assert output_format["name"] == "canonical_requirements_response"
+    schema = output_format["schema"]
+    assert schema["additionalProperties"] is False
+    assert schema["required"] == ["canonical_requirements"]
+    canonical_schema = schema["$defs"]["CanonicalRequirement"]
+    assert canonical_schema["additionalProperties"] is False
+    assert "source_requirement_ids" in canonical_schema["required"]
+    assert canonical_schema["properties"]["source_requirement_ids"][
+        "minItems"
+    ] == 1
+    assert "source_requirement_id" not in canonical_schema["properties"]
     client._client.close()
 
 
@@ -186,64 +208,29 @@ def test_valid_response_parses_and_generates_mappings() -> None:
     assert raw["model_response"]["canonical_requirements"][0]["canonical_requirement_id"] == "requirement-a"
 
 
-def test_singular_source_ids_list_is_normalized_without_changing_ids() -> None:
-    """模型只把复数字段误写成单数时，无损修正并继续严格校验。"""
+def test_singular_source_ids_is_rejected_without_compatibility_alias() -> None:
+    """本地复验与生成 Schema 一致，不接受错误单数字段。"""
     payload = valid_result_payload()
     canonical = payload["canonical_requirements"][0]
     canonical["source_requirement_id"] = canonical.pop(
         "source_requirement_ids"
     )
 
-    result, raw = consolidate_with_correction(
-        consolidation_input(), FakeConsolidationClient([payload])
-    )
-
-    assert result.canonical_requirements[0].source_requirement_ids == [1, 2]
-    assert raw["model_response"]["canonical_requirements"][0][
-        "source_requirement_id"
-    ] == [1, 2]
-
-
-def test_redundant_empty_singular_source_ids_is_ignored() -> None:
-    """同时存在正确复数字段时，忽略冗余的空单数字段。"""
-    payload = valid_result_payload()
-    payload["canonical_requirements"][0]["source_requirement_id"] = []
-
-    result, _ = consolidate_with_correction(
-        consolidation_input(), FakeConsolidationClient([payload])
-    )
-
-    assert result.canonical_requirements[0].source_requirement_ids == [1, 2]
-
-
-def test_conflicting_singular_source_ids_is_rejected() -> None:
-    """单复数字段非空且冲突时不猜测模型意图。"""
-    payload = valid_result_payload()
-    payload["canonical_requirements"][0]["source_requirement_id"] = [2]
-
-    with pytest.raises(ConsolidationError, match="Extra inputs"):
-        consolidate_with_correction(
-            consolidation_input(),
-            FakeConsolidationClient([payload]),
-            max_attempts=1,
+    with pytest.raises(ConsolidationError, match="source_requirement_ids"):
+        parse_canonical_requirements_response(
+            json.dumps(payload, ensure_ascii=False)
         )
 
 
-def test_empty_singular_source_ids_triggers_explicit_retry() -> None:
-    """截图中的空单数字段不会正式化，并得到明确纠错指令。"""
-    bad_payload = valid_result_payload()
-    canonical = bad_payload["canonical_requirements"][0]
-    canonical.pop("source_requirement_ids")
-    canonical["source_requirement_id"] = []
-    client = FakeConsolidationClient([bad_payload, valid_result_payload()])
+def test_empty_source_ids_is_rejected_by_response_contract() -> None:
+    """空来源在单项 Schema 层就被拒绝，不依赖后续分区检查。"""
+    payload = valid_result_payload()
+    payload["canonical_requirements"][0]["source_requirement_ids"] = []
 
-    result, _ = consolidate_with_correction(consolidation_input(), client)
-
-    assert client.calls == 2
-    assert len(result.mappings) == 2
-    assert "source_requirement_ids（复数）" in client.prompts[1]
-    assert "非空整数数组" in client.prompts[1]
-    assert "不得输出source_requirement_id（单数）" in client.prompts[1]
+    with pytest.raises(ConsolidationError, match="source_requirement_ids"):
+        parse_canonical_requirements_response(
+            json.dumps(payload, ensure_ascii=False)
+        )
 
 
 def test_invalid_json_raises_consolidation_error() -> None:

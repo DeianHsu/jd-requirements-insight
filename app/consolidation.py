@@ -40,6 +40,7 @@ from app.models import (
 )
 from app.requirement_consolidation import (
     CanonicalRequirement,
+    CanonicalRequirementsResponse,
     RequirementConsolidationInput,
     RequirementConsolidationResult,
     RequirementOccurrence,
@@ -49,14 +50,14 @@ from app.requirement_consolidation import (
 )
 from app.schemas import RequirementItem
 
-# 当前归并合同 v4.4 / Schema 3.0：单次聚类输出 canonical + 来源分区，
+# 当前归并合同 v4.5 / Schema 3.0：单次聚类输出 canonical + 来源分区，
 # mappings 由确定性代码生成。
-CONSOLIDATION_PROMPT_VERSION = "4.4"
+CONSOLIDATION_PROMPT_VERSION = "4.5"
 CONSOLIDATION_SCHEMA_VERSION = "3.0"
 CONSOLIDATION_READ_TIMEOUT_SECONDS = 900.0
 
 
-# Prompt v4.4：单次聚类，只输出 canonical requirements 与来源分区；
+# Prompt v4.5：单次聚类，只输出 canonical requirements 与来源分区；
 # 不输出 mappings、不输出任何关系或层级结构。
 CONSOLIDATION_SYSTEM_PROMPT = """你是跨JD岗位要求归并器。输入是一批来自不同JD的原子要求实例，你需要判断哪些实例指向同一招聘条件，输出标准要求项（canonical requirements）。只能依据每个实例提供的原始名称和证据上下文判断，不得补充任何领域知识或行业常识。
 
@@ -174,22 +175,27 @@ class OpenAICompatibleConsolidationClient:
         self._model = settings.model
 
     def complete(self, system_prompt: str, user_prompt: str) -> str:
-        """调用LLM并返回消息正文，接口异常会被包装成统一归并错误。"""
+        """调用LLM严格结构化输出，接口异常会被包装成统一归并错误。"""
         try:
-            # JSON Object模式先约束输出形态，具体字段仍由Pydantic进行严格校验。
-            response = self._client.chat.completions.create(
+            # DeepSeek Chat Completions 只保证合法 JSON；Responses API
+            # 可在生成阶段直接执行同一份 Pydantic JSON Schema。
+            response = self._client.responses.create(
                 model=self._model,
                 temperature=0,
-                response_format={"type": "json_object"},
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
+                instructions=system_prompt,
+                input=user_prompt,
+                text={
+                    "format": {
+                        "type": "json_schema",
+                        "name": "canonical_requirements_response",
+                        "schema": CanonicalRequirementsResponse.model_json_schema(),
+                    }
+                },
             )
         except Exception as exc:
             raise ConsolidationError(f"LLM调用失败：{exc}") from exc
 
-        content = response.choices[0].message.content
+        content = response.output_text
         if not content:
             raise ConsolidationError("LLM返回了空内容")
         return content
@@ -399,52 +405,16 @@ def build_canonical_requirements_prompt(
 def parse_canonical_requirements_response(
     response_text: str,
 ) -> list[CanonicalRequirement]:
-    """解析模型响应，仅修正可明确判定的来源字段单复数漂移。"""
+    """解析模型响应，并使用与生成约束相同的 Pydantic 合同复验。"""
     try:
         payload = json.loads(response_text)
     except json.JSONDecodeError as exc:
         raise ConsolidationError(f"模型返回的内容不是合法JSON：{exc}") from exc
-    if not isinstance(payload, dict):
-        raise ConsolidationError("模型输出不符合归并合同：顶层必须是JSON对象")
-    items = payload.get("canonical_requirements")
-    if not isinstance(items, list) or not items:
-        raise ConsolidationError(
-            "模型输出不符合归并合同：缺少canonical_requirements"
-        )
-    normalized_items = [
-        _normalize_unambiguous_source_ids_alias(item) for item in items
-    ]
     try:
-        return [
-            CanonicalRequirement.model_validate(item)
-            for item in normalized_items
-        ]
+        response = CanonicalRequirementsResponse.model_validate(payload)
     except ValidationError as exc:
         raise ConsolidationError(f"模型输出不符合归并合同：{exc}") from exc
-
-
-def _normalize_unambiguous_source_ids_alias(item: object) -> object:
-    """兼容模型将复数来源字段误写为单数的无歧义情形。
-
-    只在单数字段仍为列表，且可以无损重命名或确认为冗余时修正。
-    标量、非空冲突或其他额外字段仍交给严格 Schema 拒绝；
-    空列表即使被重命名，也会在后续分区硬门中被拒绝。
-    """
-    if not isinstance(item, dict) or "source_requirement_id" not in item:
-        return item
-
-    normalized = dict(item)
-    singular_value = normalized["source_requirement_id"]
-    if not isinstance(singular_value, list):
-        return normalized
-
-    plural_value = normalized.get("source_requirement_ids")
-    if plural_value is None:
-        normalized["source_requirement_ids"] = singular_value
-        normalized.pop("source_requirement_id")
-    elif singular_value == [] or singular_value == plural_value:
-        normalized.pop("source_requirement_id")
-    return normalized
+    return response.canonical_requirements
 
 
 T = TypeVar("T")

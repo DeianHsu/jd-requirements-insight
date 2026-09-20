@@ -149,7 +149,7 @@ def test_contract_detects_empty_cluster() -> None:
                 rationale="独立要求",
                 confidence=0.9,
             ),
-            CanonicalRequirement(
+            CanonicalRequirement.model_construct(
                 canonical_requirement_id="cr-empty",
                 canonical_name="空cluster",
                 source_requirement_ids=[],
@@ -415,9 +415,10 @@ def test_empty_source_canonical_is_rejected_and_retried() -> None:
     assert client.calls == 2
     assert result.canonical_requirements[0].canonical_requirement_id == "cr-0"
     assert len(result.mappings) == 2
-    # 分区合同错误反馈进修正提示。
-    assert "没有来源实例" in client.prompts[1]
+    # 空项先由生成/解析共用 Schema 拒绝，并反馈进修正提示。
+    assert "source_requirement_ids" in client.prompts[1]
+    assert "非空整数数组" in client.prompts[1]
 
-    # 无重试机会时分区合同错误直接失败。
-    with pytest.raises(ConsolidationError, match="没有来源实例"):
+    # 无重试机会时 Schema 合同错误直接失败。
+    with pytest.raises(ConsolidationError, match="source_requirement_ids"):
         consolidate_with_correction(source, NoisyClient(), max_attempts=1)

@@ -270,7 +270,7 @@ def test_finalize_persists_reviewed_run(monkeypatch, tmp_path) -> None:
             batch = session.query(JobConsolidation).one()
             assert batch.occurrence_count == 3
             assert batch.consolidator_version == (
-                "test-model|prompt:4.4|schema:3.0"
+                "test-model|prompt:4.5|schema:3.0"
             )
     finally:
         engine.dispose()

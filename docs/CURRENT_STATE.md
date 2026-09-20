@@ -56,8 +56,8 @@ finalize 保留为开发者修改模型、Prompt、Schema 或规则后的离线�
 - 单次 candidate 只写新建的私有 JSON，不写模型生成的正式抽取或归并数据；
 - 自动抽取只在整批 JD 全部通过 Schema、分句覆盖、逻辑组和 evidence 存在性检查后
   原子写入；任一 JD 失败时不留下正式抽取；
-- 自动归并重新验证输入指纹、精确 requirement ID 覆盖、唯一映射、结构合同和占位名称；
-  失败时不留下正式归并或报告；
+- 自动归并生成阶段使用 JSON Schema 结构化输出，并重新验证输入指纹、精确
+  requirement ID 覆盖、唯一映射、结构合同和占位名称；失败时不留下正式归并或报告；
 - 文件型 extraction/consolidation finalize 继续校验完整 acceptance、人工批准/裁决、
   当前数据库输入、结果/文件指纹和结构合同；
 - 重复正式化只有在身份、内容和批准绑定完全一致时才幂等跳过；

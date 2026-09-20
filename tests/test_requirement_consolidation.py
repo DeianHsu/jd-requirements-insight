@@ -336,22 +336,25 @@ def test_instance_declared_in_two_canonicals_is_rejected() -> None:
 def test_canonical_without_source_instance_is_rejected() -> None:
     """声明了来源为空的标准项被拒绝（每个 canonical 至少一个来源）。"""
     source = consolidation_input()
-    result = merged_result().model_dump(mode="json")
-    result["canonical_requirements"].append(
-        {
-            "canonical_requirement_id": "requirement-b",
-            "canonical_name": "能力乙",
-            "source_requirement_ids": [],
-            "rationale": "无来源标准项",
-            "confidence": 0.8,
-        }
+    valid_result = merged_result()
+    empty_canonical = CanonicalRequirement.model_construct(
+        canonical_requirement_id="requirement-b",
+        canonical_name="能力乙",
+        source_requirement_ids=[],
+        rationale="无来源标准项",
+        confidence=0.8,
     )
-    result["mappings"][1]["canonical_requirement_id"] = "requirement-b"
+    valid_result.mappings[1].canonical_requirement_id = "requirement-b"
+    result = RequirementConsolidationResult.model_construct(
+        canonical_requirements=[
+            *valid_result.canonical_requirements,
+            empty_canonical,
+        ],
+        mappings=valid_result.mappings,
+    )
 
     with pytest.raises(ValueError, match="没有来源实例"):
-        validate_requirement_coverage(
-            source, RequirementConsolidationResult.model_validate(result)
-        )
+        validate_requirement_coverage(source, result)
 
 
 def test_mapping_conflicts_with_source_partition() -> None:
