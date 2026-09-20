@@ -57,6 +57,8 @@ acceptance 的人工抽查评估，不是每次一键运行的人工步骤。
 抽取必须通过 Schema、发现段完整唯一覆盖、块处理、逻辑组和证据存在性合同；整批结果
 收齐后才原子正式化。归并必须通过完整唯一来源分区、exact requirement ID coverage、
 唯一 mapping、结构违规为零和非占位名称检查，失败不生成正式批次或报告。
+模型仅将 `source_requirement_ids` 误写为列表型单数别名时可无损纠正；
+空来源、冲突来源和其他额外字段仍由上述硬门拒绝。
 
 这些 hard gates 约束可机器证明的结构与身份，不证明 evidence 支持性或 cluster 语义必然
 正确。自动策略通过记录 `approval_mode=automatic`、`policy_version=auto-v1`、批准运行与

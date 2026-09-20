@@ -109,9 +109,9 @@ def valid_result_payload() -> dict[str, object]:
     }
 
 
-def test_prompt_v41_is_domain_agnostic() -> None:
+def test_current_prompt_is_domain_agnostic() -> None:
     """验证当前 Prompt 不绑定任何具体领域技能，只描述单次聚类任务。"""
-    assert CONSOLIDATION_PROMPT_VERSION == "4.3"
+    assert CONSOLIDATION_PROMPT_VERSION == "4.4"
     assert CONSOLIDATION_SCHEMA_VERSION == "3.0"
     for domain_word in ("Python", "RAG", "LangChain", "Agent", "大模型", "AI"):
         assert domain_word not in CONSOLIDATION_SYSTEM_PROMPT
@@ -120,6 +120,8 @@ def test_prompt_v41_is_domain_agnostic() -> None:
     assert "不得修改、覆盖或删除" in CONSOLIDATION_SYSTEM_PROMPT
     assert "canonical_name都必须全局唯一" in CONSOLIDATION_SYSTEM_PROMPT
     assert "source_requirement_ids" in CONSOLIDATION_SYSTEM_PROMPT
+    assert "非空整数数组" in CONSOLIDATION_SYSTEM_PROMPT
+    assert "source_requirement_id（单数）" in CONSOLIDATION_SYSTEM_PROMPT
     # 单次聚类合同：不输出 mappings、不输出关系或层级结构。
     assert "mappings" not in CONSOLIDATION_SYSTEM_PROMPT
     assert "relations" not in CONSOLIDATION_SYSTEM_PROMPT
@@ -130,7 +132,7 @@ def test_metadata_combines_version_components() -> None:
     metadata = ConsolidatorMetadata(model_name="test-model")
 
     assert metadata.consolidator_version == (
-        "test-model|prompt:4.3|schema:3.0"
+        "test-model|prompt:4.4|schema:3.0"
     )
 
 
@@ -182,6 +184,66 @@ def test_valid_response_parses_and_generates_mappings() -> None:
         for mapping in result.mappings
     )
     assert raw["model_response"]["canonical_requirements"][0]["canonical_requirement_id"] == "requirement-a"
+
+
+def test_singular_source_ids_list_is_normalized_without_changing_ids() -> None:
+    """模型只把复数字段误写成单数时，无损修正并继续严格校验。"""
+    payload = valid_result_payload()
+    canonical = payload["canonical_requirements"][0]
+    canonical["source_requirement_id"] = canonical.pop(
+        "source_requirement_ids"
+    )
+
+    result, raw = consolidate_with_correction(
+        consolidation_input(), FakeConsolidationClient([payload])
+    )
+
+    assert result.canonical_requirements[0].source_requirement_ids == [1, 2]
+    assert raw["model_response"]["canonical_requirements"][0][
+        "source_requirement_id"
+    ] == [1, 2]
+
+
+def test_redundant_empty_singular_source_ids_is_ignored() -> None:
+    """同时存在正确复数字段时，忽略冗余的空单数字段。"""
+    payload = valid_result_payload()
+    payload["canonical_requirements"][0]["source_requirement_id"] = []
+
+    result, _ = consolidate_with_correction(
+        consolidation_input(), FakeConsolidationClient([payload])
+    )
+
+    assert result.canonical_requirements[0].source_requirement_ids == [1, 2]
+
+
+def test_conflicting_singular_source_ids_is_rejected() -> None:
+    """单复数字段非空且冲突时不猜测模型意图。"""
+    payload = valid_result_payload()
+    payload["canonical_requirements"][0]["source_requirement_id"] = [2]
+
+    with pytest.raises(ConsolidationError, match="Extra inputs"):
+        consolidate_with_correction(
+            consolidation_input(),
+            FakeConsolidationClient([payload]),
+            max_attempts=1,
+        )
+
+
+def test_empty_singular_source_ids_triggers_explicit_retry() -> None:
+    """截图中的空单数字段不会正式化，并得到明确纠错指令。"""
+    bad_payload = valid_result_payload()
+    canonical = bad_payload["canonical_requirements"][0]
+    canonical.pop("source_requirement_ids")
+    canonical["source_requirement_id"] = []
+    client = FakeConsolidationClient([bad_payload, valid_result_payload()])
+
+    result, _ = consolidate_with_correction(consolidation_input(), client)
+
+    assert client.calls == 2
+    assert len(result.mappings) == 2
+    assert "source_requirement_ids（复数）" in client.prompts[1]
+    assert "非空整数数组" in client.prompts[1]
+    assert "不得输出source_requirement_id（单数）" in client.prompts[1]
 
 
 def test_invalid_json_raises_consolidation_error() -> None:

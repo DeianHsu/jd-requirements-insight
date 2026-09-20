@@ -49,14 +49,14 @@ from app.requirement_consolidation import (
 )
 from app.schemas import RequirementItem
 
-# 当前归并合同 v4.3 / Schema 3.0：单次聚类输出 canonical + 来源分区，
+# 当前归并合同 v4.4 / Schema 3.0：单次聚类输出 canonical + 来源分区，
 # mappings 由确定性代码生成。
-CONSOLIDATION_PROMPT_VERSION = "4.3"
+CONSOLIDATION_PROMPT_VERSION = "4.4"
 CONSOLIDATION_SCHEMA_VERSION = "3.0"
 CONSOLIDATION_READ_TIMEOUT_SECONDS = 900.0
 
 
-# Prompt v4.3：单次聚类，只输出 canonical requirements 与来源分区；
+# Prompt v4.4：单次聚类，只输出 canonical requirements 与来源分区；
 # 不输出 mappings、不输出任何关系或层级结构。
 CONSOLIDATION_SYSTEM_PROMPT = """你是跨JD岗位要求归并器。输入是一批来自不同JD的原子要求实例，你需要判断哪些实例指向同一招聘条件，输出标准要求项（canonical requirements）。只能依据每个实例提供的原始名称和证据上下文判断，不得补充任何领域知识或行业常识。
 
@@ -87,7 +87,7 @@ CONSOLIDATION_SYSTEM_PROMPT = """你是跨JD岗位要求归并器。输入是一
 4. canonical_requirement_id和去除大小写、空白差异后的canonical_name都必须全局唯一。若两个标准项会得到同一名称且确实是同一招聘条件，必须合并为一个标准项；若证据表明它们是不同条件，名称必须保留原文或证据中的最小区分信息，不能用括号元数据硬凑唯一名称。
 
 【输出要求】
-严格按照用户提示要求的JSON结构输出，只输出canonical_requirements数组，不要输出映射、关系或层级结构，不要输出Markdown代码块或额外说明。"""
+严格按照用户提示要求的JSON结构输出，只输出canonical_requirements数组，不要输出映射、关系或层级结构，不要输出Markdown代码块或额外说明。每个标准项的来源字段必须且只能命名为source_requirement_ids（复数），值必须是非空整数数组；不得输出source_requirement_id（单数）或其他额外字段。"""
 
 
 class ConsolidationError(ValueError):
@@ -399,7 +399,7 @@ def build_canonical_requirements_prompt(
 def parse_canonical_requirements_response(
     response_text: str,
 ) -> list[CanonicalRequirement]:
-    """解析模型响应，校验每条标准要求项符合合同结构。"""
+    """解析模型响应，仅修正可明确判定的来源字段单复数漂移。"""
     try:
         payload = json.loads(response_text)
     except json.JSONDecodeError as exc:
@@ -411,10 +411,40 @@ def parse_canonical_requirements_response(
         raise ConsolidationError(
             "模型输出不符合归并合同：缺少canonical_requirements"
         )
+    normalized_items = [
+        _normalize_unambiguous_source_ids_alias(item) for item in items
+    ]
     try:
-        return [CanonicalRequirement.model_validate(item) for item in items]
+        return [
+            CanonicalRequirement.model_validate(item)
+            for item in normalized_items
+        ]
     except ValidationError as exc:
         raise ConsolidationError(f"模型输出不符合归并合同：{exc}") from exc
+
+
+def _normalize_unambiguous_source_ids_alias(item: object) -> object:
+    """兼容模型将复数来源字段误写为单数的无歧义情形。
+
+    只在单数字段仍为列表，且可以无损重命名或确认为冗余时修正。
+    标量、非空冲突或其他额外字段仍交给严格 Schema 拒绝；
+    空列表即使被重命名，也会在后续分区硬门中被拒绝。
+    """
+    if not isinstance(item, dict) or "source_requirement_id" not in item:
+        return item
+
+    normalized = dict(item)
+    singular_value = normalized["source_requirement_id"]
+    if not isinstance(singular_value, list):
+        return normalized
+
+    plural_value = normalized.get("source_requirement_ids")
+    if plural_value is None:
+        normalized["source_requirement_ids"] = singular_value
+        normalized.pop("source_requirement_id")
+    elif singular_value == [] or singular_value == plural_value:
+        normalized.pop("source_requirement_id")
+    return normalized
 
 
 T = TypeVar("T")
@@ -459,7 +489,15 @@ def _with_correction_suffix(
     """为提示追加上次校验错误，供模型定向修正。"""
     if correction is None:
         return prompt
-    return f"{prompt}\n\n【上次校验错误，请修正后重新输出】\n{correction}"
+    return (
+        f"{prompt}\n\n【上次校验错误，请完整重写JSON后重新输出】\n"
+        f"{correction}\n\n"
+        "【必须修正】\n"
+        "- 来源字段只能是source_requirement_ids（复数），"
+        "值必须是非空整数数组。\n"
+        "- 不得输出source_requirement_id（单数）或其他额外字段。\n"
+        "- 所有输入requirement id必须完整、唯一地覆盖一次。"
+    )
 
 
 def _request_canonical_partition(
