@@ -1,97 +1,121 @@
-# 岗位要求市场分析报告（流程演示）
-> **样本限制**：本报告基于当前已定稿归并批次（3 份 JD、9 条 requirement instances、6 个 canonical requirements）生成，是**流程与证据追溯能力演示**，不代表完整岗位市场结论。所有频率与排名仅在当前样本范围内有效，不得称为行业排名。
-## 报告身份
-- 归并批次：#1（job_ids=1,2,3）
-- JD 数量：3
-- requirement instance 数：9
-- canonical requirement 数：6
-- 抽取器版本：test-model|prompt:0.10|schema:3.0
-- 归并器版本：test-model|prompt:4.3|schema:3.0
-- 输入身份：2abe835c4790…
-- 来源 JD：1、2、3
-### 来源 JD 摘要
+# 岗位要求市场分析报告
+
+> 样本范围：3 份 JD，共 6 项要求；以下排序仅供本批岗位的学习与求职准备参考，不代表整个行业。
+
+各列数字均为独立 JD 篇数，同一 JD 的同一要求只计一次。明确必需＝明确要求具备；加分＝优先或加分条件；普通提及＝提到但未明确要求；未明确＝无法判断。重复出现时按明确必需、加分、普通提及、未明确的顺序归类。
+
+标有“含任选条件”的要求可能是若干选项之一；必需篇数也可能指必须满足该任选组，不代表必须掌握每个选项。具体组合见末尾原文。
+
+## 出现频率榜
+
+按出现 JD 数从多到少排列；篇数相同时按名称排列。
+
+| 排名 | 要求 | 出现 JD 数 | 占比 | 明确必需 | 加分 | 普通提及 | 未明确 | 来源 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 编程语言 | 3/3 | 100% | 2 | 1 | 0 | 0 | JD 1、JD 2、JD 3 |
+| 2 | 大模型应用开发经验 | 2/3 | 67% | 1 | 1 | 0 | 0 | JD 1、JD 2 |
+| 3 | RAG 应用开发 | 1/3 | 33% | 1 | 0 | 0 | 0 | JD 3 |
+| 4 | 团队协作能力 | 1/3 | 33% | 1 | 0 | 0 | 0 | JD 2 |
+| 5 | 数据分析经验 | 1/3 | 33% | 0 | 1 | 0 | 0 | JD 1 |
+| 6 | 本科及以上学历 | 1/3 | 33% | 1 | 0 | 0 | 0 | JD 3 |
+
+## 准备优先级榜
+
+先按明确必需的 JD 数降序，再按加分 JD 数降序，最后按总出现 JD 数降序；全部相同时按名称排列。频繁被提及但很少被要求的项目会排在必需条件之后。这是需求侧参考，不计个人基础或学习成本。
+
+| 排名 | 要求 | 出现 JD 数 | 占比 | 明确必需 | 加分 | 普通提及 | 未明确 | 来源 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 编程语言 | 3/3 | 100% | 2 | 1 | 0 | 0 | JD 1、JD 2、JD 3 |
+| 2 | 大模型应用开发经验 | 2/3 | 67% | 1 | 1 | 0 | 0 | JD 1、JD 2 |
+| 3 | RAG 应用开发 | 1/3 | 33% | 1 | 0 | 0 | 0 | JD 3 |
+| 4 | 团队协作能力 | 1/3 | 33% | 1 | 0 | 0 | 0 | JD 2 |
+| 5 | 本科及以上学历 | 1/3 | 33% | 1 | 0 | 0 | 0 | JD 3 |
+| 6 | 数据分析经验 | 1/3 | 33% | 0 | 1 | 0 | 0 | JD 1 |
+
+## 来源与原文证据
+
+<details>
+<summary>展开来源 JD 清单</summary>
+
 - JD 1：示例科技｜大模型应用工程师｜北京
+
 - JD 2：示例智能｜Agent 开发工程师｜上海
+
 - JD 3：示例数据｜RAG 平台工程师｜深圳
 
-## 总览
-- 覆盖 JD 数：3
-- 抽取原子要求数：9
-- 归并标准要求数：6
-- 出现在多份 JD 的要求数：2
-- 仅出现在单份 JD 的要求数（长尾）：4
-- 覆盖 JD 最多的要求：**编程语言**（3/3 份 JD）
+</details>
 
-## 跨 JD 共同要求
-| 要求 | JD 覆盖数 | JD 覆盖率 | 实例数 | JD 级 importance |
-| --- | --- | --- | --- | --- |
-| 编程语言 | 3 | 100% | 3 | must 2 / preferred 1 |
-| 大模型应用开发经验 | 2 | 67% | 2 | must 1 / preferred 1 |
+<details>
+<summary>编程语言（3 份 JD）</summary>
 
-## 单 JD 特有要求（长尾）
-| 要求 | JD 覆盖数 | JD 覆盖率 | 实例数 | JD 级 importance |
-| --- | --- | --- | --- | --- |
-| RAG 应用开发 | 1 | 33% | 1 | must 1 |
-| 团队协作能力 | 1 | 33% | 1 | must 1 |
-| 数据分析经验 | 1 | 33% | 1 | preferred 1 |
-| 本科及以上学历 | 1 | 33% | 1 | must 1 |
-
-## 证据追溯
-### 编程语言
-来源：3 份 JD（JD 1、JD 2、JD 3），3 个实例；JD 级 importance：must 2 / preferred 1
-- JD 1｜实例 1：**编程语言**
-  - importance=must / category=programming\_language / proficiency=basic
+- JD 1：**编程语言**
+  - 明确必需
   - 证据：
     > 1. 熟悉主流编程语言。
 
-- JD 2｜实例 4：**编程语言**
-  - importance=must / category=programming\_language / proficiency=advanced
+- JD 2：**编程语言**
+  - 明确必需
   - 证据：
     > 1. 掌握常用编程语言。
 
-- JD 3｜实例 7：**编程语言**
-  - importance=preferred / category=programming\_language / proficiency=basic
+- JD 3：**编程语言**
+  - 加分
   - 证据：
     > 1. 熟悉编程语言者加分。
-### 大模型应用开发经验
-来源：2 份 JD（JD 1、JD 2），2 个实例；JD 级 importance：must 1 / preferred 1
-- JD 1｜实例 2：**大模型应用开发经验**
-  - importance=must / category=experience / proficiency=unknown
+
+</details>
+
+<details>
+<summary>大模型应用开发经验（2 份 JD）</summary>
+
+- JD 1：**大模型应用开发经验**
+  - 明确必需
   - 证据：
     > 2. 有 LLM 应用落地经验。
 
-- JD 2｜实例 5：**大模型应用开发经验**
-  - importance=preferred / category=experience / proficiency=unknown
+- JD 2：**大模型应用开发经验**
+  - 加分
   - 证据：
     > 2. 具备大模型应用开发经验者加分。
-### RAG 应用开发
-来源：1 份 JD（JD 3），1 个实例；JD 级 importance：must 1
-- JD 3｜实例 8：**RAG 应用开发**
-  - importance=must / category=rag / proficiency=basic
+
+</details>
+
+<details>
+<summary>RAG 应用开发（1 份 JD）</summary>
+
+- JD 3：**RAG 应用开发**
+  - 明确必需
   - 证据：
     > 2. 熟悉 RAG 应用开发。
-### 团队协作能力
-来源：1 份 JD（JD 2），1 个实例；JD 级 importance：must 1
-- JD 2｜实例 6：**团队协作能力**
-  - importance=must / category=soft\_skill / proficiency=unknown
+
+</details>
+
+<details>
+<summary>团队协作能力（1 份 JD）</summary>
+
+- JD 2：**团队协作能力**
+  - 明确必需
   - 证据：
     > 3. 具备跨团队协作能力。
-### 数据分析经验
-来源：1 份 JD（JD 1），1 个实例；JD 级 importance：preferred 1
-- JD 1｜实例 3：**数据分析经验**
-  - importance=preferred / category=experience / proficiency=unknown
+
+</details>
+
+<details>
+<summary>数据分析经验（1 份 JD）</summary>
+
+- JD 1：**数据分析经验**
+  - 加分
   - 证据：
     > 3. 有数据分析经验者优先。
-### 本科及以上学历
-来源：1 份 JD（JD 3），1 个实例；JD 级 importance：must 1
-- JD 3｜实例 9：**本科及以上学历**
-  - importance=must / category=education / proficiency=unknown
+
+</details>
+
+<details>
+<summary>本科及以上学历（1 份 JD）</summary>
+
+- JD 3：**本科及以上学历**
+  - 明确必需
   - 证据：
     > 3. 本科及以上学历。
-## 方法与限制
-- 市场频率以**独立 JD 数**为主口径（同一 JD 中同一 canonical 的多个实例只贡献一次 JD 覆盖），实例数作为抽取粒度补充指标。
-- JD 级 importance 按 `must > preferred > mentioned > unknown` 归并；实例级 importance 仅作诊断参考。
-- 排序：独立 JD 数降序 → 实例数降序 → 名称升序。
-- 每个 canonical 均可在「证据追溯」中回查来源 JD、原始要求与原文 evidence。
-- 本报告为归并批次的**可再生派生产物**：重新生成会覆盖旧文件，内容由同一批次确定性决定。
-- **样本限制**：当前样本为 3 份 JD，统计结论不得外推为市场结论。
+
+</details>

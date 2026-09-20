@@ -95,6 +95,15 @@ uv run python -m scripts.make_sample_report
 git diff --exit-code -- examples/market-report-sample.md
 ```
 
+## 报告阅读方式
+
+报告包含完整的出现频率榜和准备优先级榜，展示独立 JD 篇数、占比及必需、加分、普通
+提及、未明确的篇数。准备优先级按必需篇数、加分篇数、总出现篇数依次降序。任选条件
+单独标注，来源与原文证据在末尾折叠展示，指纹和模型版本保留在运行数据中。
+
+已有 Markdown 不会随代码更新自动变化，可通过离线 `generate-report` 对明确指定的
+数据库及归并批次重新生成，不需要再次调用模型。
+
 ## 开发者验证工具
 
 多次运行 acceptance、稳定性分析、人工规则/cluster 审计、candidate 和文件型

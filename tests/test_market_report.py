@@ -256,13 +256,13 @@ def test_report_generated_for_explicit_batch(tmp_path) -> None:
     report = build_market_report(stats)
 
     assert "岗位要求市场分析报告" in report
-    assert "样本限制" in report
-    assert "流程与证据追溯能力演示" in report
-    assert f"#{stats.consolidation_id}" in report
+    assert "样本范围" in report
+    assert "准备优先级榜" in report
+    assert "输入身份" not in report
     assert "3" in report  # JD 数
-    assert "跨 JD 共同要求" in report
-    assert "单 JD 特有要求" in report
-    assert "证据追溯" in report
+    assert "出现频率榜" in report
+    assert "准备优先级榜" in report
+    assert "来源与原文证据" in report
     assert "编程语言" in report
     assert "团队协作能力" in report
 
@@ -669,9 +669,9 @@ def test_traceability(tmp_path) -> None:
     assert collaboration.source_job_ids == (1, 2)
     assert len(collaboration.source_requirements) == 2
     # 报告包含 JD 标签、实例 ID 与 evidence 文本。
-    assert "JD 1｜实例" in report
+    assert "JD 1：" in report
     assert "具备跨团队协作能力" in report
-    assert "importance=must" in report
+    assert "明确必需" in report
 
 
 def test_markdown_special_chars_and_multiline(tmp_path) -> None:
@@ -686,13 +686,13 @@ def test_markdown_special_chars_and_multiline(tmp_path) -> None:
     assert "RAG" in report
     assert "第二行证据（多行）" in report
     # 表格结构完整：表头 + 共同要求行数（2 个跨 JD canonical）。
-    common_table = report.split("## 跨 JD 共同要求")[1].split("## 单 JD")[0]
+    common_table = report.split("## 出现频率榜")[1].split("## 准备优先级榜")[0]
     rows = [line for line in common_table.splitlines() if line.startswith("|")]
-    assert len(rows) == 1 + 1 + 2  # 表头 + 分隔行 + 2 个共同要求
+    assert len(rows) == 1 + 1 + 5  # 表头 + 分隔行 + 2 个共同要求
     # 长尾表：3 个单 JD canonical。
-    tail_table = report.split("## 单 JD 特有要求")[1].split("## 证据追溯")[0]
+    tail_table = report.split("## 准备优先级榜")[1].split("## 来源与原文证据")[0]
     tail_rows = [line for line in tail_table.splitlines() if line.startswith("|")]
-    assert len(tail_rows) == 1 + 1 + 3
+    assert len(tail_rows) == 1 + 1 + 5
 
 
 def test_deterministic_output(tmp_path) -> None:
@@ -702,6 +702,46 @@ def test_deterministic_output(tmp_path) -> None:
     stats = _build_stats(db_path)
 
     assert build_market_report(stats) == build_market_report(stats)
+
+
+def test_rankings_prioritize_required_jobs_and_mark_alternatives(tmp_path) -> None:
+    """频繁普通提及不能压过必需条件；任选关系从数据库传到报告。"""
+    from dataclasses import replace
+
+    db_path = tmp_path / "ranking.db"
+    _seed_market_db(db_path)
+    engine = create_database_engine(f"sqlite:///{db_path.as_posix()}")
+    with create_session_factory(engine)() as session:
+        requirement = session.query(JobRequirement).first()
+        requirement.group_logic = "any_of"
+        requirement.group_id = "languages"
+        session.commit()
+    engine.dispose()
+    stats = _build_stats(db_path)
+    assert any(
+        source.get("group_logic") == "any_of"
+        for item in stats.canonical_items for source in item.source_requirements
+    )
+    template = stats.canonical_items[0]
+    items = (
+        replace(template, canonical_name="频繁提及", distinct_job_count=3,
+                importance_job_counts={"mentioned": 3}),
+        replace(template, canonical_name="必需技能", distinct_job_count=1,
+                importance_job_counts={"must": 1}),
+        replace(template, canonical_name="加分技能", distinct_job_count=2,
+                importance_job_counts={"preferred": 2}),
+    )
+    report = build_market_report(replace(stats, canonical_items=items))
+    frequency = report.split("## 出现频率榜")[1].split("## 准备优先级榜")[0]
+    priority = report.split("## 准备优先级榜")[1].split("## 来源与原文证据")[0]
+    assert frequency.index("频繁提及") < frequency.index("加分技能") < frequency.index("必需技能")
+    assert priority.index("必需技能") < priority.index("加分技能") < priority.index("频繁提及")
+    assert "含任选条件" in report
+    assert "任选其一，不要求全部掌握" in report
+    assert "<details>" in report
+    for internal in (stats.input_fingerprint[:12], stats.extractor_version,
+                     "importance=", "category=", "报告身份", "实例数"):
+        assert internal not in report
 
 
 def test_cli_generate_report_offline(tmp_path, monkeypatch) -> None:
@@ -788,19 +828,12 @@ def test_sample_limitation_is_dynamic(tmp_path) -> None:
     stats = _build_stats(db_path)
     report = build_market_report(stats)
 
-    # 合成批次身份：3 JD / 8 实例 / 5 canonical。
     assert "3 份 JD" in report
-    assert "8 条 requirement instances" in report
-    assert "5 个 canonical requirements" in report
-    # 顶部声明与报告身份、总览一致。
-    assert "8 条 requirement instances" in report  # 动态声明
-    assert "requirement instance 数：8" in report  # 报告身份
-    assert "抽取原子要求数：8" in report  # 总览
-    # 不得写死真实批次的 83/72。
+    assert "共 5 项要求" in report
+    assert "requirement instances" not in report
+    assert "canonical requirements" not in report
     assert "83 条" not in report
     assert "72 个" not in report
-    # 方法与限制章节也动态。
-    assert "当前样本为 3 份 JD" in report
 
 
 def test_evidence_blocks_have_clean_structure(tmp_path) -> None:
@@ -817,14 +850,14 @@ def test_evidence_blocks_have_clean_structure(tmp_path) -> None:
     block = _evidence_block(collaboration.source_requirements)
     lines = block.splitlines()
     # 主条目独占一行。
-    assert lines[0].startswith("- JD 1｜实例 2：**协作能力**")
+    assert lines[0].startswith("- JD 1：**协作能力**")
     # detail 处于该实例下（缩进层级）。
-    assert lines[1].startswith("  - importance=")
+    assert lines[1].startswith("  - 明确必需")
     assert lines[2].startswith("  - 证据：")
     # evidence 在引用块中且与实例绑定。
     assert lines[3].startswith("    > 具备跨团队协作能力。")
     # 第二个实例独立成块（空行分隔），不紧贴前一 evidence。
-    second = [i for i, line in enumerate(lines) if line.startswith("- JD 2｜")]
+    second = [i for i, line in enumerate(lines) if line.startswith("- JD 2：")]
     assert second and second[0] > 4
     assert "" in block  # 块间空行
 
@@ -847,8 +880,8 @@ def test_multiline_special_evidence_stays_in_block(tmp_path) -> None:
     assert "    > 熟悉 \\`LangChain\\`、\\*RAG\\* 等工具|" in lines
     assert "    > 第二行证据（多行）。" in lines
     # 章节与表格数量不变（两个要求表头、章节结构固定）。
-    assert report.count("| 要求 | JD 覆盖数 |") == 2
-    for section in ("报告身份", "总览", "跨 JD 共同要求", "单 JD 特有要求", "证据追溯", "方法与限制"):
+    assert report.count("| 排名 | 要求 | 出现 JD 数 |") == 2
+    for section in ("出现频率榜", "准备优先级榜", "来源与原文证据"):
         assert f"## {section}" in report
 
 
@@ -1082,17 +1115,13 @@ def test_sample_report_does_not_leak_real_batch_numbers(tmp_path) -> None:
     assert sample_script.main(["--output", str(output_path)]) == 0
     content = output_path.read_text(encoding="utf-8")
     assert "3 份 JD" in content
-    assert "9 条 requirement instances" in content
-    assert "6 个 canonical requirements" in content
+    assert "requirement instances" not in content
+    assert "共 6 项要求" in content
     assert "83 条" not in content
     assert "72 个" not in content
     # 证据块结构在样例中同样成立。
     assert "    > " in content
     # 合成字段遵守当前 FIELD 合同，不用 other/basic 占位覆盖所有类型。
-    assert "category=programming\\_language / proficiency=advanced" in content
-    assert "category=experience / proficiency=unknown" in content
-    assert "category=education / proficiency=unknown" in content
-    assert "category=soft\\_skill / proficiency=unknown" in content
 
 
 def test_sample_report_is_public_safe(tmp_path) -> None:
@@ -1114,5 +1143,5 @@ def test_sample_report_is_public_safe(tmp_path) -> None:
     ):
         assert forbidden not in content, forbidden
     assert "岗位要求市场分析报告" in content
-    assert "样本限制" in content
-    assert "流程与证据追溯能力演示" in content
+    assert "样本范围" in content
+    assert "准备优先级榜" in content

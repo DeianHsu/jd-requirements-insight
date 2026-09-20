@@ -45,213 +45,129 @@ _MARKDOWN_ESCAPES = {
 }
 
 
-def _sample_limitation(stats: MarketStatistics) -> str:
-    """由当前统计动态生成的样本限制声明（不写死具体批次数字）。"""
-    return (
-        f"> **样本限制**：本报告基于当前已定稿归并批次（{stats.total_job_count} "
-        f"份 JD、{stats.occurrence_count} 条 requirement instances、"
-        f"{stats.canonical_count} 个 canonical requirements）生成，是"
-        "**流程与证据追溯能力演示**，不代表完整岗位市场结论。所有频率"
-        "与排名仅在当前样本范围内有效，不得称为行业排名。"
-    )
+IMPORTANCE_LABELS = {
+    "must": "明确必需", "preferred": "加分", "mentioned": "普通提及", "unknown": "未明确",
+}
 
 
 def escape_markdown(text: str) -> str:
-    """正文转义：保留换行语义但转义 Markdown 结构字符。"""
-    out = []
-    for char in text:
-        out.append(_MARKDOWN_ESCAPES.get(char, char))
-    return "".join(out)
+    """转义正文与 HTML，避免原文破坏折叠区结构。"""
+    from html import escape
+
+    return "".join(_MARKDOWN_ESCAPES.get(char, char) for char in escape(text))
 
 
 def escape_table_cell(text: str) -> str:
-    """表格单元格转义：竖线与换行不破坏表格结构。"""
-    return (
-        text.replace("\\", "\\\\")
-        .replace("|", "\\|")
-        .replace("\r", "")
-        .replace("\n", " ")
-        .strip()
-    )
-
-
-def _importance_label(counts: dict[str, int]) -> str:
-    """JD 级 importance 分布的可读摘要，如 must 2 / preferred 1。"""
-    parts = []
-    for level in ("must", "preferred", "mentioned", "unknown"):
-        if counts.get(level):
-            parts.append(f"{level} {counts[level]}")
-    return " / ".join(parts) if parts else "-"
+    """转义表格内容中的 Markdown、竖线和换行。"""
+    return escape_markdown(text).replace("|", "\\|").replace("\r", "").replace("\n", " ").strip()
 
 
 def _evidence_block(source_requirements: tuple[dict[str, Any], ...]) -> str:
-    """证据追溯块：每个来源实例形成独立、可读、稳定的 Markdown 块。
-
-    结构（实例间空行分隔，evidence 用引用块保留多行）：
-
-        - JD 1｜实例 23：**跨团队协作能力**
-          - importance=must / category=soft_skill / proficiency=unknown
-          - 证据：
-            > 第一行
-            > 第二行（多行 evidence 仍属同一块）
-    """
-    blocks: list[str] = []
+    """用中文说明和原文引用呈现证据，隐藏数据库实例与内部属性。"""
+    blocks = []
     for requirement in source_requirements:
-        job_id = requirement.get("job_id")
-        job_label = f"JD {job_id}" if job_id is not None else "JD 未知"
+        label = IMPORTANCE_LABELS.get(requirement.get("importance"), "未明确")
+        if requirement.get("group_logic") == "any_of":
+            label += "；任选其一，不要求全部掌握"
         lines = [
-            f"- {job_label}｜实例 {requirement['requirement_id']}："
-            f"**{escape_markdown(str(requirement['raw_name']))}**"
+            f"- JD {requirement.get('job_id', '未知')}："
+            f"**{escape_markdown(str(requirement['raw_name']))}**",
+            f"  - {label}",
+            "  - 证据：",
         ]
-        detail_parts = [
-            f"importance={requirement.get('importance', '-')}",
-            f"category={requirement.get('category', '-')}",
-            f"proficiency={requirement.get('proficiency', '-')}",
-        ]
-        lines.append(
-            f"  - {escape_markdown(' / '.join(detail_parts))}"
+        lines.extend(
+            f"    > {escape_markdown(line)}"
+            for line in str(requirement.get("evidence", "")).strip().splitlines()
         )
-        lines.append("  - 证据：")
-        evidence = str(requirement.get("evidence", "")).strip()
-        for evidence_line in evidence.splitlines():
-            if evidence_line.strip():
-                lines.append(f"    > {escape_markdown(evidence_line)}")
-            else:
-                lines.append("    >")
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks)
 
+
+def _ranking_table(items, total: int) -> str:
+    lines = [
+        "| 排名 | 要求 | 出现 JD 数 | 占比 | 明确必需 | 加分 | 普通提及 | 未明确 | 来源 |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for rank, item in enumerate(items, 1):
+        optional = any(
+            source.get("group_logic") == "any_of" for source in item.source_requirements
+        )
+        name = escape_table_cell(item.canonical_name)
+        if optional:
+            name += "（含任选条件）"
+        counts = item.importance_job_counts
+        sources = "、".join(f"JD {job_id}" for job_id in item.source_job_ids)
+        ratio = item.distinct_job_count / total if total else 0
+        lines.append(
+            f"| {rank} | {name} | {item.distinct_job_count}/{total} | {ratio:.0%} | "
+            f"{counts.get('must', 0)} | {counts.get('preferred', 0)} | "
+            f"{counts.get('mentioned', 0)} | {counts.get('unknown', 0)} | {sources} |"
+        )
+    return "\n".join(lines) if items else "暂无可统计的要求。"
 
 
 def build_market_report(
     stats: MarketStatistics, provenance_note: str | None = None
 ) -> str:
-    """把市场统计渲染为可读 Markdown（纯函数，确定性输出）。"""
-    sections: list[str] = []
-
-    # 1. 标题与样本限制声明（醒目，置于最前，由统计数据动态生成）。
-    sections.append("# 岗位要求市场分析报告（流程演示）\n")
-    sections.append(_sample_limitation(stats) + "\n")
-
-    # 2. 报告身份。
-    sections.append("## 报告身份\n")
-    identity = [
-        ("归并批次", f"#{stats.consolidation_id}（{stats.scope_key}）"),
-        ("JD 数量", str(stats.total_job_count)),
-        ("requirement instance 数", str(stats.occurrence_count)),
-        ("canonical requirement 数", str(stats.canonical_count)),
-        ("抽取器版本", stats.extractor_version),
-        ("归并器版本", stats.consolidator_version),
-        ("输入身份", f"{stats.input_fingerprint[:12]}…"),
-        ("来源 JD", "、".join(str(job_id) for job_id in stats.selected_job_ids)),
+    """输出频率榜、准备优先级榜及折叠证据；内部身份留在数据库。"""
+    frequency = sorted(
+        stats.canonical_items,
+        key=lambda item: (-item.distinct_job_count, item.canonical_name),
+    )
+    priority = sorted(
+        stats.canonical_items,
+        key=lambda item: (
+            -item.importance_job_counts.get("must", 0),
+            -item.importance_job_counts.get("preferred", 0),
+            -item.distinct_job_count,
+            item.canonical_name,
+        ),
+    )
+    sections = [
+        "# 岗位要求市场分析报告",
+        f"> 样本范围：{stats.total_job_count} 份 JD，共 {stats.canonical_count} 项要求；"
+        "以下排序仅供本批岗位的学习与求职准备参考，不代表整个行业。",
+        "各列数字均为独立 JD 篇数，同一 JD 的同一要求只计一次。"
+        "明确必需＝明确要求具备；加分＝优先或加分条件；普通提及＝提到但未明确要求；"
+        "未明确＝无法判断。重复出现时按明确必需、加分、普通提及、未明确的顺序归类。",
+        "标有“含任选条件”的要求可能是若干选项之一；必需篇数也可能指必须满足该任选组，"
+        "不代表必须掌握每个选项。具体组合见末尾原文。",
+        "## 出现频率榜",
+        "按出现 JD 数从多到少排列；篇数相同时按名称排列。",
+        _ranking_table(frequency, stats.total_job_count),
+        "## 准备优先级榜",
+        "先按明确必需的 JD 数降序，再按加分 JD 数降序，最后按总出现 JD 数降序；"
+        "全部相同时按名称排列。频繁被提及但很少被要求的项目会排在必需条件之后。"
+        "这是需求侧参考，不计个人基础或学习成本。",
+        _ranking_table(priority, stats.total_job_count),
+        "## 来源与原文证据",
+        "<details>\n<summary>展开来源 JD 清单</summary>",
     ]
-    sections.append(
-        "\n".join(f"- {label}：{value}" for label, value in identity) + "\n"
+    sections.extend(
+        f"- JD {job['job_id']}：{escape_markdown(str(job['company']))}｜"
+        f"{escape_markdown(str(job['title']))}｜"
+        f"{escape_markdown(str(job.get('city') or '城市未注明'))}"
+        for job in stats.job_summaries
     )
-    if stats.job_summaries:
-        sections.append("### 来源 JD 摘要\n")
-        for job in stats.job_summaries:
-            city = job.get("city") or "-"
-            sections.append(
-                f"- JD {job['job_id']}：{job['company']}｜{job['title']}｜{city}\n"
-            )
-    sections.append("\n")
+    sections.append("</details>")
+    from html import escape
 
-    # 3. 总览：全部数字由统计对象确定性计算。
-    common = [item for item in stats.canonical_items if item.distinct_job_count > 1]
-    single = [item for item in stats.canonical_items if item.distinct_job_count == 1]
-    sections.append("## 总览\n")
-    overview = [
-        ("覆盖 JD 数", str(stats.total_job_count)),
-        ("抽取原子要求数", str(stats.occurrence_count)),
-        ("归并标准要求数", str(stats.canonical_count)),
-        ("出现在多份 JD 的要求数", str(len(common))),
-        ("仅出现在单份 JD 的要求数（长尾）", str(len(single))),
-    ]
-    sections.append(
-        "\n".join(f"- {label}：{value}" for label, value in overview) + "\n"
-    )
-    if common:
-        top = common[0]
-        sections.append(
-            f"- 覆盖 JD 最多的要求：**{escape_markdown(top.canonical_name)}**"
-            f"（{top.distinct_job_count}/{stats.total_job_count} 份 JD）\n"
-        )
-    sections.append("\n")
-
-    # 4. 共同要求（多 JD）：表格展示。
-    sections.append("## 跨 JD 共同要求\n")
-    if common:
-        sections.append(
-            "| 要求 | JD 覆盖数 | JD 覆盖率 | 实例数 | JD 级 importance |\n"
-            "| --- | --- | --- | --- | --- |\n"
-        )
-        for item in common:
-            sections.append(
-                f"| {escape_table_cell(item.canonical_name)} | "
-                f"{item.distinct_job_count} | "
-                f"{item.distinct_job_count / stats.total_job_count:.0%} | "
-                f"{item.instance_count} | "
-                f"{escape_table_cell(_importance_label(item.importance_job_counts))} |\n"
-            )
-    else:
-        sections.append("（无跨 JD 共同要求）\n")
-    sections.append("\n")
-
-    # 5. 长尾要求（单 JD）：表格展示，按实例数降序、名称升序。
-    sections.append("## 单 JD 特有要求（长尾）\n")
-    single_sorted = sorted(
-        single, key=lambda item: (-item.instance_count, item.canonical_name)
-    )
-    if single_sorted:
-        sections.append(
-            "| 要求 | JD 覆盖数 | JD 覆盖率 | 实例数 | JD 级 importance |\n"
-            "| --- | --- | --- | --- | --- |\n"
-        )
-        for item in single_sorted:
-            sections.append(
-                f"| {escape_table_cell(item.canonical_name)} | "
-                f"{item.distinct_job_count} | "
-                f"{item.distinct_job_count / stats.total_job_count:.0%} | "
-                f"{item.instance_count} | "
-                f"{escape_table_cell(_importance_label(item.importance_job_counts))} |\n"
-            )
-    else:
-        sections.append("（无）\n")
-    sections.append("\n")
-
-    # 6. 证据追溯：每个 canonical 一节，列表展示来源实例。
-    sections.append("## 证据追溯\n")
-    for item in stats.canonical_items:
-        sections.append(
-            f"### {escape_markdown(item.canonical_name)}\n"
-        )
-        sections.append(
-            f"来源：{item.distinct_job_count} 份 JD"
-            f"（{'、'.join(f'JD {j}' for j in item.source_job_ids)}），"
-            f"{item.instance_count} 个实例；JD 级 importance："
-            f"{escape_markdown(_importance_label(item.importance_job_counts))}\n"
-        )
-        sections.append(_evidence_block(item.source_requirements) + "\n")
-
-    # 7. 方法与限制。
-    sections.append("## 方法与限制\n")
-    sections.append(
-        "- 市场频率以**独立 JD 数**为主口径（同一 JD 中同一 canonical 的"
-        "多个实例只贡献一次 JD 覆盖），实例数作为抽取粒度补充指标。\n"
-        "- JD 级 importance 按 `must > preferred > mentioned > unknown` "
-        "归并；实例级 importance 仅作诊断参考。\n"
-        "- 排序：独立 JD 数降序 → 实例数降序 → 名称升序。\n"
-        "- 每个 canonical 均可在「证据追溯」中回查来源 JD、原始要求与"
-        "原文 evidence。\n"
-        "- 本报告为归并批次的**可再生派生产物**：重新生成会覆盖旧文件，"
-        "内容由同一批次确定性决定。\n"
-        f"- **样本限制**：当前样本为 {stats.total_job_count} 份 JD，统计"
-        "结论不得外推为市场结论。\n"
-    )
+    for item in frequency:
+        sections.extend([
+            f"<details>\n<summary>{escape(item.canonical_name)}"
+            f"（{item.distinct_job_count} 份 JD）</summary>",
+            _evidence_block(item.source_requirements),
+            "</details>",
+        ])
     if provenance_note:
-        sections.append(f"- **上游来源绑定**：{provenance_note}\n")
-    return "".join(sections)
+        sections.extend([
+            "## 数据来源说明",
+            "部分历史来源缺少完整可验证记录，已按限定范围允许使用；相关结果的可追溯性存在限制。",
+            "<details>\n<summary>展开来源绑定说明</summary>",
+            f"**上游来源绑定**：{escape_markdown(provenance_note)}",
+            "</details>",
+        ])
+    return "\n\n".join(sections) + "\n"
 
 
 def validate_report_inputs(

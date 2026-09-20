@@ -215,6 +215,8 @@ def build_market_statistics(
                         "raw_name": requirement.raw_name,
                         "category": requirement.category,
                         "importance": requirement.importance,
+                        "group_logic": requirement.group_logic,
+                        "group_id": requirement.group_id,
                         "proficiency": requirement.proficiency,
                         "evidence": requirement.evidence,
                         "confidence": requirement.confidence,

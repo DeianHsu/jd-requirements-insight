@@ -588,8 +588,9 @@ def test_full_pipeline_import_extract_consolidate_statistics(
     assert result.exit_code == 0, result.output
     report_text = report_output.read_text(encoding="utf-8")
     assert "岗位要求市场分析报告" in report_text
-    assert "跨 JD 共同要求" in report_text
-    assert "证据追溯" in report_text
+    assert "出现频率榜" in report_text
+    assert "准备优先级榜" in report_text
+    assert "来源与原文证据" in report_text
     assert "技术甲" in report_text
     assert "**上游来源绑定**：" not in report_text  # 全链 fully_bound
 
